@@ -2035,6 +2035,10 @@ main {
   line-height:1.6;
 }
 
+.pdf-placeholder[role='status'] {
+  padding-block:24px;
+}
+
 .pdf-placeholder strong {
   color:var(--text);
   font-size:14px;
@@ -2042,11 +2046,6 @@ main {
 
 .pdf-placeholder span {
   font-size:12px;
-}
-
-.compile-now {
-  border-color:var(--input);
-  margin-top:8px;
 }
 
 .compile-error {
