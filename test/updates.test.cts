@@ -108,3 +108,22 @@ test('beta track accepts numbered beta and pre-release versions', () => {
   assert.equal(selectRelease([release(tag, true)], 'beta', '1.0.0'), undefined);
  }
 });
+
+test('installer handoff errors are persisted and allow downloading a retry', async () => {
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'refract-update-handoff-'));
+ let report: (error: Error) => void = () => {};
+ const service=new UpdateService(path.join(dir,'settings.json'),'1.0.0',true,async()=>[release('v1.1.0')],()=>({
+  autoDownload:false,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,
+  on:(_event, listener)=>{report=listener;}, checkForUpdates:async()=>({updateInfo:{version:'1.1.0'}}),
+  downloadUpdate:async()=>{},quitAndInstall:()=>{report(new Error('installer denied'));}
+ } satisfies UpdateClient));
+ let recovered=false;service.onRestartFailed=()=>{recovered=true;};
+ try {
+  await service.start();await service.check();service.prepareRestart()();
+  assert.equal(recovered,true);assert.equal(service.status().phase,'error');
+  assert.match(service.status().message,/installer denied/);
+  assert.match(await fs.readFile(path.join(dir,'logs','updates.jsonl'),'utf8'),/restart-failed/);
+  await service.check();assert.equal(service.status().phase,'ready');
+  assert.match(service.status().message,/Installed: 1.0.0/);
+ } finally {service.stop();await fs.rm(dir,{recursive:true,force:true});}
+});
