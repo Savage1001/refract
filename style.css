@@ -1022,7 +1022,7 @@ main {
   height:env(titlebar-area-height, var(--window-controls-height));
   gap:8px;
   padding:0 12px;
-  padding-left:clamp(12px, calc(var(--titlebar-sidebar-width, 0px) - env(titlebar-area-x, 0px)), calc(env(titlebar-area-width, 100%) - 150px));
+  padding-left:clamp(12px, calc(var(--titlebar-sidebar-width, 0px) + 12px - env(titlebar-area-x, 0px)), calc(env(titlebar-area-width, 100%) - 150px));
 }
 
 .workspace-topbar button {

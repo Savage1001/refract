@@ -174,7 +174,17 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   const branding=await page.locator('.brand').evaluate(el=>{const logo=el.querySelector('img')!.getBoundingClientRect(),toggle=el.querySelector('#collapse')!.getBoundingClientRect();return [logo.left,logo.top,Math.abs(logo.top+logo.height/2-toggle.top-toggle.height/2)];});assert.deepEqual(branding,[18,43,0]);
   assert.equal((await page.locator('.workspace-topbar').boundingBox())?.height,36);
   assert.equal(await page.locator('#project-name').evaluate(el=>getComputedStyle(el).fontSize),'13px');
-  await page.locator('#collapse').click();assert.equal(await page.locator('#home').isVisible(),false);await page.locator('#collapse').click();
+  const waitForTitlePadding = () => page.waitForFunction(() => {
+   const sidebar = document.querySelector('.sidebar')!.getBoundingClientRect();
+   const title = document.querySelector('#project-name')!.getBoundingClientRect();
+   return Math.abs(title.left - sidebar.right - 12) < 0.5;
+  });
+  await waitForTitlePadding();
+  await page.locator('#collapse').click();
+  await page.locator('#home').waitFor({state:'hidden'});
+  await waitForTitlePadding();
+  await page.locator('#collapse').click();
+  await waitForTitlePadding();
   await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.setProperty('--sidebar-width','150px'));assert.deepEqual(await page.locator('.brand-home img').evaluate(el=>{const r=el.getBoundingClientRect();return [r.width,r.height];}),[28,28]);await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.removeProperty('--sidebar-width'));
   const header=await page.locator('.project-trail').evaluate(el=>{const children=Array.from(el.children).map(child=>child.getBoundingClientRect()).filter(r=>r.height>0);const logo=document.querySelector('.brand-home img')!.getBoundingClientRect();return {centers:children.map(r=>r.top+r.height/2),top:document.querySelector('.workspace-topbar')!.getBoundingClientRect().top,logoCenter:logo.top+logo.height/2};});assert.ok(header.centers.every(y=>Math.abs(y-header.centers[0])<0.5),JSON.stringify(header));assert.equal(header.top,0);assert.ok(header.centers[0]<header.logoCenter);
   assert.equal(await page.locator('#home').evaluate(el=>getComputedStyle(el).getPropertyValue('-webkit-app-region')),'no-drag');
