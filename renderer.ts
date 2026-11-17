@@ -1713,6 +1713,7 @@ editorHeader.querySelectorAll(':scope > button').forEach(button => editorActions
 const workspace = document.getElementById('workspace')!;
 const workspaceShell = document.createElement('div'); workspaceShell.className = 'workspace-shell';
 workspaceShell.append(...Array.from(workspace.children));
+const appTitlebar = document.querySelector<HTMLElement>('.app-titlebar')!;
 const workspaceBar = document.createElement('div'); workspaceBar.className = 'workspace-topbar'; workspaceBar.hidden = true;
 const projectTrail = document.createElement('div'); projectTrail.className = 'project-trail';
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
@@ -1796,7 +1797,7 @@ function syncPaneButtons():void {
 // Tool expansion is transient and must update the indicators without saving it.
 new MutationObserver(syncPaneButtons).observe(workspace,{attributes:true,attributeFilter:['class']});
 window.addEventListener('resize',()=>applyPaneLayout(false));
-workspaceBar.append(projectTrail, workspaceActions); document.querySelector('.app-titlebar')!.append(workspaceBar); workspace.append(workspaceShell);applyPaneLayout(false);
+workspaceBar.append(projectTrail, workspaceActions); appTitlebar.append(workspaceBar); workspace.append(workspaceShell);applyPaneLayout(false);
 const fileSectionLabel = document.createElement('div'); fileSectionLabel.className = 'sidebar-label'; fileSectionLabel.textContent = 'Project'; document.getElementById('project-side')!.prepend(fileSectionLabel);
 // Normalize the remaining static and generated toolbar actions.
 for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#collapse','menu'],['#chat-image-close','close'],['[aria-label="Previous compiled PDF page"]','previous'],['[aria-label="Next compiled PDF page"]','next'],['[aria-label="Zoom out compiled PDF"]','minus'],['[aria-label="Zoom in compiled PDF"]','plus']] as const) {
@@ -1877,7 +1878,7 @@ function updateResizeAccessibility(): void {
 }
 const resizeAccessibilityObserver = new ResizeObserver(entries => {
   if (entries.some(entry => entry.target === sidebarResize)) {
-    workspaceBar.style.setProperty('--titlebar-sidebar-width', `${sidebarResize.offsetWidth}px`);
+    appTitlebar.style.setProperty('--titlebar-sidebar-width', `${sidebarResize.offsetWidth}px`);
   }
   updateResizeAccessibility();
 });
