@@ -1186,12 +1186,27 @@ main {
 }
 
 .chat-header {
+  position:relative;
+  z-index:1;
   display:flex;
   align-items:center;
   gap:6px;
   flex:none;
   min-height:30px;
   margin-bottom:8px;
+}
+
+.chat-header::after {
+  content:"";
+  position:absolute;
+  top:100%;
+  left:0;
+  right:0;
+  height:24px;
+  pointer-events:none;
+  background:var(--surface);
+  backdrop-filter:blur(4px);
+  mask-image:linear-gradient(to bottom,#000,transparent);
 }
 
 .chat-title {
