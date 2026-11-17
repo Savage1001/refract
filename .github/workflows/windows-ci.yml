@@ -9,6 +9,10 @@ on:
         description: Release tag or commit to verify (defaults to the selected workflow ref)
         required: false
         type: string
+      installer_lifecycle:
+        description: Build and verify the Windows release installer
+        default: false
+        type: boolean
       test_name_pattern:
         description: Optional test-name filter for a targeted release recheck (blank runs the full suite)
         required: false
@@ -80,3 +84,27 @@ jobs:
           }
           $testArgs += 'build/test/*.test.cjs'
           node @testArgs
+
+      - name: Build release installer
+        if: inputs.installer_lifecycle
+        run: npm run build:installer -- --publish never
+      - name: Run installer lifecycle
+        if: inputs.installer_lifecycle
+        env:
+          REFRACT_TEST_INSTALLER: '1'
+          REFRACT_TEX_BIN: ''
+        run: |
+          $env:REFRACT_TEST_INSTALLER_PATH = @(Get-ChildItem dist -Filter '*Setup*.exe').FullName
+          node --test --test-reporter=tap build/test/installer.test.cjs | Tee-Object -Variable results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($results -notcontains '# skipped 0') { throw 'An installer test was skipped' }
+      - name: Upload verified release files
+        if: inputs.installer_lifecycle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          path: |
+            dist/*Setup*.exe
+            dist/*Setup*.exe.blockmap
+            dist/latest.yml
