@@ -1875,7 +1875,12 @@ function updateResizeAccessibility(): void {
   const fraction = window.matchMedia('(max-width:1200px)').matches ? .55 : .65;
   setRange('chat-resize', chatResize, 220, Math.floor(editorResize.clientHeight * fraction), chatResize.offsetHeight);
 }
-const resizeAccessibilityObserver = new ResizeObserver(updateResizeAccessibility);
+const resizeAccessibilityObserver = new ResizeObserver(entries => {
+  if (entries.some(entry => entry.target === sidebarResize)) {
+    workspaceBar.style.setProperty('--titlebar-sidebar-width', `${sidebarResize.offsetWidth}px`);
+  }
+  updateResizeAccessibility();
+});
 for (const pane of [sidebarResize, workspaceResize, editorResize, chatResize]) resizeAccessibilityObserver.observe(pane);
 window.addEventListener('resize', updateResizeAccessibility);
 updateResizeAccessibility();

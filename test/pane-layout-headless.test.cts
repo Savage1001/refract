@@ -30,6 +30,21 @@ test('all seven pane combinations remain recoverable and preserve editor/chat dr
   const paneGroup=page.getByRole('group',{name:'Visible panes',exact:true});
   const titlebar = page.locator('.app-titlebar');
   const projectTitle = titlebar.getByRole('button',{name:'Spectral methods for fluid dynamics',exact:true});
+  const sidebar = page.locator('#project-navigation');
+  const titleAligned = () => page.waitForFunction(() => {
+   const title = document.querySelector('#project-name')!.getBoundingClientRect();
+   const sidebar = document.querySelector('#project-navigation')!.getBoundingClientRect();
+   return Math.abs(title.left - sidebar.right) < 1;
+  });
+  await titleAligned();
+  const sidebarWidth = (await sidebar.boundingBox())!.width;
+  await page.locator('#collapse').click();
+  assert.ok((await sidebar.boundingBox())!.width < sidebarWidth);
+  await titleAligned();
+  await page.locator('#collapse').click();
+  await page.locator('#sidebar-resize').press('ArrowRight');
+  assert.ok((await sidebar.boundingBox())!.width > sidebarWidth);
+  await titleAligned();
   await projectTitle.click();
   await page.locator('#rename-dialog').waitFor();
   await page.keyboard.press('Escape');
