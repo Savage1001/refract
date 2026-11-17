@@ -2793,12 +2793,6 @@ dialog .dialog-actions {
 
 }
 
-.editor-keyboard-hint {
-  margin-left:auto;
-  padding:4px 6px;
-  color:var(--muted);
-  font-size:11px;
-}
 
 #file-list button:has(.tree-image-thumbnail){align-items:center}
 #file-list .tree-image-thumbnail{width:32px;height:32px;flex:none;object-fit:contain;border-radius:4px;background:#8882}
