@@ -1868,6 +1868,13 @@ main {
   text-align:center;
 }
 
+.pdf-zoom-value {
+  flex:none;
+  min-width:0;
+  padding-inline:2px;
+  font-variant-numeric:tabular-nums;
+}
+
 .pdf-control-label {
   font-size:11px;
   color:var(--muted);
