@@ -39,7 +39,7 @@ async function install(options: InstallOptions = {}): Promise<void> {
     unpack(archive, staging);
     const sync = path.join(staging, 'sync.tar.xz');
     // Pin the upstream revision as well as its checksum.
-    await fetchArchive('https://mirrors.ctan.org/systems/texlive/tlnet/archive/synctex.windows.r78097.tar.xz', '09ff70bf3a0de6b1c81c5aa3eb136473fce83314dc407a9ad6c4592376a6a83c', sync);
+    await fetchArchive('https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/synctex.windows.r78097.tar.xz', '09ff70bf3a0de6b1c81c5aa3eb136473fce83314dc407a9ad6c4592376a6a83c', sync);
     unpack(sync, path.join(staging, 'TinyTeX'), ['bin/windows/synctex.exe']);
     if (!await complete(path.join(staging, 'TinyTeX'))) throw new Error('Downloaded TeX is missing required tools');
     // Preserve any incomplete previous installation rather than deleting user files.
