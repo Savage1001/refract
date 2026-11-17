@@ -33,7 +33,12 @@ function installFixture(data:{pdf:string; source:string}):void {
    });
   }; return make('');
  };
+ let updateTrack: 'stable' | 'beta' = 'stable';
  w.store = {
+  updateRestart:async()=>{await pause('updateRestart');},
+  updateCheck:async()=>{await pause('updateCheck');return {track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
+  updateStatus:async()=>({track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'}),
+  updateTrack:async(track:'stable' | 'beta')=>{updateTrack=track;return {track,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
   projectTrust:async()=>true, requestProjectTrust:async()=>false,revokeProjectTrust:async()=>{},
   list:async()=>structuredClone(projects), projectPreview:async()=>null,
   create:async(name:string)=>{await pause('create');const value={...projects[0],id:`project-${projects.length}`,name};projects.push(value);return value;},
@@ -85,12 +90,12 @@ async function fixtureDocument():Promise<{pdf:string;source:string}> {
  return cachedDocument;
 }
 
-async function openHeadlessUi(colorScheme:'light'|'dark'='light') {
+async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: {pdf:string;source:string}) {
  const browser=await playwright.chromium.launch({channel:'msedge',headless:true,args:['--allow-file-access-from-files']});
  try {
   const context=await browser.newContext({viewport:{width:1440,height:900},colorScheme,locale:'en-US',timezoneId:'UTC'});
   await context.route(/^https?:/,route=>route.abort());
-  await context.addInitScript(installFixture,await fixtureDocument());
+  await context.addInitScript(installFixture,fixtureData ?? await fixtureDocument());
   const page=await context.newPage();const errors:string[]=[];
   page.on('pageerror',error=>errors.push(error.message));
   page.on('dialog',dialog=>{errors.push(dialog.message());void dialog.dismiss();});

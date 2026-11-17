@@ -2,6 +2,19 @@
 ; same executable name. Silent installs fail without opening a dialog.
 !macro customCheckAppRunning
   ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+  ; The updater launches from Electron's quit event, just before the process exits.
+  ; Wait for that normal exit; never kill a running editor or compiler.
+  ${If} ${isUpdated}
+    StrCpy $R1 0
+    ${DoWhile} $R0 == 0
+      ${If} $R1 >= 60
+        ${ExitDo}
+      ${EndIf}
+      Sleep 500
+      IntOp $R1 $R1 + 1
+      ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+    ${Loop}
+  ${EndIf}
   ${If} $R0 == 0
     IfSilent +2 0
     MessageBox MB_OK|MB_ICONEXCLAMATION "Close Refract before installing or uninstalling."

@@ -2833,3 +2833,11 @@ dialog .dialog-actions {
 .brand-home span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 .brand-home,#collapse { -webkit-app-region:no-drag; }
+
+.settings-trigger { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; }
+#settings-dialog { width:min(440px, calc(100vw - 48px)); }
+#settings-dialog label { display:block; margin-bottom:8px; font-weight:500; }
+#update-track { width:100%; }
+.settings-description, #update-status { font-size:13px; line-height:1.6; color:var(--muted); }
+
+#settings-dialog .dialog-actions { flex-wrap:wrap; }

@@ -1,3 +1,4 @@
+const { UpdateService } = require('./src/updates.cjs');
 import projectTrust = require('./src/project-trust.cjs');
 const { texBin } = require('./src/tex-toolchain.cjs');
 const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
@@ -24,6 +25,7 @@ let flushSnapshots = () => {};
 let hasPendingSnapshots = () => false;
 let shuttingDown = false;
 let allowQuit = false;
+let installUpdateAfterShutdown: (() => void) | undefined;
 let mainWindow: any = null;
 let waitForAssistants = async () => {};
 let cancelCompilations = () => {};
@@ -55,11 +57,27 @@ function beginShutdown() {
       try {await pending;} catch(error) {console.error(error);}
       if(pending===writes && !hasPendingSnapshots()) break;
     }
-    allowQuit=true;app.quit();
+    allowQuit=true;
+    if (installUpdateAfterShutdown) {
+      installUpdateAfterShutdown();
+      // Also exit if the installer cannot launch; a later app launch can retry.
+      setImmediate(() => app.quit());
+    } else app.quit();
   })().catch(error=>{console.error(error);allowQuit=true;app.quit();});
 }
 if (process.env.REFRACT_DATA_DIR) app.setPath('userData', process.env.REFRACT_DATA_DIR);
 app.whenReady().then(async () => {
+  const updates = new UpdateService(path.join(app.getPath('userData'), 'update-settings.json'), app.getVersion(), app.isPackaged && process.platform === 'win32');
+  await updates.start();
+  app.on('before-quit', () => updates.stop());
+  ipcMain.handle('updates:status', () => updates.status());
+  ipcMain.handle('updates:check', async () => { await updates.check(); return updates.status(); });
+  ipcMain.handle('updates:restart', () => {
+    if (shuttingDown) throw new Error('Refract is already closing');
+    installUpdateAfterShutdown = updates.prepareRestart();
+    beginShutdown();
+  });
+  ipcMain.handle('updates:track', (_, track: unknown) => updates.setTrack(track));
   ipcMain.handle('providers:discover', () => require('./src/providers.cjs').discoverProviders());
   const store = new ProjectStore(path.join(app.getPath('userData'), 'projects'));
   const cleanupDeletedProjects=()=>{
