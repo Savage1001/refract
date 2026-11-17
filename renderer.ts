@@ -41,7 +41,63 @@ function restoreChatDraft(id:string,chatId:string) {const draft=readChatDraft(dr
 const $ = (s: string): any => document.querySelector(s);
 function updateSendState() {$('#send').disabled=!active || !providerAvailable || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
 function setEditorReadOnly(value:boolean) {$('#source').readOnly=value;completionButton.disabled=value || $('.source-container').hidden;}
-function report(action, error) { alert(`Could not ${action}: ${error.message}`); }
+type AppDialogOptions = {
+  title: string;
+  message?: string;
+  action: string;
+  cancel?: boolean;
+  choices?: string[];
+};
+
+const appDialog = document.querySelector<HTMLDialogElement>('#app-dialog')!;
+const appDialogTitle = document.querySelector<HTMLElement>('#app-dialog-title')!;
+const appDialogMessage = document.querySelector<HTMLElement>('#app-dialog-message')!;
+const appDialogCancel = document.querySelector<HTMLButtonElement>('#app-dialog-cancel')!;
+const appDialogAction = document.querySelector<HTMLButtonElement>('#app-dialog-action')!;
+const appDialogChoices = document.querySelector<HTMLSelectElement>('#app-dialog-choices')!;
+let dialogQueue = Promise.resolve();
+
+function showAppDialog(options: AppDialogOptions): Promise<string> {
+  const result = dialogQueue.then(() => new Promise<string>(resolve => {
+    appDialogTitle.textContent = options.title;
+    appDialogMessage.textContent = options.message ?? '';
+    appDialogMessage.hidden = !options.message;
+    appDialogCancel.hidden = !options.cancel;
+    appDialogAction.textContent = options.action;
+    appDialogChoices.hidden = !options.choices;
+    appDialogChoices.replaceChildren(...(options.choices ?? []).map((name, index) => new Option(name, String(index))));
+    if (options.choices) appDialogChoices.add(new Option('Import all', 'all'));
+    appDialog.returnValue = 'cancel';
+    appDialog.addEventListener('close', () => {
+      resolve(appDialog.returnValue === 'accept' ? options.choices ? appDialogChoices.value : 'accept' : 'cancel');
+    }, {once: true});
+    appDialog.showModal();
+    (options.choices ? appDialogChoices : options.cancel ? appDialogCancel : appDialogAction).focus();
+  }));
+  dialogQueue = result.then(() => {}, () => {});
+  return result;
+}
+
+async function confirmAction(title: string, action: string, message?: string): Promise<boolean> {
+  return await showAppDialog({title, message, action, cancel: true}) === 'accept' && !document.documentElement.inert;
+}
+
+function report(action: string, error: unknown) {
+  void showAppDialog({title: `Could not ${action}`, message: error instanceof Error ? error.message : String(error), action: 'Close'});
+}
+
+store.onShutdownNotice((title: string, message: string, action: string) => {
+  void showAppDialog({title, message, action});
+});
+store.onImportRoot(async (choices: string[]) => {
+  const selection = await showAppDialog({
+    title: 'Select the main LaTeX document',
+    message: 'The selected document will be used to compile the imported project.',
+    choices, action: 'Import', cancel: true
+  });
+  if (document.documentElement.inert || selection === 'cancel') return null;
+  return selection === 'all' ? choices : choices[Number(selection)] ?? null;
+});
 function showRestoreNotice(visible:boolean) {
   let notice=$('#restore-notice');
   if(!notice) {notice=document.createElement('div');notice.id='restore-notice';notice.setAttribute('role','status');notice.textContent='Temporary restore data remains in this project. It has been preserved because it could not be safely cleaned.';$('#workspace').prepend(notice);}
@@ -120,7 +176,7 @@ function renderProjects() {
     const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project →'; openHint.setAttribute('aria-hidden','true');
     name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!remove.disabled) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
     remove.textContent='Delete';remove.className='project-delete';remove.setAttribute('aria-label',`Delete ${p.name}`);
-    remove.onclick=async event=>{event.stopPropagation();if(!confirm(`Move ${p.name} to Deleted projects?`))return;remove.disabled=true;try{await store.trashProject(p.id);projects=await store.list();renderProjects();}catch(error){report('delete project',error);remove.disabled=false;}};
+    remove.onclick=async event=>{event.stopPropagation();if(!await confirmAction(`Move ${p.name} to Deleted projects?`, 'Delete project'))return;remove.disabled=true;try{await store.trashProject(p.id);projects=await store.list();renderProjects();}catch(error){report('delete project',error);remove.disabled=false;}};
     const actions=document.createElement('details'); actions.className='project-actions';
     const actionLabel=document.createElement('summary'); actionLabel.textContent='Actions'; actionLabel.setAttribute('aria-label',`Actions for ${p.name}`);
     actions.addEventListener('click',event=>event.stopPropagation());
@@ -970,7 +1026,7 @@ $('#new-chat').onclick = async () => {
   catch (error) { if(active?.id===id && request===chatOpening) report('create chat', error); }
   finally {if(active?.id===id && request===chatOpening){chatLoading=false;updateSendState();}}
 };
-$('#import').onclick = async () => { try { const project = await store.importProject(); if (project) { projects = await store.list(); renderProjects(); await openProject(project); } } catch (error) { report('import project', error); } };
+$('#import').onclick = async () => { $('#import').disabled = true; try { const project = await store.importProject(); if (project) { projects = await store.list(); renderProjects(); await openProject(project); } } catch (error) { report('import project', error); } finally { $('#import').disabled = false; } };
 $('#export-project').onclick = () => { if (active) store.exportProject(active.id).catch(error => report('export project', error)); };
 function highlightLatex(text) {
   const fragment = document.createDocumentFragment();
@@ -1390,7 +1446,7 @@ async function renderVersions() {
       restore.disabled = !version.files.includes(currentFile) || chatBusy.has(id) || !!restoringProject;
       restore.onclick = async () => {
         const file = currentFile;
-        if (!confirm(`Restore ${file} from this version?`)) return;
+        if (!await confirmAction(`Restore ${file} from this version?`, 'Restore file') || active?.id !== id || restoringProject || chatBusy.has(id)) return;
         try { await store.versionRestoreFile(id, version.id, file); if (active?.id === id) { await openFile(file); revision++; scheduleCompile(); await renderVersions(); } }
         catch (error) { report('restore file', error); }
       };
@@ -1398,7 +1454,7 @@ async function renderVersions() {
       restoreProject.disabled = chatBusy.has(id) || !!restoringProject;
       restoreProject.onclick = async () => {
         if (restoringProject || chatBusy.has(id)) return;
-        if (!confirm('Restore all project files from this version? The current project will be saved as a version first.')) return;
+        if (!await confirmAction('Restore all project files from this version?', 'Restore project', 'The current project will be saved as a version first.') || active?.id !== id || restoringProject || chatBusy.has(id)) return;
         restoringProject = id; setEditorReadOnly(true); revision++; scheduleCompile(); clearTimeout(compileTimer);
         try {
           const saveResults = await Promise.all([...(pendingSaves.get(id)?.values() || [])]);
@@ -1409,7 +1465,7 @@ async function renderVersions() {
             const files = await store.files(id), preferred = meta.rootFile || 'main.tex';
             if (active?.id === id) { if (files.includes(preferred)) await openFile(preferred); else if (files.length) await openFile(files[0]); else clearEditor(); }
           }
-          if (cleanupPending) {if(active?.id===id)showRestoreNotice(true);alert('The project was restored, but temporary restore data remains in the project folder because it could not be safely cleaned.');}
+          if (cleanupPending) {if(active?.id===id)showRestoreNotice(true);void showAppDialog({title: 'Project restored', message: 'Temporary restore data remains in the project folder because it could not be safely cleaned.', action: 'Close'});}
         } catch (error) { if (active?.id === id) report('restore project', error); }
         finally {
           restoringProject = null;
@@ -1568,7 +1624,7 @@ $('#folder-delete').onclick=async()=>{
   const name=menuFolder,id=active?.id;$('#folder-menu').hidden=true;
   if(!name || !id || restoringProject) return;
   if(chatBusy.has(id)){report('delete folder',new Error('Wait for the assistant to finish.'));return;}
-  if(!confirm(`Move ${name} and its contents to Deleted files?`)) return;
+  if(!await confirmAction(`Move ${name} and its contents to Deleted files?`, 'Delete folder') || active?.id !== id || restoringProject || chatBusy.has(id)) return;
   restoringProject=id;setEditorReadOnly(true);revision++;scheduleCompile();clearTimeout(compileTimer);
   try {
     const saves=await Promise.all([...(pendingSaves.get(id)?.values() || [])]);if(saves.some(Boolean)) throw new Error('Save pending changes before deleting the folder.');
@@ -1615,7 +1671,7 @@ $('#rename-file-dialog').onclose = async () => {
 $('#file-download').onclick = () => { $('#file-menu').hidden = true; if (active && menuFile) store.downloadFile(active.id, menuFile).catch(error => report('download file',error)); };
 $('#file-delete').onclick = async () => {
   $('#file-menu').hidden = true; if (!active || !menuFile) return;
-  const id = active.id, name = menuFile; if (!confirm(`Delete ${name}?`)) return;
+  const id = active.id, name = menuFile; if (!await confirmAction(`Delete ${name}?`, 'Delete file') || active?.id !== id) return;
   try { await store.trashFile(id,name); if (active?.id === id) { await refreshFiles(); openFiles = openFiles.filter(f => f !== name); if (currentFile === name) { currentFile = ''; if (openFiles.length) await openFile(openFiles.at(-1)); else clearEditor(); } renderFileTabs(); revision++; scheduleCompile(); } }
   catch (error) { report('delete file',error); }
 };
@@ -1636,7 +1692,7 @@ $('#trash-close').onclick=()=>$('#trash-dialog').close();
 document.addEventListener('click', event => { if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus(true); });
 $('#duplicate').onclick = async () => {
   if (!active) return; const id = active.id;
-  if (!confirm(`Duplicate ${active.name}?`)) return;
+  if (!await confirmAction(`Duplicate ${active.name}?`, 'Duplicate') || active?.id !== id) return;
   try { const project = await store.duplicate(id); projects = await store.list(); renderProjects(); await openProject(project); }
   catch (error) { report('duplicate project', error); }
 };

@@ -14,6 +14,34 @@ const launchDesktop=async(env:NodeJS.ProcessEnv,fakeCodex=false)=>{
  if(fakeCodex)await useFakeCodex(app);return app;
 };
 
+test('ZIP import offers an in-app choice of main LaTeX document', {timeout:60000}, async t => {
+ const data = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-ui-import-'));
+ const archive = path.join(data, 'papers.zip');
+ const Zip = require('adm-zip'), zip = new Zip();
+ for (const file of ['first.tex', 'second.tex']) {
+  zip.addFile(file, Buffer.from('\\documentclass{article}\n\\begin{document}\n' + file + '\n\\end{document}'));
+ }
+ zip.writeZip(archive);
+ const env: NodeJS.ProcessEnv = {...process.env, REFRACT_DATA_DIR:data, REFRACT_TEST_HIDDEN:'1'};
+ delete env.ELECTRON_RUN_AS_NODE;
+ const app = await launchDesktop(env);
+ t.after(async () => { await app.close(); await fs.rm(data, {recursive:true,force:true}); });
+ await app.evaluate(({dialog}, file) => {
+  dialog.showOpenDialog = async () => ({canceled:false, filePaths:[file]});
+ }, archive);
+ const page = await app.firstWindow();
+ const picker = page.getByRole('dialog', {name:'Select the main LaTeX document'});
+ await page.locator('#import').click();
+ await picker.getByRole('button', {name:'Cancel'}).click();
+ await picker.waitFor({state:'hidden'});
+ assert.equal(await page.evaluate(async () => (await store.list()).length), 0);
+ await page.locator('#import').click();
+ await picker.getByRole('combobox', {name:'Main LaTeX document'}).selectOption({label:'second.tex'});
+ await picker.getByRole('button', {name:'Import', exact:true}).click();
+ await page.locator('#source').waitFor({state:'visible'});
+ assert.match(await page.locator('#source').inputValue(), /second\.tex/);
+});
+
 test('multi-file paper edits and recompiles after restart', {timeout:120000}, async t => {
  const data:string=await fs.mkdtemp(path.join(os.tmpdir(),'refract-ui-paper-'));
  const {ProjectStore}=require('../src/project-store.cjs'), projectStore=new ProjectStore(path.join(data,'projects'));
@@ -135,8 +163,7 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.evaluate(async () => { const projects = await store.list(); await store.versionSnapshot(projects[0].id); });
  await page.locator('#tool-versions').click();
  await page.locator('.version-row').last().waitFor();
- page.once('dialog', dialog => dialog.accept());
- await page.locator('.version-row').last().getByRole('button', {name:'Restore file'}).click();
+ await page.locator('.version-row').last().getByRole('button', {name:'Restore file'}).click(); await page.locator('#app-dialog-action').click();
  await page.waitForFunction(expected => (document.querySelector('#source') as HTMLTextAreaElement).value === expected, source);
  await page.locator('#source').fill(source.replace('Introduction', 'Test Section'));
  await page.locator('#tools').click();
@@ -153,8 +180,15 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.locator('#list article').first().click();
  await page.locator('#source').waitFor({state:'visible'});
  assert.match(await page.locator('#source').inputValue(), /Test Section/);
- page.once('dialog', dialog => dialog.accept());
  await page.locator('#duplicate').click();
+ const duplicateDialog = page.getByRole('dialog', {name:/Duplicate Research paper/});
+ await duplicateDialog.waitFor();
+ assert.equal(await duplicateDialog.getByRole('button', {name:'Cancel'}).evaluate(button => button === document.activeElement), true);
+ await page.keyboard.press('Escape');
+ await duplicateDialog.waitFor({state:'hidden'});
+ assert.equal(await page.locator('#duplicate').evaluate(button => button === document.activeElement), true);
+ await page.locator('#duplicate').click();
+ await duplicateDialog.getByRole('button', {name:'Duplicate', exact:true}).click();
  await page.getByRole('button',{name:'Research paper (copy)',exact:true}).waitFor();
  await page.locator('#source').waitFor({state:'visible'});
  assert.match(await page.locator('#source').inputValue(), /Test Section/);
@@ -178,15 +212,13 @@ test('a failed save prevents compilation until the same file is saved successful
  const [id] = (await fs.readdir(path.join(data,'projects'))).filter((name:string)=>/^[0-9a-f-]{36}$/.test(name));
  const file = path.join(data,'projects',id,'main.tex'), backup = path.join(data,'main-backup.tex');
  await fs.rename(file,backup); await fs.mkdir(file);
- const alert = page.waitForEvent('dialog');
  await page.locator('#source').fill(source + '\nSave must fail');
- const dialog = await alert; assert.match(dialog.message(),/save file/i); await dialog.accept();
+ await page.getByRole('dialog',{name:/could not save file/i}).waitFor(); await page.locator('#app-dialog-action').click();
  await page.getByText('Errors',{exact:true}).waitFor({timeout:30000});
  assert.match(await page.locator('#pdf-area').innerText(),/Cannot compile until the file is saved/);
  assert.equal(await page.locator('#download').isDisabled(),true);
- const chatAlert=page.waitForEvent('dialog');
  await page.locator('#chat-input').fill('Keep this draft');const sendAttempt=page.locator('#send').click();
- const chatDialog=await chatAlert;assert.match(chatDialog.message(),/Save pending changes/);await chatDialog.accept();await sendAttempt;
+ await sendAttempt; await page.locator('#app-dialog').getByText(/Save pending changes/).waitFor(); await page.locator('#app-dialog-action').click();
  assert.equal(await page.locator('#chat-input').inputValue(),'Keep this draft');
  assert.match(await page.locator('#source').inputValue(),/Save must fail/);
  assert.equal(await app.evaluate(()=>(globalThis as any).__assistantRan===true),false);
@@ -224,7 +256,7 @@ test('version comparison and project restore recover deleted and changed files',
  assert.equal(await changedFile.locator('.version-content').first().evaluate(el => getComputedStyle(el).whiteSpace), 'pre');
  await wrap.click();
  assert.equal(await changedFile.locator('.version-content').first().evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
- page.once('dialog',dialog=>dialog.accept()); await oldRow.getByRole('button',{name:'Restore project'}).click();
+ await oldRow.getByRole('button',{name:'Restore project'}).click(); await page.locator('#app-dialog-action').click();
  await page.waitForFunction(expected=>(document.querySelector('#source') as HTMLTextAreaElement).value===expected,original);
  await assert.rejects(fs.access(path.join(data,'projects',id,'added.txt')));
  const versions=await page.evaluate(id=>store.versionList(id),id);
@@ -242,11 +274,10 @@ test('project restore warns when staging data cannot be cleaned', {timeout:60000
  await page.locator('#source').fill(original+'\n% changed');await page.evaluate(id=>store.read(id,'main.tex'),id);
  await app.evaluate(({app})=>{const req=(process.getBuiltinModule('module') as any).createRequire(app.getAppPath()+'\\package.json');const {Versions}=req('./build/src/versions.cjs');Versions.prototype.cleanStage=async()=>{};});
  await page.locator('#tools').click();await page.locator('#tool-versions').click();const oldRow=page.locator('.version-row').last();await oldRow.waitFor();
- let warning='';page.on('dialog',dialog=>{if(dialog.type()==='alert')warning=dialog.message();void dialog.accept();});
- await oldRow.getByRole('button',{name:'Restore project'}).click();
+ await oldRow.getByRole('button',{name:'Restore project'}).click(); await page.locator('#app-dialog-action').click();
  await page.waitForFunction(expected=>(document.querySelector('#source') as HTMLTextAreaElement).value===expected,original);
  await page.waitForFunction(()=>!(document.querySelector('#source') as HTMLTextAreaElement).readOnly);
- assert.match(warning,/restored.*temporary restore data remains/i);
+ await page.getByRole('dialog',{name:'Project restored'}).getByText(/temporary restore data remains/i).waitFor(); await page.locator('#app-dialog-action').click();
  assert.equal(await page.locator('#restore-notice').isVisible(),true);
 });
 
@@ -382,7 +413,7 @@ test('deleted files can be restored from the project UI', {timeout:60000}, async
  const page=await app.firstWindow();await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  await page.evaluate(async()=>{const [p]=await store.list();await store.createFile(p.id,'recover.txt');await store.write(p.id,'recover.txt','saved content');});
  await page.locator('#home').click();await page.locator('#list article').first().click();await page.locator('#file-list button[title="recover.txt"]').waitFor();
- await page.locator('#file-list button[title="recover.txt"]').click({button:'right'});page.once('dialog',dialog=>dialog.accept());await page.locator('#file-delete').click();
+ await page.locator('#file-list button[title="recover.txt"]').click({button:'right'});await page.locator('#file-delete').click(); await page.locator('#app-dialog-action').click();
  await page.locator('#file-list button[title="recover.txt"]').waitFor({state:'detached'});
  await page.locator('#deleted-files').click();await page.getByText('recover.txt',{exact:true}).waitFor();
  await page.locator('#trash-list').getByRole('button',{name:'Restore'}).click();await page.getByText('No deleted files',{exact:true}).waitFor();
@@ -456,7 +487,7 @@ test('deleted folders can be restored from the project UI', {timeout:60000}, asy
  let page=await app.firstWindow();await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  const id=await page.evaluate(async()=>{const [p]=await store.list();await store.createFolder(p.id,'chapters/empty');await store.renameFile(p.id,'main.tex','chapters/main.tex');const s=await store.read(p.id,'chapters/main.tex'),start=s.indexOf('Introduction');await store.commentAdd(p.id,'chapters/main.tex','Introduction','Review',{start,end:start+12});return p.id;});
  await page.locator('#home').click();await page.locator('#list article').first().click();await page.locator('#source').waitFor({state:'visible'});
- await page.locator('#file-list summary[title="chapters"]').click({button:'right'});page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Delete folder'}).click();
+ await page.locator('#file-list summary[title="chapters"]').click({button:'right'});await page.getByRole('button',{name:'Delete folder'}).click(); await page.locator('#app-dialog-action').click();
  await page.locator('#file-list summary[title="chapters"]').waitFor({state:'detached'});await page.locator('#deleted-files').click();await page.getByText('chapters/',{exact:true}).waitFor();
  await page.locator('#trash-list').getByRole('button',{name:'Restore'}).click();await page.getByText('No deleted files',{exact:true}).waitFor();await page.locator('#trash-close').click();
  await page.locator('#file-list button[title="chapters/main.tex"]').waitFor();await page.locator('#source').waitFor({state:'visible'});
@@ -485,7 +516,7 @@ test('project list sorts and restores deleted projects with their comments', {ti
  await page.getByRole('combobox',{name:'Sort projects'}).selectOption('newest');assert.match((await page.locator('#list article span:first-child').allTextContents())[0],/Alpha/);
  await page.getByRole('combobox',{name:'Sort projects'}).selectOption('name');
  const names=await page.locator('#list article span:first-child').allTextContents();assert.match(names[0],/Alpha/);assert.match(names[1],/Zeta/);
- await page.getByLabel('Actions for Zeta').click();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Delete Zeta'}).click();
+ await page.getByLabel('Actions for Zeta').click();await page.getByRole('button',{name:'Delete Zeta'}).click(); await page.locator('#app-dialog-action').click();
  await page.getByRole('button',{name:'Open Zeta'}).waitFor({state:'detached'});
  await app.close();app=null;app=await launchDesktop(env);page=await app.firstWindow();await page.getByRole('button',{name:'Open Alpha'}).waitFor();
  await page.getByRole('button',{name:'Deleted projects'}).click();await page.getByText('Zeta',{exact:true}).waitFor();
@@ -508,7 +539,7 @@ test('project rename, duplication and engine setting persist independently', {ti
  await page.waitForFunction(()=>{const input=document.querySelector('select[aria-label="LaTeX engine"]') as HTMLSelectElement;return input?.value==='xelatex' && !input.disabled;});
  await page.locator('#tools').click();
  await page.getByText('Compiled',{exact:true}).waitFor({timeout:45000});
- page.once('dialog',dialog=>dialog.accept());await page.locator('#duplicate').click();await page.locator('#project-name').getByText('Research (copy)',{exact:true}).waitFor();
+ await page.locator('#duplicate').click();await page.locator('#app-dialog-action').click();await page.locator('#project-name').getByText('Research (copy)',{exact:true}).waitFor();
  await page.locator('#home').click();await page.getByRole('button',{name:'Open Research (copy)'}).waitFor();
  await app.close();app=null;app=await launchDesktop(env);page=await app.firstWindow();
  await page.getByRole('button',{name:'Open Research',exact:true}).waitFor();await page.getByRole('button',{name:'Open Research (copy)'}).click();await page.locator('#source').waitFor({state:'visible'});
@@ -1113,8 +1144,9 @@ test('failed send reload cannot replace a newly selected conversation', {timeout
   let held=false;ChatService.prototype.load=async function(id,chatId){if(chatId==='default' && !held){held=true;state.__reloadNotify();await new Promise<void>(resolve=>state.__reloadRelease=resolve);}return load.call(this,id,chatId);};
   ipcMain.removeHandler('chat:send');ipcMain.handle('chat:send',()=>{throw new Error('Simulated failure');});
  });
- page.once('dialog',dialog=>dialog.accept());await page.locator('#chat-input').fill('Retry me');await page.locator('#send').click();
+ await page.locator('#chat-input').fill('Retry me');await page.locator('#send').click();
  await app.evaluate(async()=>await (globalThis as any).__reloadStarted);
+ if (await page.locator('#app-dialog').isVisible()) await page.locator('#app-dialog-action').click();
  await page.getByRole('button',{name:'Other conversation',exact:true}).click();await page.getByText('Other reply',{exact:true}).waitFor();
  await app.evaluate(()=>(globalThis as any).__reloadRelease());await page.waitForFunction(()=>!(document.querySelector('#send') as HTMLButtonElement).disabled);
  assert.equal(await page.getByText('Other reply',{exact:true}).count(),1);
@@ -1151,7 +1183,7 @@ test('attachment selection enforces the message limit and blocks sending while p
  await page.locator('#attach').click();await page.waitForFunction(()=>document.querySelectorAll('#attachment-list button').length===10);assert.equal(await page.locator('#attach').isDisabled(),true);
  await page.locator('#attachment-list button').first().click();assert.equal(await page.locator('#attach').isDisabled(),false);
  await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file,file]});},file);
- await page.locator('#attach').click();await page.waitForFunction(()=>!(document.querySelector('#attach') as HTMLButtonElement).disabled);assert.match(dialogs[0],/at most 1/);
+ await page.locator('#attach').click();await page.waitForFunction(()=>!(document.querySelector('#attach') as HTMLButtonElement).disabled);await page.locator('#app-dialog').getByText(/at most 1/).waitFor(); await page.locator('#app-dialog-action').click(); assert.deepEqual(dialogs,[]);
  assert.equal((await fs.readdir(path.join(projectStore.projectDir(project.id),'.refract-attachments'))).length,10);
  await app.evaluate(({dialog,ipcMain},file)=>{const state=globalThis as any;state.__sent=0;state.__attachStarted=new Promise<void>(resolve=>{state.__attachNotify=resolve;});dialog.showOpenDialog=async()=>{state.__attachNotify();await new Promise<void>(resolve=>{state.__attachRelease=resolve;if(state.__attachCancel)resolve();});return {canceled:false,filePaths:[file]};};ipcMain.removeHandler('chat:send');ipcMain.handle('chat:send',async()=>{state.__sent++;return {messages:[]};});},file);
  await page.locator('#chat-input').fill('Wait for attachment');await page.locator('#attach').click();await app.evaluate(async()=>await (globalThis as any).__attachStarted);assert.equal(await page.locator('#send').isDisabled(),true);await page.locator('#send').dispatchEvent('click');assert.equal(await app.evaluate(()=>(globalThis as any).__sent),0);

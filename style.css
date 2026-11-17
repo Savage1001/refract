@@ -3052,3 +3052,16 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite, .model-fa
 .file-tab.active .close-tab:is(:hover, :focus-visible) {
   background:color-mix(in srgb, var(--hover), var(--text) 8%);
 }
+
+#app-dialog h2,
+#app-dialog-message {
+  overflow-wrap:anywhere;
+}
+
+#app-dialog-message {
+  white-space:pre-wrap;
+}
+
+#app-dialog .dialog-actions {
+  flex-wrap:wrap;
+}
