@@ -117,7 +117,7 @@ function renderProjects() {
   $('#list').replaceChildren(...matches.map(p => {
     const row = document.createElement('article'), name = document.createElement('button'), date = document.createElement('span'), remove=document.createElement('button');
     const projectLabel = document.createElement('span'); projectLabel.className='project-label'; projectLabel.textContent=p.name;
-    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project â†’'; openHint.setAttribute('aria-hidden','true');
+    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project →'; openHint.setAttribute('aria-hidden','true');
     name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!remove.disabled) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
     remove.textContent='Delete';remove.className='project-delete';remove.setAttribute('aria-label',`Delete ${p.name}`);
     remove.onclick=async event=>{event.stopPropagation();if(!confirm(`Move ${p.name} to Deleted projects?`))return;remove.disabled=true;try{await store.trashProject(p.id);projects=await store.list();renderProjects();}catch(error){report('delete project',error);remove.disabled=false;}};
@@ -237,7 +237,7 @@ function clearFilePreview() {
 }
 async function showProjectPdf(encoded: string, request: number, id: string, name: string) {
   const panel = $('#file-preview'), loading = document.createElement('p');
-  loading.textContent = 'Loading PDFâ€¦'; panel.replaceChildren(loading); panel.hidden = false;
+  loading.textContent = 'Loading PDF…'; panel.replaceChildren(loading); panel.hidden = false;
   try {
     const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
     const pdfModulePath: string = '../node_modules/pdfjs-dist/build/pdf.mjs';
@@ -259,7 +259,7 @@ async function showProjectPdf(encoded: string, request: number, id: string, name
     const renderPage = async number => {
       const generation = ++previewGeneration;
       previous.disabled = true; next.disabled = true; count.textContent = `Page ${number} of ${doc.numPages}`;
-      pageArea.textContent = `Loading page ${number}â€¦`;
+      pageArea.textContent = `Loading page ${number}…`;
       try {
         const page = await doc.getPage(number), natural = page.getViewport({scale:1});
         if (!Number.isFinite(natural.width) || !Number.isFinite(natural.height) || natural.width <= 0 || natural.height <= 0) throw new Error('Invalid PDF page size');
@@ -412,7 +412,7 @@ let pdfDocument:PdfDocument | null = null, pdfRenderRevision=0;
 let lastPdfSync:{page:number;x:number;y:number}|null=null;
 let pdfSharpTimer: ReturnType<typeof setTimeout> | null = null;
 const pdfControls=document.createElement('div');pdfControls.className='pdf-controls';
-pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">â€¹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">â€º</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">âˆ’</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
+pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">›</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
 $('#zoom-fit').textContent='Fit width'; $('#zoom-fit').setAttribute('aria-label','Fit PDF to width');
 $('#download').replaceChildren(actionIcon('download')); $('#download').setAttribute('aria-label','Download PDF');
 $('#export-project').replaceChildren(actionIcon('export')); $('#export-project').setAttribute('aria-label','Export project');
@@ -625,7 +625,7 @@ async function compilePreview(force=false) {
   if (compileRunning) { compileQueued = true; return; }
   compileRunning = true;
   const id = active.id, version = revision;
-  $('#compile').disabled = true; $('#compile').textContent = 'Compilingâ€¦';
+  $('#compile').disabled = true; $('#compile').textContent = 'Compiling…';
   try {
     const saveResults = await Promise.all([...(pendingSaves.get(id)?.values() || [])]);
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
@@ -767,7 +767,7 @@ async function sendChat() {
   const id = active.id, chatId = currentChat, prompt = $('#chat-input').value, images = attachments, provider = ($('#chat-provider') as HTMLSelectElement).value;
   $('#chat-provider').disabled = true; $('#chat-provider').dispatchEvent(new Event('providerstate'));
   attachments = []; renderAttachments();
-  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparingâ€¦'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
+  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
   saveChatDraft();
   const pending = document.createElement('div'); pending.className = 'message user'; pending.textContent = prompt;
   if ($('#chat-messages .dismiss-welcome')) $('#chat-messages').replaceChildren(pending); else $('#chat-messages').append(pending);
@@ -827,7 +827,7 @@ $('#send').before(cancelChatButton);
 function updateCancelButton() {cancelChatButton.hidden=!active || !chatBusy.has(active.id);cancelChatButton.disabled=false;cancelChatButton.setAttribute('aria-label','Stop');$('#send').hidden=!cancelChatButton.hidden;}
 cancelChatButton.onclick=async()=>{
   if(!active || !chatBusy.has(active.id)) return;
-  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stoppingâ€¦');
+  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stopping…');
   try {await store.chatCancel(id);} catch(error) {if(active?.id===id){report('stop assistant',error);updateCancelButton();}}
 };
 $('#send').onclick = sendChat;
@@ -904,7 +904,7 @@ async function refreshChats() {
       finally {if(active?.id===id && request===chatOpening){chatLoading=false;updateSendState();}}
     };
     const row = document.createElement('div'); row.className = 'chat-row';
-    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = 'âœŽ'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
+    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = '✎'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
     rename.onclick = () => {
       const input = document.createElement('input'); input.value = chat.title; input.maxLength = 100; input.setAttribute('aria-label', 'Chat name');
       row.replaceChildren(input); input.focus(); input.select();
@@ -947,7 +947,7 @@ function highlightLatex(text) {
 // path so saving, comment anchors, compilation and undo remain consistent.
 const findPanel = document.createElement('div');
 findPanel.className = 'editor-find'; findPanel.hidden = true;
-findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">â†‘</button><button type="button" aria-label="Next match">â†“</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">Ã—</button>';
+findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">↑</button><button type="button" aria-label="Next match">↓</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">×</button>';
 const wrapLabel=document.createElement('label');wrapLabel.innerHTML='<input type="checkbox" aria-label="Wrap search" checked> Wrap';
 findPanel.insertBefore(wrapLabel,findPanel.querySelector('[aria-label="Previous match"]'));
 $('.editor-wrap').before(findPanel);
@@ -1016,7 +1016,7 @@ function findPositions(): number[] {
 }
 function updateFindStatus() {
   const positions=findPositions(), index=positions.findIndex(position=>position===sourceEditor.selectionStart && sourceEditor.selectionEnd===position+findInput.value.length);
-  findStatus.textContent=positions.length ? `${index<0 ? 'â€“' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
+  findStatus.textContent=positions.length ? `${index<0 ? '–' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
 }
 function findNext(backward=false) {
   const positions=findPositions();
@@ -1378,7 +1378,7 @@ async function renderVersions() {
         row.classList.toggle('comparison-selected', compare.open); body.classList.toggle('has-open-comparison', compare.open);
         if (!compare.open) return;
         if (window.matchMedia('(min-width: 1201px)').matches) { $('#workspace').classList.add('tools-expanded'); expandTools.textContent='Collapse panel'; expandTools.setAttribute('aria-label','Collapse tools panel'); }
-        changes.textContent = 'Loading changesâ€¦';
+        changes.textContent = 'Loading changes…';
         try {
           const differences = await store.versionCompare(id,version.id);
           if (active?.id !== id || !compare.open) return;
