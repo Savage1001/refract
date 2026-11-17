@@ -243,7 +243,8 @@ h2 {
   gap:10px;
   font-size:15px;
   font-weight:650;
-  padding:0;
+  padding:6px 8px;
+  margin-left:-8px;
   border:0;
   min-width:0;
   letter-spacing:-.02em;
@@ -1259,11 +1260,12 @@ main {
 .composer textarea {
   display:block;
   width:100%;
-  height:52px;
+  field-sizing:content;
+  height:auto;
   min-height:36px;
   max-height:120px;
   border:0;
-  resize:vertical;
+  resize:none;
   background:transparent;
   padding:4px;
   outline:none;
@@ -1711,8 +1713,9 @@ main {
 }
 
 .provider-logo {
-  display:inline-grid;
-  place-items:center;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
   width:16px;
   height:16px;
   flex:none;
@@ -1720,6 +1723,7 @@ main {
 }
 
 .provider-logo img {
+  flex:none;
   width:16px;
   height:16px;
   object-fit:contain;
@@ -1810,7 +1814,7 @@ main {
   height:16px;
   flex:none;
   background:currentColor;
-  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 9a7.2 7.2 0 1 0 .2 5'/%3E%3Cpath d='m16 9 3.5.1L20 5.5'/%3E%3C/svg%3E") center/contain no-repeat;
 }
 
 .pdf-pane header #compile:disabled::before {
@@ -1819,6 +1823,11 @@ main {
 
 .pdf-pane header #download,.pdf-pane header #export-project {
   color:var(--muted);
+}
+
+.pdf-pane header #download .ui-icon,.pdf-pane header #export-project .ui-icon {
+  width:22px;
+  height:22px;
 }
 
 .pdf-controls {
@@ -1838,11 +1847,18 @@ main {
   padding:3px 5px;
 }
 
-.pdf-controls input {
-  width:40px;
+.pdf-controls .pdf-page-count input {
+  width:4ch;
+  min-width:28px;
+  box-sizing:content-box;
   text-align:center;
   font-size:12px;
-  padding:4px;
+  padding:3px 5px;
+}
+
+.pdf-controls .pdf-current-page {
+  min-width:28px;
+  font-size:12px;
 }
 
 .pdf-page-count,.pdf-zoom-value {
@@ -2769,10 +2785,6 @@ dialog .dialog-actions {
     margin-bottom:4px;
   }
 
-  .composer textarea {
-    height:40px;
-  }
-
   #chat-messages>p {
     margin-bottom:4px;
   }
@@ -2783,15 +2795,6 @@ dialog .dialog-actions {
 
 }
 
-.editor-keyboard-hint {
-  margin-left:auto;
-  padding:4px 6px;
-  color:var(--muted);
-  font-size:11px;
-}
-#project-trust {margin:8px 0;flex:none;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;line-height:1.45;}
-#project-trust p {margin:8px 0;color:var(--text);}
-#project-trust button {white-space:normal;width:100%;}
 
 #file-list button:has(.tree-image-thumbnail){align-items:center}
 #file-list .tree-image-thumbnail{width:32px;height:32px;flex:none;object-fit:contain;border-radius:4px;background:#8882}
@@ -2810,20 +2813,35 @@ dialog .dialog-actions {
 .pdf-controls button { display:inline-grid; place-items:center; min-width:28px; min-height:28px; }
 #file-search-toggle[aria-pressed="true"] { background:var(--selected); color:var(--text); }
 
-#project-trust summary { cursor:pointer; font-weight:550; color:var(--sidebar-muted); }
 
 .sidebar-actions { display:flex; align-items:center; gap:4px; padding:4px 0 8px; border-bottom:1px solid var(--border); flex:none; }
 .sidebar-actions>button { display:inline-grid; place-items:center; width:32px; height:32px; padding:6px; color:var(--sidebar-muted); flex:none; }
 .sidebar-actions>button:hover { color:var(--text); }
 .sidebar-actions>button[aria-pressed="true"] { color:var(--text); }
 
-.layout-menu { position:relative; font-size:12px; }
-.layout-menu>summary { cursor:pointer; padding:7px 10px; border:1px solid var(--input); border-radius:6px; }
-.layout-panel { position:absolute; top:calc(100% + 8px); right:0; z-index:45; width:220px; padding:14px; background:var(--surface); border:1px solid var(--input); border-radius:8px; box-shadow:0 8px 24px var(--shadow); }
-.layout-panel label { display:block; color:var(--muted); }
-.layout-panel select { display:block; width:100%; margin:8px 0 14px; color:var(--text); }
-.layout-panel .agent-layout-option { display:flex; align-items:center; gap:8px; color:var(--text); cursor:pointer; }
-.layout-panel input { accent-color:var(--accent); }
+/* One source of visibility for all pane combinations, including narrow windows. */
+.pane-toggles { display:flex; gap:2px; padding:3px; border:1px solid var(--input); border-radius:8px; }
+.workspace-view-controls .pane-toggle { display:grid; place-items:center; width:32px; height:30px; padding:6px; border:0; background:transparent; color:var(--muted); border-radius:4px; }
+.workspace-view-controls .pane-toggle[aria-pressed="true"] { background:var(--selected); color:var(--text); box-shadow:inset 0 0 0 1px var(--input); }
+.workspace-view-controls .pane-toggle:hover { background:var(--hover); color:var(--text); }
+#workspace.pane-layout .pdf-pane { display:flex; flex:1; min-width:0; }
+#workspace.pane-layout .workspace-handle { display:block; }
+#workspace.pane-layout.pane-preview-hidden .pdf-pane,
+#workspace.pane-layout.pane-preview-hidden .workspace-handle,
+#workspace.pane-layout.pane-left-hidden .editor-pane,
+#workspace.pane-layout.pane-left-hidden .workspace-handle,
+#workspace.pane-layout.pane-editor-hidden .editor-header,
+#workspace.pane-layout.pane-editor-hidden .editor-wrap,
+#workspace.pane-layout.pane-editor-hidden .editor-find,
+#workspace.pane-layout.pane-agent-hidden .chat { display:none; }
+#workspace.pane-layout.pane-preview-hidden .editor-pane { flex:1!important; }
+#workspace.pane-layout.pane-editor-hidden .chat { flex:1; height:auto; max-height:none; margin-top:0; }
+#workspace.pane-layout.pane-agent-hidden.pane-editor-hidden .editor-pane { display:none; }
+#workspace.pane-layout.tools-expanded .editor-pane,
+#workspace.pane-layout.tools-expanded .workspace-handle { display:none; }
+@media(max-width:1200px) {
+  #workspace.pane-layout.pane-tools .editor-pane,#workspace.pane-layout.pane-tools .workspace-handle { display:none; }
+}
 
 .file-tree summary::-webkit-details-marker { display:none; }
 .file-tree summary>.folder-chevron { width:14px; height:14px; }
@@ -2841,3 +2859,5 @@ dialog .dialog-actions {
 .settings-description, #update-status { font-size:13px; line-height:1.6; color:var(--muted); }
 
 #settings-dialog .dialog-actions { flex-wrap:wrap; }
+
+#workspace.pane-layout.pane-editor-hidden #chat-resize { display:none; }

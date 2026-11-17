@@ -1,7 +1,7 @@
 // All action glyphs use the same view box, stroke and fixed geometry.
-type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy';
+type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview' | 'download' | 'export';
 function actionIcon(name:ActionIcon):SVGSVGElement {
-  const paths:Record<ActionIcon,string> = {search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
+  const paths:Record<ActionIcon,string> = {download:'M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4',export:'M14 3h7v7m0-7L10 14M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5',agent:'M4 4h16v12H9l-5 4V4zM8 8h8M8 12h5',editor:'M4 3h16v18H4zM8 8l-2 2 2 2M16 8l2 2-2 2M13 7l-2 7',preview:'M4 3h16v18H4zM8 7h8M8 11h8M8 15h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false',class:'ui-icon'})) svg.setAttribute(key,value);
   const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;
@@ -9,7 +9,6 @@ function actionIcon(name:ActionIcon):SVGSVGElement {
 declare const store: any;
 let projects = [], active = null, currentFile = 'main.tex', opening = 0, projectOpening = 0, currentChat = 'default';
 let revision = 0, compileTimer = null, compileRunning = false, compileQueued = false;
-let projectTrusted = false;
 let restoringProject: string | null = null;
 const chatBusy = new Set();
 const chatProgress = new Map<string,{chatId:string;status:string}>();
@@ -40,7 +39,7 @@ function readChatDraft(key:string):ChatDraft {
 function saveChatDraft() {if(active)writeChatDraft(draftKey(active.id,currentChat),{text:$('#chat-input').value,attachments:[...attachments]});}
 function restoreChatDraft(id:string,chatId:string) {const draft=readChatDraft(draftKey(id,chatId));$('#chat-input').value=draft.text;attachments=[...draft.attachments];renderAttachments();}
 const $ = (s: string): any => document.querySelector(s);
-function updateSendState() {$('#send').disabled=!active || !projectTrusted || !providerAvailable || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
+function updateSendState() {$('#send').disabled=!active || !providerAvailable || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
 function setEditorReadOnly(value:boolean) {$('#source').readOnly=value;completionButton.disabled=value || $('.source-container').hidden;}
 function report(action, error) { alert(`Could not ${action}: ${error.message}`); }
 function showRestoreNotice(visible:boolean) {
@@ -118,7 +117,7 @@ function renderProjects() {
   $('#list').replaceChildren(...matches.map(p => {
     const row = document.createElement('article'), name = document.createElement('button'), date = document.createElement('span'), remove=document.createElement('button');
     const projectLabel = document.createElement('span'); projectLabel.className='project-label'; projectLabel.textContent=p.name;
-    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project →'; openHint.setAttribute('aria-hidden','true');
+    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project â†’'; openHint.setAttribute('aria-hidden','true');
     name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!remove.disabled) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
     remove.textContent='Delete';remove.className='project-delete';remove.setAttribute('aria-label',`Delete ${p.name}`);
     remove.onclick=async event=>{event.stopPropagation();if(!confirm(`Move ${p.name} to Deleted projects?`))return;remove.disabled=true;try{await store.trashProject(p.id);projects=await store.list();renderProjects();}catch(error){report('delete project',error);remove.disabled=false;}};
@@ -238,7 +237,7 @@ function clearFilePreview() {
 }
 async function showProjectPdf(encoded: string, request: number, id: string, name: string) {
   const panel = $('#file-preview'), loading = document.createElement('p');
-  loading.textContent = 'Loading PDF…'; panel.replaceChildren(loading); panel.hidden = false;
+  loading.textContent = 'Loading PDFâ€¦'; panel.replaceChildren(loading); panel.hidden = false;
   try {
     const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
     const pdfModulePath: string = '../node_modules/pdfjs-dist/build/pdf.mjs';
@@ -260,7 +259,7 @@ async function showProjectPdf(encoded: string, request: number, id: string, name
     const renderPage = async number => {
       const generation = ++previewGeneration;
       previous.disabled = true; next.disabled = true; count.textContent = `Page ${number} of ${doc.numPages}`;
-      pageArea.textContent = `Loading page ${number}…`;
+      pageArea.textContent = `Loading page ${number}â€¦`;
       try {
         const page = await doc.getPage(number), natural = page.getViewport({scale:1});
         if (!Number.isFinite(natural.width) || !Number.isFinite(natural.height) || natural.width <= 0 || natural.height <= 0) throw new Error('Invalid PDF page size');
@@ -313,20 +312,7 @@ async function openFile(name) {
     else { $('#file-preview').textContent = file.reason; $('#file-preview').hidden = false; }
   } catch (error) { if (request === opening && active?.id === id) report('open file', error); }
 }
-async function refreshProjectTrust(id:string):Promise<void> {
-  const trusted=await store.projectTrust(id);if(active?.id!==id)return;
-  projectTrusted=trusted;
-  let panel=document.getElementById('project-trust');
-  if(!panel){panel=document.createElement('details');panel.id='project-trust';panel.setAttribute('aria-label','Project trust');$('#project-side').append(panel);}
-  const text=document.createElement('p');text.setAttribute('role','status');
-  text.textContent=trusted ? 'Trusted project: compilation and assistants run with your account access. New files and restored versions share this trust.' : 'Untrusted project: you can review and edit files. Compilation and assistants are blocked until you review and approve trust.';
-  const button=document.createElement('button');button.type='button';button.textContent=trusted?'Revoke project trust':'Review project trust';
-  button.onclick=async()=>{button.disabled=true;try {if(trusted)await store.revokeProjectTrust(id);else await store.requestProjectTrust(id);await refreshProjectTrust(id);if(active?.id===id && projectTrusted)scheduleCompile();}catch(error){report('project trust',error);}finally{button.disabled=false;}};
-  const summary=document.createElement('summary');summary.textContent=trusted?'Trusted project':'Project trust required';
-  (panel as HTMLDetailsElement).open=!trusted;panel.replaceChildren(summary,text,button);updateSendState();
-}
 async function openProject(p) {
-  projectTrusted=false;
   const request = ++projectOpening;
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
@@ -337,7 +323,6 @@ async function openProject(p) {
   $('#home-side').hidden = true; $('#project-side').hidden = false; $('#project-name').textContent = p.name;
   showRestoreNotice(false);
   try {
-    await refreshProjectTrust(p.id);if(request!==projectOpening)return;
     const retained=await store.versionRetainedStages(p.id);if(request!==projectOpening)return;showRestoreNotice(retained>0);
     await store.versionSnapshot(p.id); if (request !== projectOpening) return;
     await refreshFiles(); if (request !== projectOpening) return;
@@ -427,10 +412,10 @@ let pdfDocument:PdfDocument | null = null, pdfRenderRevision=0;
 let lastPdfSync:{page:number;x:number;y:number}|null=null;
 let pdfSharpTimer: ReturnType<typeof setTimeout> | null = null;
 const pdfControls=document.createElement('div');pdfControls.className='pdf-controls';
-pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count">0 / 0</span><button type="button" aria-label="Next compiled PDF page">›</button><input type="text" inputmode="numeric" aria-label="Go to compiled PDF page" placeholder="Page"><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
+pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">â€¹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">â€º</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">âˆ’</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
 $('#zoom-fit').textContent='Fit width'; $('#zoom-fit').setAttribute('aria-label','Fit PDF to width');
-$('#download').textContent='Download'; $('#download').setAttribute('aria-label','Download PDF');
-$('#export-project').textContent='Export'; $('#export-project').setAttribute('aria-label','Export project');
+$('#download').replaceChildren(actionIcon('download')); $('#download').setAttribute('aria-label','Download PDF');
+$('#export-project').replaceChildren(actionIcon('export')); $('#export-project').setAttribute('aria-label','Export project');
 $('#zoom-fit').before(pdfControls);
 const fitPage = document.createElement('button'); fitPage.type='button'; fitPage.className='icon fit-page'; fitPage.textContent='Fit page'; fitPage.setAttribute('aria-label','Fit PDF page to view');
 function fitPdfPage():void { const frame=pdfArea.querySelector<HTMLElement>('.pdf-pages .pdf-page-frame'); if(!frame) return; const height=frame.getBoundingClientRect().height; if(height>0) { changePdfZoom(Math.min(100,Math.floor(pdfZoom * Math.max(1,pdfArea.clientHeight - 36) / height)),'page'); goToPdfPage(pdfPage); } }
@@ -444,41 +429,20 @@ const pdfArea=$('#pdf-area') as HTMLElement;
 // Zoom restores its own page anchor after layout changes.
 pdfArea.style.overflowAnchor='none';
 const pdfPageInput=pdfControls.querySelector<HTMLInputElement>('[aria-label="Go to compiled PDF page"]')!;
+const pdfCurrentPage=pdfControls.querySelector<HTMLButtonElement>('.pdf-current-page')!;
+const pdfPageTotal=pdfControls.querySelector<HTMLElement>('.pdf-page-total')!;
 const showInPdf=document.createElement('button');showInPdf.type='button';showInPdf.className='plain';showInPdf.textContent='Show in PDF';showInPdf.title='Show the current source line in the compiled PDF';
 $('.editor-header').insertBefore(showInPdf,$('#tools'));
-const compactPreview = document.createElement('button'); compactPreview.type='button'; compactPreview.className='plain compact-preview'; compactPreview.textContent='Preview'; compactPreview.setAttribute('aria-label','Show PDF preview');
-const compactEditor = document.createElement('button'); compactEditor.type='button'; compactEditor.className='plain compact-editor'; compactEditor.textContent='Editor'; compactEditor.setAttribute('aria-label','Return to editor');
-const focusEditor=document.createElement('button'); focusEditor.type='button'; focusEditor.className='plain focus-editor'; focusEditor.textContent='Focus editor'; focusEditor.setAttribute('aria-pressed','false'); focusEditor.setAttribute('aria-label','Expand editor workspace');
-function setEditorFocus(enabled:boolean):void {
-  const workspace = document.getElementById('workspace')!;
-  workspace.classList.remove('show-compact-preview', 'tools-expanded');
-  workspace.classList.toggle('editor-focus', enabled);
-  expandTools.textContent = 'Expand panel';
-  expandTools.setAttribute('aria-label', 'Expand tools panel');
-  focusEditor.textContent = enabled ? 'Split view' : 'Focus editor';
-  focusEditor.setAttribute('aria-pressed', String(enabled));
-  focusEditor.setAttribute('aria-label', enabled ? 'Return to split workspace' : 'Expand editor workspace');
-  if (enabled) {
-    document.querySelector('.editor-pane')!.classList.remove('chat-expanded');
-    expandChat.textContent = 'Expand chat';
-    expandChat.setAttribute('aria-pressed', 'false');
-  }
-}
-focusEditor.onclick=()=>{ setEditorFocus(!$('#workspace').classList.contains('editor-focus')); $('#source').focus(); };
-$('.editor-header').insertBefore(focusEditor,$('#tools'));
-
-compactPreview.onclick = () => { setEditorFocus(false); $('.editor-pane').classList.remove('chat-expanded'); const chatExpandButton = document.querySelector<HTMLButtonElement>('.expand-chat'); if (chatExpandButton) { chatExpandButton.textContent='Expand chat'; chatExpandButton.setAttribute('aria-pressed','false'); } $('#workspace').classList.add('show-compact-preview'); requestAnimationFrame(()=>{if(pdfFitMode==='page') fitPdfPage(); else schedulePdfSharpen();}); };
-compactEditor.onclick = () => { setEditorFocus(true); requestAnimationFrame(()=>{if(pdfFitMode==='page') fitPdfPage(); else schedulePdfSharpen();}); $('#source').focus(); };
-$('.editor-header').append(compactPreview); $('.pdf-pane header').prepend(compactEditor);
 function updatePdfControls() {
   pdfControls.hidden = pdfPageCount === 0;
   $('#zoom-fit').hidden = pdfPageCount === 0; fitPage.hidden = pdfPageCount === 0;
-  pdfControls.querySelector<HTMLElement>('.pdf-page-count')!.textContent=`${pdfPageCount ? pdfPage : 0} / ${pdfPageCount}`;
+  pdfCurrentPage.textContent=String(pdfPageCount ? pdfPage : 0);
+  pdfPageTotal.textContent=` / ${pdfPageCount}`;
   pdfControls.querySelector<HTMLElement>('.pdf-zoom-value')!.textContent=pdfFitMode==='width' ? 'Fit' : `${pdfZoom}%`;
   $('#zoom-fit').setAttribute('aria-pressed',String(pdfFitMode==='width')); fitPage.setAttribute('aria-pressed',String(pdfFitMode==='page'));
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Previous compiled PDF page"]')!.disabled=pdfPageCount===0 || pdfPage<=1;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Next compiled PDF page"]')!.disabled=pdfPageCount===0 || pdfPage>=pdfPageCount;
-  pdfPageInput.disabled=pdfPageCount===0; pdfPageInput.hidden=pdfPageCount<=1; if(!pdfPageCount)pdfPageInput.value='';
+  pdfCurrentPage.disabled=pdfPageCount===0; pdfPageInput.disabled=pdfPageCount===0; if(!pdfPageCount) finishPdfPageEdit(false);
   showInPdf.disabled=pdfPageCount===0 || $('.source-container').hidden;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Zoom out compiled PDF"]')!.disabled=pdfPageCount===0 || pdfZoom<=25;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Zoom in compiled PDF"]')!.disabled=pdfPageCount===0 || pdfZoom>=250;
@@ -541,24 +505,38 @@ function goToPdfPage(page:number) {
 }
 pdfControls.querySelector<HTMLButtonElement>('[aria-label="Previous compiled PDF page"]')!.onclick=()=>goToPdfPage(pdfPage-1);
 pdfControls.querySelector<HTMLButtonElement>('[aria-label="Next compiled PDF page"]')!.onclick=()=>goToPdfPage(pdfPage+1);
-function submitPdfPage() {
-  const value=pdfPageInput.value.trim(), page=Number(value);
-  if (/^[0-9]+$/.test(value) && Number.isSafeInteger(page) && page>=1 && page<=pdfPageCount) goToPdfPage(page);
-  pdfPageInput.value='';
+function finishPdfPageEdit(restoreFocus:boolean):void {
+  pdfPageInput.hidden=true; pdfCurrentPage.hidden=false;
+  pdfPageInput.value=''; pdfPageInput.removeAttribute('aria-invalid');
+  if(restoreFocus) pdfCurrentPage.focus();
 }
-pdfPageInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();submitPdfPage();}else if(event.key==='Escape'){pdfPageInput.value='';pdfPageInput.blur();}});
-pdfPageInput.addEventListener('change',submitPdfPage);
+pdfCurrentPage.onclick=()=>{
+  pdfCurrentPage.hidden=true; pdfPageInput.hidden=false;
+  pdfPageInput.value=String(pdfPage); pdfPageInput.focus(); pdfPageInput.select();
+};
+function submitPdfPage():void {
+  const value=pdfPageInput.value.trim(), page=Number(value);
+  if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(page) || page<1 || page>pdfPageCount) {
+    pdfPageInput.setAttribute('aria-invalid','true'); pdfPageInput.select(); return;
+  }
+  goToPdfPage(page); finishPdfPageEdit(true);
+}
+pdfPageInput.addEventListener('keydown',event=>{
+  if(event.key==='Enter'){event.preventDefault();submitPdfPage();}
+  else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();finishPdfPageEdit(true);}
+});
+pdfPageInput.addEventListener('input',()=>pdfPageInput.removeAttribute('aria-invalid'));
+pdfPageInput.addEventListener('blur',()=>finishPdfPageEdit(false));
 showInPdf.onclick=async()=>{
   if(!active || !compiledProject || compiledProject!==active.id || !currentFile || $('.source-container').hidden)return;
-  if ($('#workspace').classList.contains('editor-focus')) setEditorFocus(false);
-  if ($('.editor-pane').classList.contains('chat-expanded')) { $('.editor-pane').classList.remove('chat-expanded'); const button=document.querySelector<HTMLButtonElement>('.expand-chat'); if(button){button.textContent='Expand chat';button.setAttribute('aria-pressed','false');} }
+  closeLayoutTools();paneLayout={...visiblePaneLayout(),preview:true};if(window.matchMedia('(max-width:1200px)').matches) paneLayout={agent:false,editor:false,preview:true};applyPaneLayout();
   const id=active.id,file=currentFile,version=revision,editor=$('#source') as HTMLTextAreaElement,line=editor.value.slice(0,editor.selectionStart).split('\n').length;
   try {
     const position=await store.syncForward(id,file,line),doc=pdfDocument;
     if(active?.id!==id || currentFile!==file || revision!==version || compiledProject!==id || !doc)return;
     const viewport=(await doc.getPage(position.page)).getViewport({scale:1});
     if(active?.id!==id || currentFile!==file || revision!==version || compiledProject!==id || pdfDocument!==doc)return;
-    if (window.matchMedia('(max-width: 1200px)').matches) { $('#workspace').classList.add('show-compact-preview'); schedulePdfSharpen(); }
+    schedulePdfSharpen();
     const canvas=pdfArea.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')[position.page-1];if(!canvas)return;
     const bounds=canvas.getBoundingClientRect(),area=pdfArea.getBoundingClientRect();
     lastPdfSync=position;pdfPage=position.page;pdfArea.scrollTop+=bounds.top-area.top+(position.y/viewport.height)*bounds.height-area.height/2;updatePdfControls();
@@ -576,7 +554,7 @@ async function navigatePdfSource(canvas:HTMLCanvasElement,clientX:number,clientY
     if(active?.id!==id || revision!==version || compiledProject!==id || pdfDocument!==doc)return;
     await openFile(result.file);if(active?.id!==id || revision!==version || currentFile!==result.file)return;
     const editor=$('#source') as HTMLTextAreaElement,lines=editor.value.split('\n');if(result.line<1 || result.line>lines.length)return;
-    const offset=lines.slice(0,result.line-1).reduce((n,line)=>n+line.length+1,0); $('#workspace').classList.remove('show-compact-preview'); editor.focus();editor.setSelectionRange(offset,offset+lines[result.line-1].length);
+    const offset=lines.slice(0,result.line-1).reduce((n,line)=>n+line.length+1,0); closeLayoutTools();paneLayout={...visiblePaneLayout(),editor:true};if(window.matchMedia('(max-width:1200px)').matches)paneLayout.preview=false;applyPaneLayout(); editor.focus();editor.setSelectionRange(offset,offset+lines[result.line-1].length);
     const style=getComputedStyle(editor),lineHeight=parseFloat(style.lineHeight);
     editor.scrollTop=Math.max(0,parseFloat(style.paddingTop)+(result.line-1)*lineHeight-(editor.clientHeight-lineHeight)/2);
     syncEditorScroll();
@@ -642,13 +620,12 @@ function scheduleCompile() {
   compileTimer = setTimeout(() => compilePreview(), 0);
 }
 async function compilePreview(force=false) {
-  if(!projectTrusted)return;
   if (!active) return;
   if (restoringProject === active.id) { compileQueued = true; return; }
   if (compileRunning) { compileQueued = true; return; }
   compileRunning = true;
   const id = active.id, version = revision;
-  $('#compile').disabled = true; $('#compile').textContent = 'Compiling…';
+  $('#compile').disabled = true; $('#compile').textContent = 'Compilingâ€¦';
   try {
     const saveResults = await Promise.all([...(pendingSaves.get(id)?.values() || [])]);
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
@@ -790,7 +767,7 @@ async function sendChat() {
   const id = active.id, chatId = currentChat, prompt = $('#chat-input').value, images = attachments, provider = ($('#chat-provider') as HTMLSelectElement).value;
   $('#chat-provider').disabled = true; $('#chat-provider').dispatchEvent(new Event('providerstate'));
   attachments = []; renderAttachments();
-  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
+  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparingâ€¦'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
   saveChatDraft();
   const pending = document.createElement('div'); pending.className = 'message user'; pending.textContent = prompt;
   if ($('#chat-messages .dismiss-welcome')) $('#chat-messages').replaceChildren(pending); else $('#chat-messages').append(pending);
@@ -850,7 +827,7 @@ $('#send').before(cancelChatButton);
 function updateCancelButton() {cancelChatButton.hidden=!active || !chatBusy.has(active.id);cancelChatButton.disabled=false;cancelChatButton.setAttribute('aria-label','Stop');$('#send').hidden=!cancelChatButton.hidden;}
 cancelChatButton.onclick=async()=>{
   if(!active || !chatBusy.has(active.id)) return;
-  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stopping…');
+  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stoppingâ€¦');
   try {await store.chatCancel(id);} catch(error) {if(active?.id===id){report('stop assistant',error);updateCancelButton();}}
 };
 $('#send').onclick = sendChat;
@@ -927,7 +904,7 @@ async function refreshChats() {
       finally {if(active?.id===id && request===chatOpening){chatLoading=false;updateSendState();}}
     };
     const row = document.createElement('div'); row.className = 'chat-row';
-    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = '✎'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
+    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = 'âœŽ'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
     rename.onclick = () => {
       const input = document.createElement('input'); input.value = chat.title; input.maxLength = 100; input.setAttribute('aria-label', 'Chat name');
       row.replaceChildren(input); input.focus(); input.select();
@@ -970,7 +947,7 @@ function highlightLatex(text) {
 // path so saving, comment anchors, compilation and undo remain consistent.
 const findPanel = document.createElement('div');
 findPanel.className = 'editor-find'; findPanel.hidden = true;
-findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">↑</button><button type="button" aria-label="Next match">↓</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">×</button>';
+findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">â†‘</button><button type="button" aria-label="Next match">â†“</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">Ã—</button>';
 const wrapLabel=document.createElement('label');wrapLabel.innerHTML='<input type="checkbox" aria-label="Wrap search" checked> Wrap';
 findPanel.insertBefore(wrapLabel,findPanel.querySelector('[aria-label="Previous match"]'));
 $('.editor-wrap').before(findPanel);
@@ -1039,7 +1016,7 @@ function findPositions(): number[] {
 }
 function updateFindStatus() {
   const positions=findPositions(), index=positions.findIndex(position=>position===sourceEditor.selectionStart && sourceEditor.selectionEnd===position+findInput.value.length);
-  findStatus.textContent=positions.length ? `${index<0 ? '–' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
+  findStatus.textContent=positions.length ? `${index<0 ? 'â€“' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
 }
 function findNext(backward=false) {
   const positions=findPositions();
@@ -1088,7 +1065,7 @@ findPanel.addEventListener('keydown',event=>{
 });
 document.addEventListener('keydown',event=>{
   if(event.isComposing) return;
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase()==='f' && active && !$('.source-container').hidden && !$('.editor-pane').classList.contains('chat-expanded') && !$('#workspace').classList.contains('show-compact-preview')) {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase()==='f' && active && !$('.source-container').hidden && displayedPaneLayout().editor) {
     event.preventDefault();openFind();
   } else if(!findPanel.hidden && event.key==='F3') {event.preventDefault();findNext(event.shiftKey);}
   else if(!findPanel.hidden && event.key==='Escape' && event.target===sourceEditor) {event.preventDefault();closeFind();}
@@ -1164,9 +1141,6 @@ sourceEditor.addEventListener('keydown',event=>{
   else if(['ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'].includes(event.key))closeCompletions();
 });
 let releaseEditorTab = false;
-const editorKeyboardHint = document.createElement('span'); editorKeyboardHint.id = 'editor-keyboard-help'; editorKeyboardHint.className = 'editor-keyboard-hint';
-editorKeyboardHint.textContent = 'Tab indents. Esc then Tab moves focus.';
-sourceEditor.setAttribute('aria-describedby', editorKeyboardHint.id);
 sourceEditor.addEventListener('input', () => { releaseEditorTab = false; });
 sourceEditor.addEventListener('blur', () => { releaseEditorTab = false; });
 $('#source').addEventListener('keydown', (event: KeyboardEvent) => {
@@ -1206,10 +1180,13 @@ $('#source').addEventListener('keydown', (event: KeyboardEvent) => {
   editor.setSelectionRange(first+mapOffset(start-first),first+mapOffset(end-first),direction);
 });
 const expandChat = document.createElement('button'); expandChat.type = 'button'; expandChat.className = 'expand-chat'; expandChat.textContent = 'Expand chat'; expandChat.setAttribute('aria-pressed','false');
-expandChat.onclick = () => { const expanded = $('.editor-pane').classList.toggle('chat-expanded'); expandChat.textContent = expanded ? 'Show editor' : 'Expand chat'; expandChat.setAttribute('aria-pressed',String(expanded)); if (expanded) { const pane = $('#chat-messages'), users = pane.querySelectorAll('.message.user'), last = users.length ? users[users.length-1] as HTMLElement : null; pane.scrollTop = last ? last.offsetTop : 0; } };
+expandChat.onclick = () => {
+  const expanded=!$('.editor-pane').classList.contains('chat-expanded');
+  closeLayoutTools();paneLayout={...visiblePaneLayout(),agent:true,editor:!expanded};applyPaneLayout();
+};
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
-$('#toggle-agent').onclick = () => { const pane = $('.editor-pane'); const hidden = pane.classList.toggle('agent-hidden'); if (hidden) { pane.classList.remove('chat-expanded'); expandChat.textContent='Expand chat'; expandChat.setAttribute('aria-pressed','false'); } const button = $('#toggle-agent'); button.textContent = hidden ? 'Show agent' : 'Hide agent'; button.setAttribute('aria-label', hidden ? 'Show agent menu' : 'Hide agent menu'); button.setAttribute('title', hidden ? 'Show agent menu' : 'Hide agent menu'); button.setAttribute('aria-pressed', String(hidden)); };
+$('#toggle-agent').onclick = () => togglePane('agent');
 $('#collapse').onclick = () => { const sidebar = document.querySelector('.sidebar'); sidebar.classList.toggle('collapsed'); $('#collapse').setAttribute('aria-label', sidebar.classList.contains('collapsed') ? 'Expand sidebar' : 'Collapse sidebar'); };
 $('#outline-toggle').onclick = () => { const list = $('#outline-list'); list.hidden = !list.hidden; $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden)); };
 $('#grid-view').onclick = () => { $('#list').classList.add('grid'); $('#grid-view').classList.add('selected'); $('#list-view').classList.remove('selected'); $('#grid-view').setAttribute('aria-pressed','true'); $('#list-view').setAttribute('aria-pressed','false'); renderProjects(); };
@@ -1273,7 +1250,7 @@ function renderToolPanel() {
     const log = document.createElement('pre'); log.className = 'tool-log';
     let errors = 0, warnings = 0; const diagnostics: { text: string; kind: 'error' | 'warning' }[] = [];
     for (const line of compileLog.split('\n')) { const item = document.createElement('span'); item.className = /^!|(?:^|:)\s*error\b/i.test(line) ? 'log-error' : /\bwarning\b/i.test(line) ? 'log-warning' : ''; if(item.className === 'log-error') errors++; if(item.className === 'log-warning') warnings++; if(item.className && diagnostics.length < 20) diagnostics.push({ text: line, kind: item.className === 'log-error' ? 'error' : 'warning' }); item.textContent = line + '\n'; log.append(item); }
-    const summary = document.createElement('p'); summary.className = 'log-summary'; summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} · ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
+    const summary = document.createElement('p'); summary.className = 'log-summary'; summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} Â· ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
     const wrap = document.createElement('button'); wrap.className = 'secondary log-wrap'; wrap.textContent = 'Disable line wrap'; wrap.setAttribute('aria-pressed','true');
     wrap.onclick = () => { const enabled = wrap.getAttribute('aria-pressed') === 'true'; wrap.setAttribute('aria-pressed',String(!enabled)); wrap.textContent = enabled ? 'Enable line wrap' : 'Disable line wrap'; log.classList.toggle('unwrapped', enabled); };
     const diagnosticList = document.createElement('div'); diagnosticList.className = 'log-diagnostics';
@@ -1327,12 +1304,13 @@ function renderToolPanel() {
   }
 }
 $('#tools').onclick = () => {
-  setEditorFocus(false);
-  if ($('.editor-pane').classList.contains('chat-expanded')) { $('.editor-pane').classList.remove('chat-expanded'); expandChat.textContent='Expand chat'; expandChat.setAttribute('aria-pressed','false'); }
-  showingTools = !showingTools; $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
-  if (showingTools && window.matchMedia('(max-width: 1200px)').matches) $('#workspace').classList.add('show-compact-preview');
-  if (!showingTools) { $('#workspace').classList.remove('tools-expanded'); expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel'); }
-  $('#tools').textContent = showingTools ? 'Close tools' : 'Tools ▾'; if (showingTools) renderToolPanel();
+  showingTools = !showingTools;
+  $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
+  $('#workspace').classList.remove('tools-expanded');
+  expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
+  $('#tools').textContent=showingTools?'Close tools':'Tools \u25be';
+  applyPaneLayout(false);
+  if(showingTools) renderToolPanel();
 };
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 expandTools.onclick = () => { const expanded = $('#workspace').classList.toggle('tools-expanded'); expandTools.textContent=expanded ? 'Collapse panel' : 'Expand panel'; expandTools.setAttribute('aria-label',expanded ? 'Collapse tools panel' : 'Expand tools panel'); };
@@ -1362,7 +1340,7 @@ async function renderVersions() {
     const body = document.getElementById('tool-body')!, heading = document.createElement('div'); body.classList.remove('has-open-comparison'); heading.className = 'tool-heading'; heading.textContent = 'Versions'; body.replaceChildren(heading);
     for (const [index, version] of versions.entries()) {
       const row = document.createElement('div'); row.className = 'version-row';
-      const label = document.createElement('span'); label.textContent = `v${versions.length - index} \u00b7 ${new Date(version.created).toLocaleString()} · ${version.files.length} ${version.files.length === 1 ? 'file' : 'files'}`;
+      const label = document.createElement('span'); label.textContent = `v${versions.length - index} \u00b7 ${new Date(version.created).toLocaleString()} Â· ${version.files.length} ${version.files.length === 1 ? 'file' : 'files'}`;
       const restore = document.createElement('button'); restore.textContent = 'Restore file';
       restore.disabled = !version.files.includes(currentFile) || chatBusy.has(id) || !!restoringProject;
       restore.onclick = async () => {
@@ -1400,7 +1378,7 @@ async function renderVersions() {
         row.classList.toggle('comparison-selected', compare.open); body.classList.toggle('has-open-comparison', compare.open);
         if (!compare.open) return;
         if (window.matchMedia('(min-width: 1201px)').matches) { $('#workspace').classList.add('tools-expanded'); expandTools.textContent='Collapse panel'; expandTools.setAttribute('aria-label','Collapse tools panel'); }
-        changes.textContent = 'Loading changes…';
+        changes.textContent = 'Loading changesâ€¦';
         try {
           const differences = await store.versionCompare(id,version.id);
           if (active?.id !== id || !compare.open) return;
@@ -1603,7 +1581,7 @@ async function renderTrash(id) {
   for(const item of items) {
     const row=document.createElement('div'), label=document.createElement('span'), button=document.createElement('button');
     row.className='trash-row'; label.textContent=item.kind==='folder' ? `${item.name}/` : item.name; button.textContent='Restore';
-    const description = document.createElement('div'), kind = document.createElement('small'); description.className='trash-description'; const deleted = Date.parse(item.deleted); kind.textContent=`${item.kind==='folder' ? 'Folder' : 'File'}${Number.isFinite(deleted) ? ` · Deleted ${new Date(deleted).toLocaleString()}` : ''}`; description.append(label,kind);
+    const description = document.createElement('div'), kind = document.createElement('small'); description.className='trash-description'; const deleted = Date.parse(item.deleted); kind.textContent=`${item.kind==='folder' ? 'Folder' : 'File'}${Number.isFinite(deleted) ? ` Â· Deleted ${new Date(deleted).toLocaleString()}` : ''}`; description.append(label,kind);
     button.onclick=async()=>{button.disabled=true;try {const name=await store.restoreTrash(id,item.id);if(active?.id===id){await refreshFiles();revision++;scheduleCompile();await renderTrash(id);if(item.kind!=='folder') await openFile(name);else if(!currentFile && (active.rootFile || 'main.tex').toLowerCase().startsWith(name.toLowerCase()+'/')) await openFile(active.rootFile);}}catch(error){report('restore file',error);button.disabled=false;}};
     row.append(description,button);list.append(row);
   }
@@ -1682,61 +1660,94 @@ async function runProjectSearch() {
 $('#file-search-input').oninput = () => { clearFileSearch.hidden = !$('#file-search-input').value; clearTimeout(searchTimer); searchTimer = setTimeout(runProjectSearch,200); };
 // Keep file tabs and editor actions in distinct, independently scrollable rows.
 const editorHeader = $('.editor-header'), editorActions = document.createElement('div'); editorActions.className='editor-actions'; editorActions.setAttribute('role','group'); editorActions.setAttribute('aria-label','Editor actions');
-editorHeader.querySelectorAll(':scope > button').forEach(button => editorActions.append(button)); editorHeader.append(editorActions); editorActions.append(editorKeyboardHint);
+editorHeader.querySelectorAll(':scope > button').forEach(button => editorActions.append(button)); editorHeader.append(editorActions);
 // Project-level controls live above both panes; file commands stay with the editor.
 const workspace = document.getElementById('workspace')!;
 const workspaceShell = document.createElement('div'); workspaceShell.className = 'workspace-shell';
 workspaceShell.append(...Array.from(workspace.children));
 const workspaceBar = document.createElement('header'); workspaceBar.className = 'workspace-topbar';
 const projectTrail = document.createElement('div'); projectTrail.className = 'project-trail';
-const libraryButton = document.createElement('button'); libraryButton.type = 'button'; libraryButton.textContent = 'Projects'; libraryButton.onclick = () => document.getElementById('home')!.click();
-const trailDivider = document.createElement('span'); trailDivider.textContent = '/'; trailDivider.setAttribute('aria-hidden','true');
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
-projectNameControl.title = 'Rename project'; projectTrail.append(libraryButton, trailDivider, projectNameControl);
+projectNameControl.title = 'Rename project'; projectTrail.append(projectNameControl);
 const viewControls = document.createElement('div'); viewControls.className = 'workspace-view-controls'; viewControls.setAttribute('role','group'); viewControls.setAttribute('aria-label','Workspace layout');
-compactPreview.textContent = 'Preview'; focusEditor.textContent = 'Focus editor';
-const layoutMenu=document.createElement('details');layoutMenu.className='layout-menu';
-const layoutSummary=document.createElement('summary');layoutSummary.textContent='Layout';
-const layoutPanel=document.createElement('div');layoutPanel.className='layout-panel';
-const viewLabel=document.createElement('label');viewLabel.textContent='Workspace view';
-const viewSelect=document.createElement('select');viewSelect.setAttribute('aria-label','Workspace view');
-for(const [value,label] of [['split','Editor & PDF'],['editor','Editor only'],['pdf','PDF only']]) {const option=document.createElement('option');option.value=value;option.textContent=label;viewSelect.append(option);}
-const contextualView=document.createElement('option');contextualView.value='context';contextualView.disabled=true;contextualView.hidden=true;viewSelect.append(contextualView);
-viewLabel.append(viewSelect);
-const agentLabel=document.createElement('label');agentLabel.className='agent-layout-option';
-const agentCheck=document.createElement('input');agentCheck.type='checkbox';agentCheck.checked=true;agentLabel.append(agentCheck,document.createTextNode('Show agent'));
-layoutPanel.append(viewLabel,agentLabel);layoutMenu.append(layoutSummary,layoutPanel);
-const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.hidden=true;
-focusEditor.hidden=true;compactPreview.hidden=true;
-viewControls.append(layoutMenu,oldAgent,workspaceShell.querySelector<HTMLButtonElement>('#tools')!);
-function syncLayout():void {
+type PaneName='agent'|'editor'|'preview';
+type PaneLayout=Record<PaneName,boolean>;
+const layoutStorageKey='refract.workspace-panes.v1';
+let paneLayout:PaneLayout={agent:true,editor:true,preview:true};
+try {
+  const saved:unknown=JSON.parse(localStorage.getItem(layoutStorageKey) || 'null');
+  if(saved && typeof saved==='object' && ['agent','editor','preview'].every(key=>typeof (saved as Record<string,unknown>)[key]==='boolean')) {
+    const value=saved as PaneLayout;paneLayout={agent:value.agent,editor:value.editor,preview:value.preview};
+  }
+} catch { /* Unavailable storage or invalid preferences use the default layout. */ }
+function visiblePaneLayout():PaneLayout {
   const narrow=window.matchMedia('(max-width:1200px)').matches;
-  viewSelect.options[0].disabled=narrow;
-  const expandedChat=$('.editor-pane').classList.contains('chat-expanded');
-  const context=showingTools || expandedChat;contextualView.hidden=!context;contextualView.textContent=showingTools?'Tools panel':'Expanded chat';
-  viewSelect.value=context?'context':workspace.classList.contains('show-compact-preview')?'pdf':workspace.classList.contains('editor-focus') || narrow?'editor':'split';
-  agentCheck.checked=!document.querySelector('.editor-pane')!.classList.contains('agent-hidden');
-  agentCheck.disabled=viewSelect.value==='pdf' || workspace.classList.contains('tools-expanded') || workspace.classList.contains('show-compact-preview');
-  layoutSummary.title=`${viewSelect.selectedOptions[0].textContent}; agent ${agentCheck.checked?'shown':'hidden'}`;
+  return {...paneLayout,preview:paneLayout.preview && !(narrow && (paneLayout.editor || paneLayout.agent))};
 }
-viewSelect.onchange=()=>{
-  const selectedView=viewSelect.value;
-  // Close Tools first so its own layout reset cannot override the chosen view.
-  if(showingTools) document.getElementById('tools')!.click();
-  $('.editor-pane').classList.remove('chat-expanded');expandChat.textContent='Expand chat';expandChat.setAttribute('aria-pressed','false');
-  if(selectedView==='pdf') compactPreview.click();else setEditorFocus(selectedView==='editor');
-  requestAnimationFrame(()=>{if(pdfFitMode==='page')fitPdfPage();else schedulePdfSharpen();});syncLayout();
-};
-agentCheck.onchange=()=>{oldAgent.click();syncLayout();};
-layoutMenu.addEventListener('toggle',()=>{if(layoutMenu.open)syncLayout();});
-document.addEventListener('pointerdown',event=>{if(!layoutMenu.contains(event.target as Node))layoutMenu.open=false;});
-layoutMenu.addEventListener('focusout',event=>{if(!layoutMenu.contains(event.relatedTarget as Node | null))layoutMenu.open=false;});
-layoutMenu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();layoutMenu.open=false;layoutSummary.focus();}});
-const layoutObserver=new MutationObserver(syncLayout);
-layoutObserver.observe(workspace,{attributes:true,attributeFilter:['class']});
-layoutObserver.observe(workspaceShell.querySelector('.editor-pane')!,{attributes:true,attributeFilter:['class']});
-window.addEventListener('resize',syncLayout);
-workspaceBar.append(projectTrail, viewControls); workspace.append(workspaceBar, workspaceShell);syncLayout();
+const paneButtons=new Map<PaneName,HTMLButtonElement>();
+const paneToggles=document.createElement('div');paneToggles.className='pane-toggles';paneToggles.setAttribute('role','group');paneToggles.setAttribute('aria-label','Visible panes');
+for(const [name,label,controls] of [['agent','Agent','chat'],['editor','Editor','editor-pane'],['preview','Preview','pdf-content']] as const) {
+  const button=document.createElement('button');button.type='button';button.id=`pane-${name}`;
+  button.className='pane-toggle';button.setAttribute('aria-label',label);button.setAttribute('aria-controls',name==='editor'?'editor-content':controls);
+  button.append(actionIcon(name));button.onclick=()=>togglePane(name);paneButtons.set(name,button);paneToggles.append(button);
+}
+workspaceShell.querySelector('.editor-wrap')!.id='editor-content';
+const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.remove();
+viewControls.append(paneToggles,workspaceShell.querySelector<HTMLButtonElement>('#tools')!);
+function closeLayoutTools():void {
+  showingTools=false;$('#tools-panel').hidden=true;$('#pdf-content').hidden=false;$('#tools').textContent='Tools \u25be';
+  $('#workspace').classList.remove('tools-expanded');
+  expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
+}
+function togglePane(name:PaneName):void {
+  const wasVisible=displayedPaneLayout()[name];
+  closeLayoutTools();
+  const next=visiblePaneLayout();next[name]=!wasVisible;
+  if(next[name] && window.matchMedia('(max-width:1200px)').matches) {
+    if(name==='preview') {next.agent=false;next.editor=false;} else next.preview=false;
+  }
+  if(!next.agent && !next.editor && !next.preview) next.editor=true;
+  paneLayout=next;applyPaneLayout();
+}
+function applyPaneLayout(persist=true):void {
+  if(!paneLayout.agent && !paneLayout.editor && !paneLayout.preview) paneLayout.editor=true;
+  const visible=visiblePaneLayout();
+  workspace.classList.add('pane-layout');
+  workspace.classList.remove('editor-focus','show-compact-preview');
+  workspace.classList.toggle('pane-left-hidden',!visible.agent && !visible.editor);
+  workspace.classList.toggle('pane-preview-hidden',!visible.preview && !showingTools);
+  workspace.classList.toggle('pane-editor-hidden',!visible.editor);
+  workspace.classList.toggle('pane-agent-hidden',!visible.agent);
+  workspace.classList.toggle('pane-tools',showingTools);
+  const editorPane=workspaceShell.querySelector('.editor-pane')!;
+  editorPane.classList.toggle('agent-hidden',!visible.agent);
+  editorPane.classList.toggle('chat-expanded',visible.agent && !visible.editor);
+  expandChat.textContent=visible.editor?'Expand chat':'Show editor';expandChat.setAttribute('aria-pressed',String(!visible.editor));
+  syncPaneButtons();
+  if(persist) {try {localStorage.setItem(layoutStorageKey,JSON.stringify(paneLayout));} catch { /* Layout remains usable without storage. */ }}
+  requestAnimationFrame(()=>{if(pdfFitMode==='page')fitPdfPage();else schedulePdfSharpen();});
+}
+function displayedPaneLayout():PaneLayout {
+  const visible=visiblePaneLayout();
+  if(showingTools) {
+    visible.preview=false;
+    if(workspace.classList.contains('tools-expanded') || window.matchMedia('(max-width:1200px)').matches) {visible.editor=false;visible.agent=false;}
+  }
+  return visible;
+}
+function syncPaneButtons():void {
+  const displayed=displayedPaneLayout();
+  for(const [name,button] of paneButtons) {
+    button.setAttribute('aria-pressed',String(displayed[name]));
+    const label=name==='agent'?'agent':name==='editor'?'editor':'preview';
+    button.title=displayed[name]?`Hide ${label}`:`Show ${label}`;
+    if(displayed[name] && Object.values(displayed).filter(Boolean).length===1) button.title+=' (restores editor)';
+  }
+}
+// Tool expansion is transient and must update the indicators without saving it.
+new MutationObserver(syncPaneButtons).observe(workspace,{attributes:true,attributeFilter:['class']});
+window.addEventListener('resize',()=>applyPaneLayout(false));
+workspaceBar.append(projectTrail, viewControls); workspace.append(workspaceBar, workspaceShell);applyPaneLayout(false);
 const fileSectionLabel = document.createElement('div'); fileSectionLabel.className = 'sidebar-label'; fileSectionLabel.textContent = 'Project'; document.getElementById('project-side')!.prepend(fileSectionLabel);
 // Normalize the remaining static and generated toolbar actions.
 for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#collapse','menu'],['#chat-image-close','close'],['[aria-label="Previous compiled PDF page"]','previous'],['[aria-label="Next compiled PDF page"]','next'],['[aria-label="Zoom out compiled PDF"]','minus'],['[aria-label="Zoom in compiled PDF"]','plus']] as const) {
@@ -1746,7 +1757,7 @@ const sidebarTabs=document.querySelector('.tabs')!;
 const sidebarActions=document.createElement('div');sidebarActions.className='sidebar-actions';sidebarActions.setAttribute('role','group');sidebarActions.setAttribute('aria-label','File and project actions');
 for(const id of ['file-search-toggle','add-file','deleted-files','duplicate']) sidebarActions.append(document.getElementById(id)!);
 sidebarTabs.after(sidebarActions);
-for(const [id,icon,label] of [['deleted-files','trash','Deleted files'],['duplicate','copy','Duplicate project']] as const) {
+for(const [id,icon,label] of [['deleted-projects','trash','Deleted projects'],['deleted-files','trash','Deleted files'],['duplicate','copy','Duplicate project']] as const) {
   const button=document.getElementById(id)!;button.replaceChildren(actionIcon(icon));button.title=label;button.setAttribute('aria-label',label);
 }
 document.querySelector('.sidebar-footer')!.remove();

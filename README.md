@@ -6,11 +6,9 @@
 
 Refract is a Windows Electron workspace for local LaTeX writing, inspired by OpenAI Prism. Projects, editing, compilation, and displayed chat history are local. The assistant uses an installed Codex or OpenCode CLI, which may require network access and authentication.
 
-## Project trust
+## Local execution
 
-Review imported or existing projects before selecting **Review project trust** and **Trust project**. Until then, source editing is available but compilation and assistants are blocked. Cancel leaves the project untrusted. New projects made from Refract's built-in template start trusted; duplicates and ZIP imports require their own approval. Trust persists locally and covers subsequent edits, uploads, and restored versions. Use **Revoke project trust** before adding unfamiliar content.
-
-TeX and assistants run with your Windows account's access, including files outside the project. `-no-shell-escape` is not a filesystem sandbox. See [Security](SECURITY.md#project-trust-and-local-execution) for the trust boundary and limitations.
+Projects can compile and use assistants immediately, including imported and duplicated projects. Review unfamiliar content before opening it: TeX and assistants run with your Windows account's access, including files outside the project. `-no-shell-escape` is not a filesystem sandbox. See [Security](SECURITY.md#local-execution) for the execution boundary and limitations.
 
 ## Current status
 
@@ -41,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-tex.ps1
 npm start
 ```
 
-Install TeX Live or TinyTeX independently from its upstream distributor. Set `REFRACT_TEX_BIN` to its absolute Windows executable directory in the environment used to launch Refract (including packaged Refract), then restart Refract. The validation script checks paths without downloading or running anything. Compilation, bibliography tools, package lookup, and SyncTeX use this directory. Install missing tools/packages separately. Existing `vendor/TinyTeX` directories are no longer selected automatically.
+Starting with 0.3.1-pre-release-2, the Windows installer automatically downloads checksum-verified TinyTeX and SyncTeX into `%LOCALAPPDATA%\Refract\dependencies` (internet access required). Refract discovers the complete toolchain automatically; no separate TeX installation or environment changes are required. Existing complete installations are reused, and uninstall preserves them. Setup failures return a nonzero installer exit code and write `setup-error.log` in that directory; rerun the installer to retry. For a custom, separately installed TeX Live or TinyTeX distribution, set `REFRACT_TEX_BIN` to its absolute Windows executable directory and restart Refract. This override takes priority over managed TeX. Additional document-specific packages can be installed separately. Codex and OpenCode remain optional, separately installed and authenticated integrations.
 
 Refract packages contain no TeX distribution or replacement SyncTeX binary. Compilation remains local and can work offline with already installed packages. Electron and application dependencies retain their own notices. See [the distribution boundary and historical cleanup requirements](docs/third-party-review.md).
 
@@ -57,7 +55,9 @@ By default, projects and application data are under `%APPDATA%\Refract` in the c
 
 After building the installer, its opt-in test can be run with `$env:REFRACT_TEST_INSTALLER='1'; npm run build; node --test build/test/installer.test.cjs`. It checks for an existing installation, then performs a silent install, upgrade and uninstall using temporary project data. Clear the environment variable afterward.
 
-Before publishing each Windows release, build its installer and run this lifecycle test against that release's installer. Record the result in the release notes; investigate any failure before publishing.
+Before publishing a stable Windows release, build its installer and run the full lifecycle suite against that release's installer. Prereleases require targeted verification of their changed functionality, including automatic dependency setup when it changes; the full lifecycle suite is not required. Record verification results and investigate failures before publishing.
+
+After packaging, `node --test build/test/installer-dependencies.test.cjs` checks the real NSIS dependency hook with the packaged helper, including reuse and failure exit codes, without registering an installation. Set `REFRACT_TEST_DEPENDENCY_DOWNLOAD=1` for the same targeted check to download and verify fresh upstream dependencies in disposable data before checking reuse (internet access required).
 
 To exercise the signed-in Codex CLI and hidden desktop app in disposable projects, run `$env:REFRACT_REAL_CODEX_TEST='1'; npm run build; node --test build/test/real-codex.test.cjs build/test/real-codex-ui.test.cjs`, then clear the environment variable. These tests send prompts to Codex and require an existing login and network access.
 

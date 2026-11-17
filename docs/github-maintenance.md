@@ -1,6 +1,6 @@
 # GitHub maintenance setup
 
-The repository must remain private until the separate source, binary distribution, and project trust reviews are resolved. Adding CI does not authorize publication.
+The repository must remain private until the separate source and binary distribution reviews are resolved. Adding CI does not authorize publication.
 
 ## CI
 

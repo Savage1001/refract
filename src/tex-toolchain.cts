@@ -1,10 +1,15 @@
 import path = require('node:path');
+import fs = require('node:fs');
 
-/** TeX is supplied by the user, never by the Refract installer. */
+/** An explicit external toolchain takes priority over installer-managed TeX. */
 function texBin(env: NodeJS.ProcessEnv = process.env): string {
-  const directory = env.REFRACT_TEX_BIN;
+  const managed = env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Refract', 'dependencies', 'TinyTeX', 'bin', 'windows');
+  const complete = managed && ['pdflatex', 'xelatex', 'lualatex', 'kpsewhich', 'synctex', 'bibtex', 'biber'].every(tool => {
+    try { return fs.statSync(path.join(managed, `${tool}.exe`)).isFile(); } catch { return false; }
+  });
+  const directory = env.REFRACT_TEX_BIN || (complete ? managed : undefined);
   if (!directory || !path.isAbsolute(directory)) {
-    throw new Error('Set REFRACT_TEX_BIN to the absolute bin directory of your separately installed TeX Live or TinyTeX distribution, then restart Refract. Refract does not include TeX.');
+    throw new Error('Run the Refract installer with internet access to set up TeX, or set REFRACT_TEX_BIN to the absolute bin directory of a separately installed TeX distribution, then restart Refract.');
   }
   return path.normalize(directory);
 }

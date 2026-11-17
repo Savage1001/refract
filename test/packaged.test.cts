@@ -117,33 +117,3 @@ test('packaged application starts without TeX and explains the external dependen
  assert.match(await page.locator('#source').inputValue(),/documentclass/);
  assert.equal(app.process().exitCode,null);
 });
-
-test('packaged trust approval and cancellation control real compilation', {timeout:90000}, async t=>{
- const exe=path.resolve(__dirname,'../../dist/win-unpacked/Refract.exe');try {await fs.access(exe);} catch {return t.skip('Build is not present');}
- if(!process.env.REFRACT_TEX_BIN)return t.skip('External TeX is not configured');
- const data:string=await fs.mkdtemp(path.join(os.tmpdir(),'refract-packaged-trust-'));
- const {ProjectStore}=require('../src/project-store.cjs'),trust=require('../src/project-trust.cjs');
- const projects=new ProjectStore(path.join(data,'projects')),project=await projects.create('Untrusted fixture'),directory=projects.projectDir(project.id);
- await trust.revokeTrust(directory);
- const env:NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
- const app=await electron.launch({executablePath:exe,args:[],env});
- t.after(async()=>{await app.close().catch(()=>{});await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
- const page=await app.firstWindow();await page.locator('#list article').first().click();
- const review=page.getByRole('button',{name:'Review project trust',exact:true});await review.waitFor({state:'visible'});
- await assert.rejects(fs.access(path.join(directory,'.refract-build','main.pdf')));
- await app.evaluate(({dialog})=>{
-  let requests=0;dialog.showMessageBox=async(_window,options)=>{
-   if(options.title!=='Trust this project?')throw new Error('Unexpected native dialog');
-   return {response:requests++===0?0:1,checkboxChecked:false};
-  };
- });
- await review.click();await review.waitFor({state:'visible'});await page.waitForFunction(()=>!(document.querySelector('#project-trust button') as HTMLButtonElement)?.disabled);
- assert.equal(await trust.isTrusted(directory),false);await assert.rejects(fs.access(path.join(directory,'.refract-build','main.pdf')));
- await review.click();await page.getByText('Compiled',{exact:true}).waitFor({timeout:45000});
- assert.equal(await trust.isTrusted(directory),true);
- assert.equal((await fs.readFile(path.join(directory,'.refract-build','main.pdf'))).subarray(0,5).toString(),'%PDF-');
- await page.locator('#project-trust summary').click();await page.getByRole('button',{name:'Revoke project trust',exact:true}).click();
- assert.equal(await trust.isTrusted(directory),false);
- const blocked:string=await page.evaluate(async(id:string)=>{try{await store.compile(id);return '';}catch(error){return String(error);}},project.id);
- assert.match(blocked,/untrusted/);
-});
