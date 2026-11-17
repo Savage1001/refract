@@ -146,7 +146,21 @@ function render(): void {
     button.onclick = () => { if (preferences.model !== null || preferences.reasoningEffort !== null) { preferences.model = null; preferences.reasoningEffort = null; changed(); } close(); };
     row.append(button); list.append(row);
   }
-  if (!matches.length && (!list.children.length || state.status === 'error')) { const message = document.createElement('p'); message.textContent = state.status === 'loading' ? 'Loading models…' : state.status === 'error' ? 'Models could not be loaded.' : 'No matching models.'; list.append(message); }
+  if (!matches.length && (!list.children.length || state.status !== 'ready')) { const message = document.createElement('p'); message.textContent = state.status === 'loading' ? 'Loading models…' : state.status === 'error' ? 'Models could not be loaded.' : 'No matching models.'; list.append(message); }
+  if (!openCode && state.status === 'error') {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = 'Retry model discovery';
+    retry.className = 'model-retry';
+    retry.addEventListener('click', () => {
+      if (state.status !== 'error') return;
+      state.status = 'loading';
+      state.initialized = initialize('codex', undefined, state.preferences);
+      render();
+      search.focus();
+    });
+    list.append(retry);
+  }
   effort.replaceChildren();
   const fasterEffort = ['low','minimal'].find(value=>selected?.efforts.includes(value));
   if(fasterEffort) {
@@ -201,7 +215,7 @@ document.addEventListener('click', event => { if (!event.composedPath().includes
 let openCodeProject: string | undefined;
 let openCodeGeneration = 0;
 let openCodePreferencesLoaded = false;
-async function initialize(id: ProviderId, projectId?: string): Promise<void> {
+async function initialize(id: ProviderId, projectId?: string, existingPreferences?: CodexPreferences): Promise<void> {
   const state = states[id];
   const generation = id === 'opencode' ? ++openCodeGeneration : 0;
   let discovered: PickerModel[] | undefined; let discoveryError = '';
@@ -218,7 +232,7 @@ async function initialize(id: ProviderId, projectId?: string): Promise<void> {
   })();
   let loaded: CodexPreferences | undefined;
   const revision = state.revision;
-  try { loaded = id === 'opencode' && openCodePreferencesLoaded ? state.preferences : await (id === 'codex' ? api.codexPreferencesLoad() : api.openCodePreferencesLoad()); } catch {}
+  try { loaded = existingPreferences ?? (id === 'opencode' && openCodePreferencesLoaded ? state.preferences : await (id === 'codex' ? api.codexPreferencesLoad() : api.openCodePreferencesLoad())); } catch {}
   await discovery;
   if (id === 'opencode' && generation !== openCodeGeneration) return;
   state.loadFailed = !loaded; if (loaded && state.revision === revision) state.preferences = loaded;
