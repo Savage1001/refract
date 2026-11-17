@@ -98,7 +98,12 @@ test('pending track changes block restart before preference I/O completes', asyn
  } finally {service.stop(); await fs.rm(dir, {recursive:true, force:true});}
 });
 
-test('beta track accepts only beta.N prereleases', () => {
+test('beta track accepts numbered beta and pre-release versions', () => {
+ assert.equal(selectRelease([release('v2.0.0-pre-release-1', true), release('v2.0.0-pre-release-2', true)], 'beta', '1.0.0')?.tag_name, 'v2.0.0-pre-release-2');
+ assert.equal(selectRelease([release('v2.0.0-pre-release-1', true)], 'stable', '1.0.0'), undefined);
+ for (const tag of ['v2.0.0-pre-release-0', 'v2.0.0-pre-release-foo', 'v2.0.0-pre-release-1.extra']) {
+  assert.equal(selectRelease([release(tag, true)], 'beta', '1.0.0'), undefined);
+ }
  for (const tag of ['v2.0.0-beta', 'v2.0.0-beta.foo', 'v2.0.0-beta.1.extra']) {
   assert.equal(selectRelease([release(tag, true)], 'beta', '1.0.0'), undefined);
  }
