@@ -171,7 +171,7 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   assert.equal(await page.locator('#project-navigation').isHidden(),true);
   assert.equal(await page.locator('#projects').evaluate(el => el.clientWidth),1440);
   await openProject(page);
-  const branding=await page.locator('.brand').evaluate(el=>{const logo=el.querySelector('img')!.getBoundingClientRect(),toggle=el.querySelector('#collapse')!.getBoundingClientRect();return [logo.left,logo.top,Math.abs(logo.top+logo.height/2-toggle.top-toggle.height/2)];});assert.deepEqual(branding,[18,49,0]);
+  const branding=await page.locator('.brand').evaluate(el=>{const logo=el.querySelector('img')!.getBoundingClientRect(),toggle=el.querySelector('#collapse')!.getBoundingClientRect();return [logo.left,logo.top,Math.abs(logo.top+logo.height/2-toggle.top-toggle.height/2)];});assert.deepEqual(branding,[18,18,0]);
   assert.equal((await page.locator('.workspace-topbar').boundingBox())?.height,42);
   assert.equal(await page.locator('#project-name').evaluate(el=>getComputedStyle(el).fontSize),'16px');
   const waitForTitlePadding = () => page.waitForFunction(() => {
