@@ -40,6 +40,8 @@ Task IDs: **RF-001** through **RF-031** have been allocated. Next task ID: **RF-
 
 ## Editor and assistant layout
 
+- [x] **RF-031** Replace the layout menu with persistent Agent, Editor and Preview icon toggles; restore the editor when hiding the last pane and switch preview versus editor/agent on narrow windows.
+
 - [x] **RF-026** Add a toggle to hide and restore the agent menu so the LaTeX editor can use the available space.
 
 ## Windows delivery and quality

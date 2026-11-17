@@ -1,4 +1,4 @@
-const {launchTestDesktop}=require('./electron-fixture.cjs');
+const {launchTestDesktop,useFakeCodex}=require('./electron-fixture.cjs');
 const { test } = require('node:test') as typeof import('node:test');
 const assert: typeof import('node:assert/strict') = require('node:assert/strict');
 const fs = require('node:fs/promises') as typeof import('node:fs/promises');
@@ -7,9 +7,15 @@ const path = require('node:path') as typeof import('node:path');
 export {};
 
 async function chooseView(page: import('playwright').Page, view:'split'|'editor'|'pdf'):Promise<void> {
- await page.locator('.layout-menu>summary').click();
- await page.getByLabel('Workspace view',{exact:true}).selectOption(view);
- await page.keyboard.press('Escape');
+ // Hidden Electron windows do not reliably deliver animation frames after viewport emulation.
+ await page.evaluate(()=>window.dispatchEvent(new Event('resize')));
+ if(await page.locator('#tools-panel').isVisible()) await page.locator('#tools').click();
+ const target={agent:view!=='pdf',editor:view!=='pdf',preview:view!=='editor'};
+ for(const enabled of [true,false]) for(const name of ['agent','editor','preview'] as const) {
+  const button=page.locator(`#pane-${name}`);
+  if(target[name]===enabled && (await button.getAttribute('aria-pressed')==='true')!==enabled) await button.click();
+ }
+ await page.locator('#pane-editor').focus();
 }
 
 test('standard palette stays coherent across light and dark app surfaces', { timeout: 180000 }, async () => {
@@ -83,7 +89,7 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
    await capture(`${mode}-compact`);
    await chooseView(page,'pdf');
    await capture(`${mode}-compact-preview`);
-   await page.getByRole('button', { name: 'Return to editor', exact: true }).click();
+   await page.locator('#pane-editor').click();
    await page.setViewportSize({ width: 900, height: 650 });
    await capture(`${mode}-short`);
    await page.setViewportSize({ width: 1440, height: 900 });
@@ -130,6 +136,7 @@ test('workspace layout transitions always reveal and focus the requested editor'
  delete env.ELECTRON_RUN_AS_NODE;
  const app = await launchTestDesktop({args:[path.resolve(__dirname, '../..')], env});
  try {
+  await useFakeCodex(app);
   const page = await app.firstWindow();
   page.setDefaultTimeout(10000);
   // Hidden windows otherwise throttle animation frames during rapid layout changes.
@@ -139,9 +146,9 @@ test('workspace layout transitions always reveal and focus the requested editor'
   await page.locator('#source').waitFor({state:'visible'});
   const focusEditor = () => chooseView(page,'editor');
   const split = () => chooseView(page, page.viewportSize()!.width<=1200?'editor':'split');
-  const verifyEditor = async (returned=false): Promise<void> => {
+  const verifyEditor = async (): Promise<void> => {
    assert.equal(await page.locator('#source').isVisible(), true);
-   assert.equal(await page.locator(returned?'#source':'.layout-menu>summary').evaluate(el => el === document.activeElement), true);
+   assert.equal(await page.locator('#pane-editor').evaluate(el => el === document.activeElement), true);
    assert.equal(await page.locator('#workspace').evaluate(el => el.classList.contains('show-compact-preview') || el.classList.contains('tools-expanded')), false);
   };
   for (const colorScheme of ['light','dark'] as const) {
@@ -164,8 +171,8 @@ test('workspace layout transitions always reveal and focus the requested editor'
     assert.equal(await page.getByRole('button', {name:'Expand chat', exact:true}).getAttribute('aria-pressed'), 'false');
     await split();
     await chooseView(page,'pdf');
-    await page.getByRole('button', {name:'Return to editor', exact:true}).click();
-    await verifyEditor(true);
+    await page.locator('#pane-editor').click();
+    await verifyEditor();
    }
   }
   assert.deepEqual(errors, []);

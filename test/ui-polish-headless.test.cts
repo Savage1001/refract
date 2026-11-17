@@ -113,7 +113,7 @@ test('headless selected states, picker dismissal, and default-choice styling agr
    await page.getByRole('button',{name:'Fast',exact:true}).focus();await page.keyboard.press('Tab');assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');
    await page.locator('.model-trigger').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').evaluate(el=>el===document.activeElement),true);
    await page.locator('.model-trigger').click();await page.locator('#source').click({position:{x:10,y:10}});assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('#source').evaluate(el=>el===document.activeElement),true);
-   await page.locator('.model-trigger').click();await page.locator('.layout-menu>summary').click();await page.getByLabel('Workspace view',{exact:true}).selectOption('pdf');await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');await page.getByRole('button',{name:'Return to editor',exact:true}).click();
+   await page.locator('.model-trigger').click();await page.locator('#pane-editor').click();await page.locator('#pane-agent').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');await page.locator('#pane-editor').click();await page.locator('#pane-agent').click();
   }
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
@@ -187,20 +187,17 @@ test('headless sidebar action geometry, trust disclosure and explicit workspace 
   await page.locator('#project-trust>summary').click();assert.equal(await page.getByRole('button',{name:'Revoke project trust'}).isVisible(),true);
   await page.locator('#project-trust>summary').click();
   await page.locator('#file-search-toggle').click();await page.locator('#file-search-input').press('Escape');assert.equal(await page.locator('#file-search-toggle').evaluate(el=>el===document.activeElement),true);
-  const menu=page.locator('.layout-menu>summary'),view=page.getByLabel('Workspace view',{exact:true});
-  await menu.click();await view.focus();await view.selectOption('editor');assert.equal(await page.locator('.pdf-pane').isVisible(),false);
-  await page.getByLabel('Show agent',{exact:true}).uncheck();assert.equal(await page.locator('#chat').isVisible(),false);
-  await view.focus();await view.selectOption('pdf');assert.equal(await page.locator('.editor-pane').isVisible(),false);assert.equal(await page.locator('.pdf-pane').isVisible(),true);
-  await view.focus();await view.selectOption('split');assert.equal(await page.locator('.editor-pane').isVisible(),true);assert.equal(await page.locator('.pdf-pane').isVisible(),true);
-  await page.getByLabel('Show agent',{exact:true}).check();assert.equal(await page.locator('#chat').isVisible(),true);
-  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Expand chat',exact:true}).click();assert.equal(await page.locator('.editor-actions').isVisible(),false);await menu.click();assert.equal(await view.inputValue(),'context');await view.focus();await view.press('Home');assert.equal(await page.locator('.editor-actions').isVisible(),true);
-  await page.keyboard.press('Escape');await page.locator('#tools').click();await menu.click();await view.focus();await view.selectOption('editor');assert.equal(await page.locator('#tools-panel').isVisible(),false);assert.equal(await page.locator('.pdf-pane').isVisible(),false);
-  await view.focus();await page.keyboard.press('Escape');assert.equal(await menu.evaluate(el=>el===document.activeElement),true);
-  await page.locator('#tools').click();await page.getByRole('button',{name:'Expand tools panel',exact:true}).click();await menu.click();assert.equal(await page.getByLabel('Show agent',{exact:true}).isDisabled(),true);await view.focus();await view.press('Home');
-  await view.focus();await page.keyboard.press('Tab');await page.keyboard.press('Tab');assert.equal(await page.locator('.layout-menu').evaluate(el=>(el as HTMLDetailsElement).open),false);assert.equal(await page.locator('#tools').evaluate(el=>el===document.activeElement),true);
-  await page.setViewportSize({width:900,height:650});await page.waitForFunction(()=>document.querySelector<HTMLOptionElement>('.layout-panel option[value=split]')!.disabled);await menu.click();assert.equal(await view.inputValue(),'editor');
-  assert.equal(await view.locator('option[value=split]').evaluate(el=>(el as HTMLOptionElement).disabled),true);
-  await view.focus();await view.selectOption('pdf');await page.locator('#compile').click();assert.equal(await page.locator('.layout-menu').evaluate(el=>(el as HTMLDetailsElement).open),false);
+  await page.locator('#pane-preview').click();assert.equal(await page.locator('.pdf-pane').isVisible(),false);
+  await page.locator('#pane-agent').click();assert.equal(await page.locator('#chat').isVisible(),false);
+  await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);
+  await page.locator('#pane-preview').click();await page.locator('#pane-editor').click();
+  assert.equal(await page.locator('.editor-pane').isVisible(),false);
+  await page.locator('#pane-preview').click();assert.equal(await page.locator('#source').isVisible(),true);
+  await page.locator('#tools').click();await page.getByRole('button',{name:'Expand tools panel',exact:true}).click();
+  await page.locator('#pane-agent').click();assert.equal(await page.locator('#tools-panel').isVisible(),false);assert.equal(await page.locator('#chat').isVisible(),true);
+  await page.setViewportSize({width:900,height:650});await page.locator('#pane-preview').click();
+  assert.equal(await page.locator('#source').isVisible(),false);assert.equal(await page.locator('#chat').isVisible(),false);assert.equal(await page.locator('.pdf-pane').isVisible(),true);
+  await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);assert.equal(await page.locator('.pdf-pane').isVisible(),false);
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
 });

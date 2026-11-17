@@ -5,6 +5,18 @@ import fixture = require('../test/fixtures/headless-ui.cjs');
 import type { Page } from 'playwright';
 
 const output = path.resolve(process.env.REFRACT_THEME_ARTIFACTS || 'docs/ui');
+async function chooseView(page: import('playwright').Page, view:'split'|'editor'|'pdf'):Promise<void> {
+ // Hidden Electron windows do not reliably deliver animation frames after viewport emulation.
+ await page.evaluate(()=>window.dispatchEvent(new Event('resize')));
+ if(await page.locator('#tools-panel').isVisible()) await page.locator('#tools').click();
+ const target={agent:view!=='pdf',editor:view!=='pdf',preview:view!=='editor'};
+ for(const enabled of [true,false]) for(const name of ['agent','editor','preview'] as const) {
+  const button=page.locator(`#pane-${name}`);
+  if(target[name]===enabled && (await button.getAttribute('aria-pressed')==='true')!==enabled) await button.click();
+ }
+ await page.locator('#pane-editor').focus();
+}
+
 async function settledPdf(page:Page):Promise<void> {
  await page.getByText('Compiled',{exact:true}).waitFor();
  await page.waitForFunction(()=>Number(document.querySelector<HTMLCanvasElement>('.pdf-pages canvas')?.dataset.renderScale)>0);
@@ -32,7 +44,7 @@ async function main():Promise<void> {
    await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();await settledPdf(page);
    await page.locator('#file-list button[title="sections/abstract.tex"]').click();await page.getByRole('button',{name:'main.tex',exact:true}).click();
    await capture('workspace');
-   await page.locator('.layout-menu>summary').click();await page.screenshot({path:path.join(output,`layout-${theme}.png`)});await page.keyboard.press('Escape');
+   await page.screenshot({path:path.join(output,`layout-${theme}.png`)});
    await page.locator('#project-name').click();await capture('dialog');await page.locator('#rename-dialog button[value=cancel]').click();
    await page.locator('#tools').click();await page.locator('#tool-info').click();await page.locator('.project-facts').waitFor();await capture('tools');
    await page.locator('#tool-comments').click();await page.waitForFunction(()=>document.querySelectorAll('.comment-card').length===2);await capture('comments');
@@ -41,9 +53,9 @@ async function main():Promise<void> {
    await page.locator('#tools').click();await page.locator('.model-trigger').click();
    await page.locator('[data-focus-key="model:model-a"]').click();await page.locator('.model-trigger').click();await capture('models');await page.keyboard.press('Escape');
    await page.setViewportSize({width:1000,height:740});await capture('compact');
-   await page.locator('.layout-menu>summary').click();await page.getByLabel('Workspace view',{exact:true}).selectOption('pdf');await page.locator('.layout-menu>summary').click();await settledPdf(page);await capture('compact-preview');
-   await page.getByRole('button',{name:'Return to editor',exact:true}).click();await page.setViewportSize({width:900,height:650});await page.locator('#source').focus();await capture('short');
-   await page.setViewportSize({width:1440,height:900});await page.locator('.layout-menu>summary').click();await page.getByLabel('Workspace view',{exact:true}).selectOption('split');await page.keyboard.press('Escape');await page.locator('#home').click();
+   await chooseView(page,'pdf');await settledPdf(page);await capture('compact-preview');
+   await page.locator('#pane-editor').click();await page.setViewportSize({width:900,height:650});await page.locator('#source').focus();await capture('short');
+   await page.setViewportSize({width:1440,height:900});await chooseView(page,'split');await page.locator('#home').click();
    await page.getByRole('button',{name:'Open Conference paper - autumn notes',exact:true}).click();await page.locator('.message.assistant').waitFor();await settledPdf(page);
    await capture('conversation');await page.getByRole('button',{name:'Expand chat',exact:true}).click();await capture('expanded-chat');
    assert.deepEqual(errors,[]);
