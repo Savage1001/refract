@@ -44,9 +44,7 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  let app = await launchDesktop(env);
  t.after(async () => { if (app) await app.close().catch(() => {}); await fs.rm(data, {recursive:true,force:true, maxRetries:5, retryDelay:200}); });
  let page = await app.firstWindow();
- assert.equal(await page.locator('#home').innerText(), 'Refract');
- assert.equal(await page.locator('.app-titlebar').evaluate(el => getComputedStyle(el).backgroundColor), await page.locator('.sidebar').evaluate(el => getComputedStyle(el).backgroundColor));
- assert.ok(await page.locator('#home img').evaluate(el => (el as HTMLImageElement).naturalWidth > 0));
+ assert.equal(await page.locator('#project-navigation').isHidden(), true);
  assert.equal(await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isMenuBarVisible()), false);
  const errors=[]; page.on('pageerror', e => errors.push(e.message));
  await page.emulateMedia({colorScheme:'dark'});
@@ -56,6 +54,9 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.locator('#list-view').click();
  await page.locator('#new').click();
  await page.locator('#source').waitFor({state:'visible'});
+ assert.equal(await page.locator('#home').innerText(), 'Refract');
+ assert.equal(await page.locator('.app-titlebar').evaluate(el => getComputedStyle(el).backgroundColor), await page.locator('.sidebar').evaluate(el => getComputedStyle(el).backgroundColor));
+ assert.ok(await page.locator('#home img').evaluate(el => (el as HTMLImageElement).naturalWidth > 0));
  const projectDirs = (await fs.readdir(path.join(data,'projects'))).filter((name:string)=>/^[0-9a-f-]{36}$/.test(name));
  await fs.writeFile(path.join(data, 'projects', projectDirs[0], 'pixel.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJZkAAAAASUVORK5CYII=', 'base64'));
  await page.locator('#file-list button[title="pixel.png"]').waitFor({state:'visible'});

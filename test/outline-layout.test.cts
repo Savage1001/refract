@@ -30,3 +30,26 @@ for (const theme of ['light', 'dark'] as const) {
   } finally { await browser.close(); }
  });
 }
+
+test('outline renders inline math and retains section navigation', {timeout:30000}, async () => {
+ const source = [
+  '\\section{Introduction}',
+  '\\subsection*{$J_{2}$ Truth, \\(\\Delta t=1800\\) s}',
+  '\\section{Cost \\$5 <example>}'
+ ].join('\n');
+ const {browser,page,errors} = await fixture.openHeadlessUi('light', {source, pdf:''});
+ try {
+  await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+  const rows = page.locator('#outline-list button');
+  const mathRow = rows.nth(1);
+  await mathRow.locator('math').nth(1).waitFor();
+  assert.equal(await mathRow.locator('msub').textContent(),'J2');
+  assert.equal(await mathRow.locator('math').nth(1).textContent(),'Δt=1800');
+  assert.match(await mathRow.textContent() ?? '', / Truth, .* s$/);
+  assert.equal(await rows.nth(0).textContent(),'Introduction');
+  assert.equal(await rows.nth(2).textContent(),'Cost \\$5 <example>');
+  await mathRow.click();
+  assert.equal(await page.locator('#source').evaluate((editor:HTMLTextAreaElement) => editor.selectionStart),source.indexOf('\\subsection'));
+  assert.deepEqual(errors,[]);
+ } finally { await browser.close(); }
+});

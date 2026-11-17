@@ -210,7 +210,7 @@ h2 {
   z-index:40;
 }
 
-/* Persistent navigation. */
+/* Project navigation. */
 .sidebar {
   position:relative;
   width:var(--sidebar-width,232px);
@@ -259,7 +259,6 @@ h2 {
 
 #collapse {
   font-size:17px;
-  color:var(--sidebar-muted);
 }
 
 .sidebar-label,.eyebrow {
@@ -275,18 +274,11 @@ h2 {
   color:var(--sidebar-muted);
 }
 
-.nav,.project-name {
+.project-name {
   width:100%;
   text-align:left;
   padding:9px 10px;
   font-weight:550;
-}
-
-.nav.selected {
-  background:var(--selected);
-}
-
-.project-name {
   margin:6px 0 12px;
   overflow:hidden;
   text-overflow:ellipsis;
@@ -391,7 +383,7 @@ h2 {
   border:1px solid var(--input);
   padding:1px 3px;
   border-radius:3px;
-  color:var(--sidebar-muted);
+  color:var(--icon-color);
 }
 
 .tree-file-name {
@@ -470,7 +462,7 @@ h2 {
   padding:0 10px;
 }
 
-.sidebar.collapsed #home-side,.sidebar.collapsed #project-side,.sidebar.collapsed #home,.sidebar.collapsed .vertical {
+.sidebar.collapsed #project-side,.sidebar.collapsed #home,.sidebar.collapsed .vertical {
   display:none;
 }
 
@@ -603,8 +595,9 @@ main {
   flex:none;
 }
 
-.project-header-actions .secondary {
-  padding:9px 14px;
+.project-header-actions .icon {
+  width:36px;
+  height:36px;
 }
 
 .project-controls {
@@ -616,9 +609,41 @@ main {
   flex-wrap:wrap;
 }
 
-#search {
-  width:260px;
+.project-search {
+  position:relative;
+  width:280px;
+  max-width:100%;
   margin-right:auto;
+}
+
+.project-search svg {
+  position:absolute;
+  top:50%;
+  left:10px;
+  transform:translateY(-50%);
+  color:var(--muted);
+  pointer-events:none;
+}
+
+#search {
+  display:block;
+  width:100%;
+  height:36px;
+  padding:0 10px 0 36px;
+  background:transparent;
+  border:1px solid transparent;
+  border-radius:8px;
+  font-weight:500;
+}
+
+#search:hover,
+#search:focus {
+  background:var(--hover);
+}
+
+#search:focus {
+  outline:1px solid var(--accent);
+  outline-offset:-1px;
 }
 
 .project-controls label {
@@ -938,26 +963,24 @@ main {
   font-weight:600;
 }
 
-.workspace-view-controls {
+.workspace-actions {
   display:flex;
   align-items:center;
-  gap:4px;
-  flex-wrap:wrap;
+  gap:8px;
+  flex:none;
 }
 
-.workspace-view-controls button {
-  font-size:12px;
-  padding:5px 9px;
-  white-space:nowrap;
+.workspace-actions #tools {
+  width:38px;
+  height:38px;
+  padding:0;
+  border:1px solid var(--input);
+  border-radius:8px;
 }
 
-.workspace-view-controls .compact-preview {
-  display:inline-block;
-}
-
-.workspace-view-controls #tools {
-  border-color:var(--input);
-  margin-left:8px;
+.workspace-actions #tools[aria-expanded="true"] {
+  background:var(--selected);
+  color:var(--text);
 }
 
 .editor-pane {
@@ -1283,7 +1306,6 @@ main {
   top:0;
   right:0;
   padding:1px 5px;
-  color:var(--muted);
   font-size:16px;
 }
 
@@ -1332,17 +1354,9 @@ main {
   height:36px;
   min-width:36px;
   min-height:36px;
-  border-radius:50%;
-  background:var(--accent);
-  color:var(--accent-text);
-}
-
-.composer #send:hover {
-  background:var(--accent-hover);
 }
 
 .composer #attach {
-  color:var(--muted);
   width:28px;
   height:28px;
 }
@@ -1350,8 +1364,6 @@ main {
 .composer .stop-chat {
   width:30px;
   height:30px;
-  border-radius:50%;
-  background:var(--error);
   display:grid;
   place-items:center;
   padding:0;
@@ -1361,7 +1373,7 @@ main {
   content:'';
   width:10px;
   height:10px;
-  background:white;
+  background:currentColor;
   border-radius:2px;
 }
 
@@ -1539,10 +1551,9 @@ main {
   top:-5px;
   width:20px;
   height:20px;
-  border-radius:50%;
+  display:grid;
+  place-items:center;
   padding:0;
-  background:var(--text);
-  color:var(--canvas);
 }
 
 .attachment {
@@ -1686,7 +1697,6 @@ main {
 .model-row .model-favorite {
   padding:4px;
   font-size:16px;
-  color:var(--muted);
 }
 
 .model-row.is-selected {
@@ -2778,7 +2788,7 @@ dialog .dialog-actions {
     gap:8px;
   }
 
-  #search {
+  .project-search {
     width:100%;
   }
 
@@ -2875,9 +2885,8 @@ dialog .dialog-actions {
 
 /* One source of visibility for all pane combinations, including narrow windows. */
 .pane-toggles { display:flex; gap:2px; padding:3px; border:1px solid var(--input); border-radius:8px; }
-.workspace-view-controls .pane-toggle { display:grid; place-items:center; width:32px; height:30px; padding:6px; border:0; background:transparent; color:var(--muted); border-radius:4px; }
-.workspace-view-controls .pane-toggle[aria-pressed="true"] { background:var(--selected); color:var(--text); box-shadow:inset 0 0 0 1px var(--input); }
-.workspace-view-controls .pane-toggle:hover { background:var(--hover); color:var(--text); }
+.pane-toggles .pane-toggle { display:grid; place-items:center; width:32px; height:30px; padding:6px; border:0; border-radius:4px; }
+.pane-toggles .pane-toggle[aria-pressed="true"] { background:var(--selected); box-shadow:inset 0 0 0 1px var(--input); }
 #workspace.pane-layout .pdf-pane { display:flex; flex:1; min-width:0; }
 #workspace.pane-layout .workspace-handle { display:block; }
 #workspace.pane-layout.pane-preview-hidden .pdf-pane,
@@ -2915,3 +2924,31 @@ dialog .dialog-actions {
 #settings-dialog .dialog-actions { flex-wrap:wrap; }
 
 #workspace.pane-layout.pane-editor-hidden #chat-resize { display:none; }
+
+/* Match monochrome action icons across toolbars, lists and overlays. */
+:is(button, summary) {
+  --icon-color:var(--sidebar-muted);
+}
+
+:is(button:enabled, summary):is(:hover, :focus-visible) {
+  --icon-color:var(--text);
+}
+
+:is(button, summary)>:is(.ui-icon, .folder-icon, .fast-icon),
+.pdf-pane header #compile::before {
+  color:var(--icon-color);
+}
+
+button:is(.icon, .stop-chat, .chat-rename, .model-favorite, .model-favorites-tab):not(:where(#zoom-fit)),
+.editor-find button:is([aria-label="Previous match"], [aria-label="Next match"], [aria-label="Close find"]) {
+  color:var(--icon-color);
+}
+
+button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite, .model-favorites-tab):not(:where(#zoom-fit)):is(:hover, :focus-visible) {
+  background:var(--hover);
+}
+
+/* The active tab already uses the hover surface. */
+.file-tab.active .close-tab:is(:hover, :focus-visible) {
+  background:color-mix(in srgb, var(--hover), var(--text) 8%);
+}
