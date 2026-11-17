@@ -8,4 +8,6 @@ When asked for a new release, increment the patch (third) version number by defa
 
 Keep descriptions for stable releases, pre-releases, and betas brief: include only the version name and a concise summary of the changes made in that version.
 
+Run the full lifecycle test suite for stable releases. Prereleases do not require the full lifecycle test suite; run targeted tests covering the new functionality and changes included in the prerelease.
+
 Do not include private email addresses, other nonpublic personal information, credentials, or secrets in commits or pull requests, including commit author and committer metadata, messages, file contents, titles, and descriptions. Use the owner's GitHub-provided noreply address for commit metadata. Check the staged changes and author identity before committing, and check pull request content before submission.
