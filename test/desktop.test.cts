@@ -869,10 +869,20 @@ test('compiled PDF viewer navigates pages, zooms and disables stale controls', {
  assert.equal(await page.locator('.pdf-page-count').innerText(),'1 / 2');assert.equal(await prev.isDisabled(),true);
  await next.click();await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='2 / 2');
  assert.equal(await next.isDisabled(),true);await prev.click();await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='1 / 2');
- const jump=page.getByLabel('Go to compiled PDF page');await jump.fill('2');await jump.press('Enter');await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='2 / 2');
- await jump.fill('3');await jump.press('Enter');assert.equal(await page.locator('.pdf-page-count').innerText(),'2 / 2');
- await jump.fill('1.5');await jump.press('Enter');assert.equal(await page.locator('.pdf-page-count').innerText(),'2 / 2');
- await jump.fill('1');await jump.press('Enter');await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='1 / 2');
+ const jump=page.getByLabel('Go to compiled PDF page'),current=page.getByRole('button',{name:'Change compiled PDF page',includeHidden:true});
+ assert.equal(await jump.isHidden(),true);
+ await current.click();assert.equal(await jump.inputValue(),'1');
+ assert.deepEqual(await jump.evaluate((input:HTMLInputElement)=>[input.selectionStart,input.selectionEnd]),[0,1]);
+ await jump.fill('2');await jump.press('Enter');await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='2 / 2');
+ await current.click();await jump.fill('3');await jump.press('Enter');assert.equal(await current.textContent(),'2');
+ await jump.fill('1.5');await jump.press('Enter');assert.equal(await current.textContent(),'2');
+ assert.equal(await jump.getAttribute('aria-invalid'),'true');
+ await jump.fill('1');await jump.press('Escape');
+ assert.equal(await jump.isHidden(),true);assert.equal(await current.evaluate(element=>element===document.activeElement),true);
+ assert.equal(await page.locator('.pdf-page-count').innerText(),'2 / 2');
+ await current.press('Enter');await jump.fill('1');await jump.press('Tab');
+ assert.equal(await jump.isHidden(),true);assert.equal(await page.locator('.pdf-page-count').innerText(),'2 / 2');
+ await current.click();await jump.fill('1');await jump.press('Enter');await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='1 / 2');
  const initialWidth: number = await page.locator('.pdf-pages canvas').first().evaluate(element => (element as HTMLCanvasElement).width);
  await zoom.click();assert.equal(await page.locator('.pdf-zoom-value').innerText(),'125%');
  assert.equal(await page.locator('.pdf-pages .pdf-page-frame').first().evaluate(element=>(element as HTMLElement).style.width),'125%');
@@ -990,7 +1000,7 @@ test('long PDFs have content immediately on fast scroll and sharpen pages in vie
  await page.getByLabel('Zoom in compiled PDF').click();
  await page.waitForFunction(width=>(document.querySelector('.pdf-pages canvas') as HTMLCanvasElement)?.width>width,initialWidth);
  assert.equal(await canvases.last().evaluate(el=>(el as HTMLCanvasElement).width),initialWidth);
- const jump=page.getByLabel('Go to compiled PDF page');await jump.fill('12');await jump.press('Enter');
+ const jump=page.getByLabel('Go to compiled PDF page');await page.getByRole('button',{name:'Change compiled PDF page'}).click();await jump.fill('12');await jump.press('Enter');
  const pagePosition=()=>canvases.nth(11).evaluate(el=>{
    const area=document.querySelector('#pdf-area') as HTMLElement,bounds=el.getBoundingClientRect();
    return (area.getBoundingClientRect().top+area.clientHeight/2-bounds.top)/bounds.height;
