@@ -417,6 +417,7 @@ app.whenReady().then(async () => {
       const preferences = provider === 'codex' ? await codexPreferences.load() : await openCodePreferences.load();
       const project = await store.destinationDir(id);
       const bridge = await startAssistantTools(store, id, async (force=false) => {
+        await require('./src/document-images.cjs').materializeDocumentImages(store,id);
         const options = await configuredBuild(store,id,texBin(),signal);
         const result = await metrics.measure('build',()=>buildCache.run(id,project,options,force));
         metrics.count(result.cached ? 'buildCacheHits' : 'builds');
@@ -447,6 +448,7 @@ app.whenReady().then(async () => {
     const previous = compilations.get(id);
     const job = (previous ? previous.catch(() => {}) : Promise.resolve()).then(async () => {
       if(controller.signal.aborted) return {ok:false,log:'Compilation cancelled.'};
+      await require('./src/document-images.cjs').materializeDocumentImages(store,id);
       return buildCache.run(id,store.projectDir(id), await configuredBuild(store,id,texBin(),controller.signal),force);
     });
     compilations.set(id,job);

@@ -245,10 +245,12 @@ class ChatService {
         if(signal?.aborted) throw new Error('Assistant operation cancelled.');
         const runner = selected === 'codex' ? this.runner : this.openCodeRunner;
         const context = history ? `The following is prior conversation context. Continue with the current request after it.\n\n${history}\n\nCurrent request:\n${promptWithFiles}` : promptWithFiles;
-        const runnerPrompt = `${buildInstructions ? buildInstructions + '\n\n' : ''}The active Refract project workspace is ${workspace}. Use this directory for the current request; verify its files before answering questions about the project. Prior context or instructions about other projects do not describe this workspace.\n\n${context}`;
+        const runnerPrompt = `${buildInstructions ? buildInstructions + '\n\n' : ''}Chat attachments are private reference material. Copy an attached image to a visible project folder such as images/ only when including it in the document, and use that project path in LaTeX. Preserve private originals for chat history. Refract migrates literal includegraphics references to private images before builds and after your turn; reread source after building if needed. The active Refract project workspace is ${workspace}. Use this directory for the current request; verify its files before answering questions about the project. Prior context or instructions about other projects do not describe this workspace.\n\n${context}`;
         options?.performance?.add('context',performance.now()-contextStarted);options?.performance?.count('contextCharacters',runnerPrompt.length);
         const execute=()=>runner(workspace, chat.sessionId, runnerPrompt, imagePaths, signal, onProgress, persistSession, options);
-        const result = await (options?.performance ? options.performance.measure('providerTurn',execute) : execute());
+        let result: {sessionId?: string; text: string};
+        try { result = await (options?.performance ? options.performance.measure('providerTurn',execute) : execute()); }
+        finally { await require('./document-images.cjs').materializeDocumentImages(this.store,id); }
         await sessionWrite;
         if (sessionWriteError) throw new Error('Could not save the assistant session');
         if (result.sessionId) chat.sessionId = result.sessionId;
