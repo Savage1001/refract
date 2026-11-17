@@ -45,7 +45,8 @@ SectionEnd
     await fs.mkdir(bin,{recursive:true});
     for (const tool of ['pdflatex','xelatex','lualatex','kpsewhich','synctex','bibtex','biber']) await fs.writeFile(path.join(bin,`${tool}.exe`),'reuse fixture');
   }
-  const run=(localAppData:string)=>childProcess.spawnSync(installer,['/S'],{windowsHide:true,encoding:'utf8',timeout:live?300000:15000,env:{...process.env,LOCALAPPDATA:localAppData}});
+  // Even reuse-only silent NSIS runs can exceed 15 seconds on Windows.
+  const run=(localAppData:string)=>childProcess.spawnSync(installer,['/S'],{windowsHide:true,encoding:'utf8',timeout:live?300000:60000,env:{...process.env,LOCALAPPDATA:localAppData}});
   const reused=run(data);assert.equal(reused.status,0,String(reused.error ?? reused.stderr));
   if (live) {
     for (const tool of ['pdflatex','xelatex','lualatex','kpsewhich','synctex','bibtex','biber']) assert.ok((await fs.stat(path.join(bin,`${tool}.exe`))).size>1000,tool);
