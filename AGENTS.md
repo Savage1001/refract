@@ -8,6 +8,8 @@ When asked for a new release, increment the patch (third) version number by defa
 
 Keep descriptions for stable releases, pre-releases, and betas brief: include only the version name and a concise summary of the changes made in that version.
 
-Run the full lifecycle test suite for stable releases. Prereleases do not require the full lifecycle test suite; run targeted tests covering the new functionality and changes included in the prerelease.
+Every future Windows installer, including stable releases, prereleases, and updater-delivered installers, must automatically install the TeX and SyncTeX dependencies required for document compilation. Download checksum-verified upstream distributions into per-user application data, discover the managed toolchain automatically, reuse complete installations, preserve dependencies and user data on uninstall, and report setup failures with a nonzero exit code and a useful log. Do not require manual TeX installation or environment-variable configuration. Codex and OpenCode CLIs remain optional, separately installed and authenticated integrations.
+
+Run the full lifecycle test suite for stable releases. Prereleases require targeted tests covering their new functionality and included changes; the full lifecycle suite is not required.
 
 Do not include private email addresses, other nonpublic personal information, credentials, or secrets in commits or pull requests, including commit author and committer metadata, messages, file contents, titles, and descriptions. Use the owner's GitHub-provided noreply address for commit metadata. Check the staged changes and author identity before committing, and check pull request content before submission.

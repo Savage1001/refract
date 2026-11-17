@@ -48,3 +48,19 @@
 !macro customUnInstallCheckCurrentUser
   !insertmacro refractCheckUninstallResult
 !macroend
+
+; Use Electron's bundled Node runtime; nsExec hides the dependency process.
+!macro customInstall
+  DetailPrint "Setting up TinyTeX and SyncTeX (internet access required)..."
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i.r0'
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\app\build\scripts\install-dependencies.cjs"'
+  Pop $R0
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i.r1'
+  ${If} $R0 != 0
+    DetailPrint "TeX setup failed. Check %LOCALAPPDATA%\Refract\dependencies\setup-error.log and rerun the installer with internet access."
+    IfSilent +2 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "TeX setup failed. Check %LOCALAPPDATA%\Refract\dependencies\setup-error.log and rerun the installer with internet access."
+    SetErrorLevel 3
+    Quit
+  ${EndIf}
+!macroend
