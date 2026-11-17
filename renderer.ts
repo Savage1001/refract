@@ -612,7 +612,7 @@ function scheduleCompile() {
   const placeholder = document.createElement('div'); placeholder.className = 'pdf-placeholder'; placeholder.setAttribute('role','status');
   const placeholderTitle = document.createElement('strong'); placeholderTitle.textContent = 'Changes pending compilation';
   const placeholderHint = document.createElement('span'); placeholderHint.textContent = 'Your preview will update after the document is compiled.';
-  const compileNow = document.createElement('button'); compileNow.type='button'; compileNow.className='secondary compile-now'; compileNow.textContent='Compile now'; compileNow.onclick=()=>{ clearTimeout(compileTimer); void compilePreview(); }; placeholder.append(placeholderTitle,placeholderHint,compileNow);
+  placeholder.append(placeholderTitle,placeholderHint);
   $('#pdf-area').replaceChildren(placeholder);
   $('#compile').textContent = 'Compile';
   clearTimeout(compileTimer);
