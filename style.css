@@ -1100,7 +1100,7 @@ main {
 
 .file-tabs {
   display:flex;
-  align-items:center;
+  align-items:stretch;
   gap:4px;
   overflow:auto;
   width:100%;
@@ -1114,10 +1114,12 @@ main {
   flex:none;
   border-radius:0;
   padding:0;
+  border-inline:1px solid transparent;
   border-bottom:2px solid transparent;
 }
 
 .file-tab.active {
+  border-inline-color:var(--border);
   border-bottom-color:var(--accent);
   background:var(--hover);
 }
