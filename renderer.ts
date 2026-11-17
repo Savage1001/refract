@@ -1,7 +1,7 @@
 // All action glyphs use the same view box, stroke and fixed geometry.
-type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview' | 'download' | 'export';
+type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview' | 'download' | 'export' | 'wrench';
 function actionIcon(name:ActionIcon):SVGSVGElement {
-  const paths:Record<ActionIcon,string> = {download:'M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4',export:'M14 3h7v7m0-7L10 14M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5',agent:'M15 14H7l-4 3V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2Z M10 14v2a2 2 0 0 0 2 2h5l4 3v-8a2 2 0 0 0-2-2h-2',editor:'m7 8-4 4 4 4m10-8 4 4-4 4M14 5l-4 14',preview:'M14 2H5v20h14V7Z M14 2v5h5M8 11h8M8 15h8M8 18h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
+  const paths:Record<ActionIcon,string> = {wrench:'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-7 7a2.1 2.1 0 0 1-3-3l7-7a6 6 0 0 1 7.9-7.9z',download:'M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4',export:'M14 3h7v7m0-7L10 14M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5',agent:'M15 14H7l-4 3V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2Z M10 14v2a2 2 0 0 0 2 2h5l4 3v-8a2 2 0 0 0-2-2h-2',editor:'m7 8-4 4 4 4m10-8 4 4-4 4M14 5l-4 14',preview:'M14 2H5v20h14V7Z M14 2v5h5M8 11h8M8 15h8M8 18h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false',class:'ui-icon'})) svg.setAttribute(key,value);
   const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;
@@ -318,7 +318,7 @@ async function openProject(p) {
   ++opening;
   ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = true; $('#file-search-toggle').setAttribute('aria-pressed','false'); $('#file-search-input').value = ''; const clearSearch = document.querySelector<HTMLButtonElement>('.clear-file-search'); if (clearSearch) clearSearch.hidden = true; $('#file-search-results').replaceChildren();
   attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p; restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false;
-  compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; $('#tools').textContent = 'Tools \u25be'; $('#compile').textContent = 'Compile';
+  compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; toolsButton.setAttribute('aria-expanded', 'false'); $('#compile').textContent = 'Compile';
   pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
   $('#home-side').hidden = true; $('#project-side').hidden = false; $('#project-name').textContent = p.name;
   showRestoreNotice(false);
@@ -1346,12 +1346,14 @@ function renderToolPanel() {
     engineLabel.className = 'engine-setting'; const engineHint = document.createElement('small'); engineHint.id='engine-hint'; engineHint.textContent='Choose the compiler used to build this project.'; engine.setAttribute('aria-describedby',engineHint.id); engineLabel.append(engine,engineHint); body.append(title, facts, engineLabel, draftLabel);
   }
 }
-$('#tools').onclick = () => {
+const toolsButton = document.querySelector<HTMLButtonElement>('#tools')!;
+toolsButton.append(actionIcon('wrench'));
+toolsButton.onclick = () => {
   showingTools = !showingTools;
   $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
   $('#workspace').classList.remove('tools-expanded');
   expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
-  $('#tools').textContent=showingTools?'Close tools':'Tools \u25be';
+  toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
 };
@@ -1712,7 +1714,8 @@ const workspaceBar = document.createElement('header'); workspaceBar.className = 
 const projectTrail = document.createElement('div'); projectTrail.className = 'project-trail';
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
 projectNameControl.title = 'Rename project'; projectTrail.append(projectNameControl);
-const viewControls = document.createElement('div'); viewControls.className = 'workspace-view-controls'; viewControls.setAttribute('role','group'); viewControls.setAttribute('aria-label','Workspace layout');
+const workspaceActions = document.createElement('div');
+workspaceActions.className = 'workspace-actions';
 type PaneName='agent'|'editor'|'preview';
 type PaneLayout=Record<PaneName,boolean>;
 const layoutStorageKey='refract.workspace-panes.v1';
@@ -1736,9 +1739,9 @@ for(const [name,label,controls] of [['agent','Agent','chat'],['editor','Editor',
 }
 workspaceShell.querySelector('.editor-wrap')!.id='editor-content';
 const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.remove();
-viewControls.append(paneToggles,workspaceShell.querySelector<HTMLButtonElement>('#tools')!);
+workspaceActions.append(paneToggles, toolsButton);
 function closeLayoutTools():void {
-  showingTools=false;$('#tools-panel').hidden=true;$('#pdf-content').hidden=false;$('#tools').textContent='Tools \u25be';
+  showingTools=false;$('#tools-panel').hidden=true;$('#pdf-content').hidden=false;toolsButton.setAttribute('aria-expanded', 'false');
   $('#workspace').classList.remove('tools-expanded');
   expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
 }
@@ -1790,7 +1793,7 @@ function syncPaneButtons():void {
 // Tool expansion is transient and must update the indicators without saving it.
 new MutationObserver(syncPaneButtons).observe(workspace,{attributes:true,attributeFilter:['class']});
 window.addEventListener('resize',()=>applyPaneLayout(false));
-workspaceBar.append(projectTrail, viewControls); workspace.append(workspaceBar, workspaceShell);applyPaneLayout(false);
+workspaceBar.append(projectTrail, workspaceActions); workspace.append(workspaceBar, workspaceShell);applyPaneLayout(false);
 const fileSectionLabel = document.createElement('div'); fileSectionLabel.className = 'sidebar-label'; fileSectionLabel.textContent = 'Project'; document.getElementById('project-side')!.prepend(fileSectionLabel);
 // Normalize the remaining static and generated toolbar actions.
 for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#collapse','menu'],['#chat-image-close','close'],['[aria-label="Previous compiled PDF page"]','previous'],['[aria-label="Next compiled PDF page"]','next'],['[aria-label="Zoom out compiled PDF"]','minus'],['[aria-label="Zoom in compiled PDF"]','plus']] as const) {
