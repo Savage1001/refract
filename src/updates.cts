@@ -13,7 +13,7 @@ function selectRelease(releases: Release[], track: UpdateTrack, current: string)
     const version = semver.valid(release.tag_name);
     if (!version || release.draft || !semver.gt(version, current)) return false;
     const pre = semver.prerelease(version);
-    return track === 'stable' ? !release.prerelease && !pre : (!release.prerelease && !pre) || (release.prerelease && pre?.[0] === 'beta');
+    return track === 'stable' ? !release.prerelease && !pre : (!release.prerelease && !pre) || (release.prerelease && pre?.length === 2 && pre[0] === 'beta' && typeof pre[1] === 'number');
   }).sort((a, b) => semver.rcompare(a.tag_name, b.tag_name))[0];
 }
 
@@ -42,8 +42,7 @@ export interface UpdateClient {
 }
 function createUpdateClient(release: Release): UpdateClient {
   const channel = semver.prerelease(release.tag_name) ? 'beta' : 'latest';
-  const suffix = process.arch === 'arm64' ? '-arm64' : '';
-  if (!release.assets.some(a => a.name === `${channel}${suffix}.yml`)) throw new Error(`Release ${release.tag_name} is missing update metadata. Will retry in 10 minutes.`);
+  if (!release.assets.some(a => a.name === `${channel}.yml`)) throw new Error(`Release ${release.tag_name} is missing update metadata. Will retry in 10 minutes.`);
   const { NsisUpdater }: typeof import('electron-updater') = require('electron-updater');
   const updater = new NsisUpdater({ provider: 'generic', url: `https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag_name)}/`, channel });
   updater.autoInstallOnAppQuit = false;
@@ -59,6 +58,7 @@ class UpdateService {
   private prepared?: UpdateClient;
   private preparedVersion?: string;
   private restarting = false;
+  private pendingTrackChanges = 0;
   private saving: Promise<unknown> = Promise.resolve();
   constructor(private file: string, private version: string, private enabled: boolean,
     private releases = githubReleases, private client = createUpdateClient) {}
@@ -73,6 +73,7 @@ class UpdateService {
   async setTrack(value: unknown): Promise<UpdateStatus> {
     if (this.restarting) throw new Error('An update restart is already in progress');
     if (value !== 'stable' && value !== 'beta') throw new Error('Invalid update track');
+    this.pendingTrackChanges++;
     const save = this.saving.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), {recursive: true});
       await fs.writeFile(this.file + '.tmp', JSON.stringify({track: value}) + '\n');
@@ -84,7 +85,8 @@ class UpdateService {
       await this.check();
       return this.status();
     });
-    this.saving = save; return save;
+    this.saving = save;
+    try { return await save; } finally { this.pendingTrackChanges--; }
   }
   check(): Promise<void> {
     if (!this.enabled || this.restarting) return Promise.resolve();
@@ -129,7 +131,7 @@ class UpdateService {
     }
   }
   prepareRestart(): () => void {
-    if (this.restarting || !this.prepared || this.state.phase !== 'ready' || this.running) throw new Error('No downloaded update is ready to install');
+    if (this.restarting || this.pendingTrackChanges > 0 || !this.prepared || this.state.phase !== 'ready' || this.running) throw new Error('No downloaded update is ready to install');
     const updater = this.prepared;
     this.restarting = true;
     this.stop();

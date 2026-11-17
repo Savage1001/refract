@@ -81,3 +81,25 @@ test('downloaded updates never install on ordinary quit and require explicit res
   afterShutdown();afterShutdown();assert.equal(installs,1);
  } finally {closing.stop();explicit.stop();await fs.rm(dir,{recursive:true,force:true});}
 });
+
+test('pending track changes block restart before preference I/O completes', async () => {
+ const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-update-pending-'));
+ const service = new UpdateService(path.join(dir, 'settings.json'), '1.0.0', true,
+  async () => [release('v1.1.0')], () => ({autoDownload:false, autoInstallOnAppQuit:false,
+   allowPrerelease:false, allowDowngrade:false, on:()=>{},
+   checkForUpdates:async()=>({updateInfo:{version:'1.1.0'}}), downloadUpdate:async()=>{}, quitAndInstall:()=>{}}));
+ try {
+  await service.start(); await service.check();
+  const pending = service.setTrack('beta');
+  assert.throws(() => service.prepareRestart());
+  await pending;
+  assert.equal(service.status().track, 'beta');
+  assert.doesNotThrow(() => service.prepareRestart());
+ } finally {service.stop(); await fs.rm(dir, {recursive:true, force:true});}
+});
+
+test('beta track accepts only beta.N prereleases', () => {
+ for (const tag of ['v2.0.0-beta', 'v2.0.0-beta.foo', 'v2.0.0-beta.1.extra']) {
+  assert.equal(selectRelease([release(tag, true)], 'beta', '1.0.0'), undefined);
+ }
+});
