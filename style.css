@@ -605,6 +605,17 @@ main {
   flex:none;
 }
 
+#new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#new svg {
+  flex: none;
+}
+
 .project-header-actions .icon {
   width:36px;
   height:36px;
