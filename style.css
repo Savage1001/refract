@@ -564,8 +564,9 @@ main {
   flex:none;
 }
 
-.project-header-actions .secondary {
-  padding:9px 14px;
+.project-header-actions .icon {
+  width:36px;
+  height:36px;
 }
 
 .project-controls {
