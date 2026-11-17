@@ -1810,7 +1810,7 @@ main {
   height:16px;
   flex:none;
   background:currentColor;
-  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 9a7.2 7.2 0 1 0 .2 5'/%3E%3Cpath d='m16 9 3.5.1L20 5.5'/%3E%3C/svg%3E") center/contain no-repeat;
 }
 
 .pdf-pane header #compile:disabled::before {
