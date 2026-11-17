@@ -1821,6 +1821,11 @@ main {
   color:var(--muted);
 }
 
+.pdf-pane header #download .ui-icon,.pdf-pane header #export-project .ui-icon {
+  width:22px;
+  height:22px;
+}
+
 .pdf-controls {
   display:flex;
   align-items:center;
