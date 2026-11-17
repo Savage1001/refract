@@ -1778,7 +1778,7 @@ const sidebarTabs=document.querySelector('.tabs')!;
 const sidebarActions=document.createElement('div');sidebarActions.className='sidebar-actions';sidebarActions.setAttribute('role','group');sidebarActions.setAttribute('aria-label','File and project actions');
 for(const id of ['file-search-toggle','add-file','deleted-files','duplicate']) sidebarActions.append(document.getElementById(id)!);
 sidebarTabs.after(sidebarActions);
-for(const [id,icon,label] of [['deleted-files','trash','Deleted files'],['duplicate','copy','Duplicate project']] as const) {
+for(const [id,icon,label] of [['deleted-projects','trash','Deleted projects'],['deleted-files','trash','Deleted files'],['duplicate','copy','Duplicate project']] as const) {
   const button=document.getElementById(id)!;button.replaceChildren(actionIcon(icon));button.title=label;button.setAttribute('aria-label',label);
 }
 document.querySelector('.sidebar-footer')!.remove();
