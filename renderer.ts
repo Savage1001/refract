@@ -44,7 +44,7 @@ function setEditorReadOnly(value:boolean) {$('#source').readOnly=value;completio
 function report(action, error) { alert(`Could not ${action}: ${error.message}`); }
 function showRestoreNotice(visible:boolean) {
   let notice=$('#restore-notice');
-  if(!notice) {notice=document.createElement('div');notice.id='restore-notice';notice.setAttribute('role','status');notice.textContent='Temporary restore data remains in this project. It has been preserved because it could not be safely cleaned.';$('#project-name').insertAdjacentElement('afterend',notice);}
+  if(!notice) {notice=document.createElement('div');notice.id='restore-notice';notice.setAttribute('role','status');notice.textContent='Temporary restore data remains in this project. It has been preserved because it could not be safely cleaned.';$('#workspace').prepend(notice);}
   notice.hidden=!visible;
 }
 type ProjectThumbnail = { fingerprint: string; image: string };
@@ -317,7 +317,7 @@ async function openProject(p) {
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
   ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = !$('#files-tab').classList.contains('active'); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
-  attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p; restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false;
+  attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p; restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
   compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; toolsButton.setAttribute('aria-expanded', 'false'); $('#compile').textContent = 'Compile';
   pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
   $('#project-navigation').hidden = false; $('#project-name').textContent = p.name;
@@ -403,7 +403,7 @@ function updateEditor() {
   }));
 }
 $('#new').onclick = createProject; $('#start').onclick = createProject;
-$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
+$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
 const pendingSaves = new Map<string, Map<string, Promise<Error | null>>>();
 $('#source').oninput = () => {
   const id = active.id, name = currentFile, content = $('#source').value;
@@ -1713,7 +1713,7 @@ editorHeader.querySelectorAll(':scope > button').forEach(button => editorActions
 const workspace = document.getElementById('workspace')!;
 const workspaceShell = document.createElement('div'); workspaceShell.className = 'workspace-shell';
 workspaceShell.append(...Array.from(workspace.children));
-const workspaceBar = document.createElement('header'); workspaceBar.className = 'workspace-topbar';
+const workspaceBar = document.createElement('div'); workspaceBar.className = 'workspace-topbar'; workspaceBar.hidden = true;
 const projectTrail = document.createElement('div'); projectTrail.className = 'project-trail';
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
 projectNameControl.title = 'Rename project'; projectTrail.append(projectNameControl);
@@ -1796,7 +1796,7 @@ function syncPaneButtons():void {
 // Tool expansion is transient and must update the indicators without saving it.
 new MutationObserver(syncPaneButtons).observe(workspace,{attributes:true,attributeFilter:['class']});
 window.addEventListener('resize',()=>applyPaneLayout(false));
-workspaceBar.append(projectTrail, workspaceActions); workspace.append(workspaceBar, workspaceShell);applyPaneLayout(false);
+workspaceBar.append(projectTrail, workspaceActions); document.querySelector('.app-titlebar')!.append(workspaceBar); workspace.append(workspaceShell);applyPaneLayout(false);
 const fileSectionLabel = document.createElement('div'); fileSectionLabel.className = 'sidebar-label'; fileSectionLabel.textContent = 'Project'; document.getElementById('project-side')!.prepend(fileSectionLabel);
 // Normalize the remaining static and generated toolbar actions.
 for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#collapse','menu'],['#chat-image-close','close'],['[aria-label="Previous compiled PDF page"]','previous'],['[aria-label="Next compiled PDF page"]','next'],['[aria-label="Zoom out compiled PDF"]','minus'],['[aria-label="Zoom in compiled PDF"]','plus']] as const) {

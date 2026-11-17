@@ -28,6 +28,21 @@ test('all seven pane combinations remain recoverable and preserve editor/chat dr
   await page.setViewportSize({width:1440,height:900});await verify(page,[true,true,true]);
   const tools=page.getByRole('button',{name:'Tools',exact:true});
   const paneGroup=page.getByRole('group',{name:'Visible panes',exact:true});
+  const titlebar = page.locator('.app-titlebar');
+  const projectTitle = titlebar.getByRole('button',{name:'Spectral methods for fluid dynamics',exact:true});
+  await projectTitle.click();
+  await page.locator('#rename-dialog').waitFor();
+  await page.keyboard.press('Escape');
+  for (const width of [1440, 720]) {
+   await page.setViewportSize({width,height:900});
+   const bounds = await titlebar.boundingBox();
+   assert.ok(bounds);
+   for (const control of [projectTitle, ...await paneGroup.getByRole('button').all(), tools]) {
+    const box = await control.boundingBox();
+    assert.ok(box && box.y >= bounds.y && box.y + box.height <= bounds.y + bounds.height);
+   }
+  }
+  await page.setViewportSize({width:1440,height:900});
   assert.equal(await paneGroup.getByRole('button').count(),3);
   assert.equal(await paneGroup.getByRole('button',{name:'Tools',exact:true}).count(),0);
   assert.equal(await tools.locator('svg').count(),1);
