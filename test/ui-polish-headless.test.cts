@@ -199,3 +199,35 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
 });
+
+test('headless icon controls share idle and hover colors in both themes', {timeout:60000}, async()=>{
+ for (const theme of ['light','dark'] as const) {
+  const {browser,page}=await fixture.openHeadlessUi(theme,{pdf:'',source:'% Icon appearance sample'});
+  try {
+   const colors=await page.locator('html').evaluate(el=>{
+    const style=getComputedStyle(el);
+    return ['--sidebar-muted','--text','--hover'].map(property=>style.getPropertyValue(property).trim());
+   });
+   const [idle,hover,box]=colors.map(hex=>`rgb(${hex.slice(1).match(/../g)!.map(pair=>parseInt(pair,16)).join(', ')})`);
+   async function check(selector:string, glyph='svg'):Promise<void> {
+    const button=page.locator(selector);
+    const icon=glyph ? button.locator(glyph) : button;
+    await page.mouse.move(0,0);
+    assert.equal(await icon.evaluate(el=>getComputedStyle(el).color),idle,selector);
+    await button.hover();
+    assert.equal(await icon.evaluate(el=>getComputedStyle(el).color),hover,selector);
+    assert.equal(await button.evaluate(el=>getComputedStyle(el).backgroundColor),box,selector);
+   }
+   await check('#settings');
+   await check('#deleted-projects');
+   await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+   await page.locator('#source').waitFor({state:'visible'});
+   for (const selector of ['#duplicate','#pane-editor','#attach','#send']) await check(selector);
+   await page.locator('#file-search-toggle').click();
+   await check('#file-search-toggle');
+   await page.keyboard.press('Escape');
+   await page.locator('#chats-tab').click();
+   await check('.chat-rename','');
+  } finally {await browser.close();}
+ }
+});
