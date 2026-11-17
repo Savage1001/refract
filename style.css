@@ -298,6 +298,7 @@ h2 {
   display:flex;
   align-items:center;
   gap:4px;
+  flex-wrap:wrap;
   border-bottom:1px solid var(--border);
   padding-bottom:6px;
   flex:none;
@@ -317,15 +318,6 @@ h2 {
   color:var(--text);
   background:var(--selected);
   font-weight:600;
-}
-
-#file-search-toggle,#add-file {
-  display:inline-grid;
-  place-items:center;
-  width:32px;
-  height:32px;
-  padding:6px;
-  flex:none;
 }
 
 #file-list,#chat-list,#outline-list {
@@ -480,11 +472,50 @@ h2 {
 }
 
 #file-search {
-  padding:10px 0;
+  padding:6px 0;
 }
 
-#file-search input {
+.file-search-field {
+  position:relative;
+}
+
+.file-search-field>svg {
+  position:absolute;
+  width:18px;
+  height:18px;
+  top:50%;
+  left:10px;
+  transform:translateY(-50%);
+  color:var(--muted);
+  pointer-events:none;
+}
+
+#file-search-input {
+  display:block;
   width:100%;
+  height:36px;
+  padding:0 32px 0 36px;
+  background:transparent;
+  border:1px solid transparent;
+  border-radius:8px;
+  font-weight:500;
+}
+
+#file-search-input:hover,
+#file-search-input:focus {
+  background:var(--hover);
+}
+
+#file-search-input:focus {
+  outline:1px solid var(--accent);
+  outline-offset:-1px;
+}
+
+.file-search-field>.clear-file-search {
+  position:absolute;
+  top:50%;
+  right:4px;
+  transform:translateY(-50%);
 }
 
 #file-search-results {
@@ -2846,11 +2877,11 @@ dialog .dialog-actions {
   display:inline-grid; place-items:center; min-width:28px; min-height:28px;
 }
 .pdf-controls button { display:inline-grid; place-items:center; min-width:28px; min-height:28px; }
-#file-search-toggle[aria-pressed="true"] { background:var(--selected); }
 
 
-.sidebar-actions { display:flex; align-items:center; gap:4px; padding:4px 0 8px; border-bottom:1px solid var(--border); flex:none; }
-.sidebar-actions>button { display:inline-grid; place-items:center; width:32px; height:32px; padding:6px; flex:none; }
+.sidebar-actions { display:flex; align-items:center; gap:0; margin-left:auto; flex:none; }
+.sidebar-actions>button { display:inline-grid; place-items:center; width:28px; height:32px; padding:5px; color:var(--sidebar-muted); flex:none; }
+.sidebar-actions>button:hover { color:var(--text); }
 
 /* One source of visibility for all pane combinations, including narrow windows. */
 .pane-toggles { display:flex; gap:2px; padding:3px; border:1px solid var(--input); border-radius:8px; }
@@ -2913,8 +2944,7 @@ button:is(.icon, .stop-chat, .chat-rename, .model-favorite, .model-favorites-tab
   color:var(--icon-color);
 }
 
-button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite, .model-favorites-tab):not(:where(#zoom-fit)):is(:hover, :focus-visible),
-#file-search-toggle:enabled[aria-pressed="true"]:is(:hover, :focus-visible) {
+button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite, .model-favorites-tab):not(:where(#zoom-fit)):is(:hover, :focus-visible) {
   background:var(--hover);
 }
 
