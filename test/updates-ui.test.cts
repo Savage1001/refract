@@ -31,3 +31,26 @@ test('settings gear appears only at home and offers persisted update tracks', {t
   assert.deepEqual(errors,[]);
  } finally { await browser.close(); }
 });
+
+test('capture available and ready-to-apply update settings', {timeout:30000}, async()=>{
+ const {browser,page,errors}=await fixture.openHeadlessUi('light',{pdf:'',source:'% Update status screenshot sample'});
+ try {
+  await page.evaluate(()=>{
+   const w=window as unknown as {store:Record<string,unknown>};
+   w.store.updateStatus=async()=>({track:'stable',phase:'downloading',message:'Downloading v0.3.1...'});
+  });
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByText('Downloading v0.3.1...',{exact:true}).waitFor();
+  await page.evaluate(()=>document.fonts.ready);
+  await fs.mkdir('docs/updates',{recursive:true});
+  await page.screenshot({path:'docs/updates/update-available.png'});
+  await page.evaluate(()=>{
+   const w=window as unknown as {store:Record<string,unknown>};
+   w.store.updateStatus=async()=>({track:'stable',phase:'ready',message:'v0.3.1 is ready. It will install when you close Refract.'});
+  });
+  await page.getByText('v0.3.1 is ready. It will install when you close Refract.',{exact:true}).waitFor();
+  await page.screenshot({path:'docs/updates/update-ready.png'});
+  assert.equal(await page.getByRole('button',{name:'Check for updates',exact:true}).isVisible(),true);
+  assert.deepEqual(errors,[]);
+ } finally {await browser.close();}
+});
