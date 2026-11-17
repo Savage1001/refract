@@ -316,7 +316,7 @@ async function openProject(p) {
   const request = ++projectOpening;
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
-  ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = true; $('#file-search-toggle').setAttribute('aria-pressed','false'); $('#file-search-input').value = ''; const clearSearch = document.querySelector<HTMLButtonElement>('.clear-file-search'); if (clearSearch) clearSearch.hidden = true; $('#file-search-results').replaceChildren();
+  ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = !$('#files-tab').classList.contains('active'); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
   attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p; restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false;
   compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; $('#tools').textContent = 'Tools \u25be'; $('#compile').textContent = 'Compile';
   pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
@@ -399,8 +399,8 @@ $('#source').addEventListener('click', updateActiveLine);
 $('#source').addEventListener('keyup', updateActiveLine);
 $('#search').oninput = renderProjects;
 $('#clear-search').onclick = () => { $('#search').value = ''; renderProjects(); $('#search').focus(); };
-$('#files-tab').onclick = () => { $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true'); $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = false; $('#outline').hidden = false; $('#chat-list').hidden = true; };
-$('#chats-tab').onclick = () => { $('#file-search').hidden = true; $('#file-search-toggle').setAttribute('aria-pressed','false'); $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true'); $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = true; $('#outline').hidden = true; $('#chat-list').hidden = false; };
+$('#files-tab').onclick = () => { $('#file-search').hidden = false; void runProjectSearch(); $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true'); $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = false; $('#outline').hidden = false; $('#chat-list').hidden = true; };
+$('#chats-tab').onclick = () => { $('#file-search').hidden = true; ++searchRequest; clearTimeout(searchTimer); $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true'); $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = true; $('#outline').hidden = true; $('#chat-list').hidden = false; };
 store.list().then(p => { projects = p; renderProjects(); }).catch(error => report('load projects', error));
 let compiledProject = null, compiledPdf: string | null = null, compileLog = '';
 type PdfViewport = { width:number; height:number };
@@ -1613,32 +1613,35 @@ function renderFileTabs() {
       renderFileTabs();
       if(hadFocus) {
         const selected=Array.from(document.querySelectorAll<HTMLButtonElement>('#file-tabs button[title]')).find(button=>button.title===currentFile);
-        (selected ?? document.querySelector<HTMLButtonElement>('#file-search-toggle'))?.focus();
+        (selected ?? document.querySelector<HTMLButtonElement>('.tabs button.active'))?.focus();
       }
     };
     tab.append(open, close); return tab;
   }));
 }
-let searchTimer = null, searchRequest = 0;
-$('#file-search-toggle').replaceChildren(actionIcon('search'));
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+let searchRequest = 0;
+$('.file-search-field').prepend(actionIcon('search'));
 const clearFileSearch = document.createElement('button'); clearFileSearch.type='button'; clearFileSearch.className='clear-file-search'; clearFileSearch.replaceChildren(actionIcon('close')); clearFileSearch.setAttribute('aria-label','Clear file search'); clearFileSearch.hidden=true;
 $('#file-search-input').after(clearFileSearch);
 clearFileSearch.onclick = () => { $('#file-search-input').value=''; clearFileSearch.hidden=true; clearTimeout(searchTimer); void runProjectSearch(); $('#file-search-input').focus(); };
-$('#file-search-toggle').onclick = () => {
-  const panel = $('#file-search'); panel.hidden = !panel.hidden; $('#file-search-toggle').setAttribute('aria-pressed', String(!panel.hidden));
-  if (!panel.hidden) { $('#file-search-input').focus(); runProjectSearch(); }
-  else { ++searchRequest; clearTimeout(searchTimer); }
-};
-$('#file-search').addEventListener('keydown',event=>{
-  if(event.key==='Escape' && !event.isComposing) {event.preventDefault();event.stopPropagation();$('#file-search').hidden=true;++searchRequest;clearTimeout(searchTimer);$('#file-search-toggle').setAttribute('aria-pressed','false');$('#file-search-toggle').focus();}
+$('#file-search').addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.isComposing || !$('#file-search-input').value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  clearFileSearch.click();
 });
 async function runProjectSearch() {
-  if (!active) return;
+  if (!active || $('#file-search').hidden) return;
   const request = ++searchRequest, id = active.id, query = $('#file-search-input').value;
+  if (!query.trim()) {
+    $('#file-search-results').replaceChildren();
+    return;
+  }
   try {
     const results = await store.search(id,query);
     if (request !== searchRequest || active?.id !== id || $('#file-search').hidden) return;
-    const count = document.createElement('p'); count.className = 'search-count'; count.textContent = query ? `${results.length} ${results.length === 1 ? 'result' : 'results'}` : 'Search project files';
+    const count = document.createElement('p'); count.className = 'search-count'; count.textContent = `${results.length} ${results.length === 1 ? 'result' : 'results'}`;
     $('#file-search-results').replaceChildren(count, ...results.map(result => {
       const button = document.createElement('button'), title = document.createElement('strong'), text = document.createElement('span');
       title.textContent = `${result.file}:${result.line}`;
@@ -1657,7 +1660,7 @@ async function runProjectSearch() {
     if (query.trim() && !results.length) { const empty = document.createElement('p'); empty.className='search-empty'; empty.textContent='No matches. Try another search.'; $('#file-search-results').append(empty); }
   } catch (error) { if (active?.id === id) report('search project',error); }
 }
-$('#file-search-input').oninput = () => { clearFileSearch.hidden = !$('#file-search-input').value; clearTimeout(searchTimer); searchTimer = setTimeout(runProjectSearch,200); };
+$('#file-search-input').oninput = () => { clearFileSearch.hidden = !$('#file-search-input').value; clearTimeout(searchTimer); ++searchRequest; if ($('#file-search-input').value.trim()) searchTimer = setTimeout(runProjectSearch,200); else void runProjectSearch(); };
 // Keep file tabs and editor actions in distinct, independently scrollable rows.
 const editorHeader = $('.editor-header'), editorActions = document.createElement('div'); editorActions.className='editor-actions'; editorActions.setAttribute('role','group'); editorActions.setAttribute('aria-label','Editor actions');
 editorHeader.querySelectorAll(':scope > button').forEach(button => editorActions.append(button)); editorHeader.append(editorActions);
@@ -1755,15 +1758,13 @@ for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#coll
 }
 const sidebarTabs=document.querySelector('.tabs')!;
 const sidebarActions=document.createElement('div');sidebarActions.className='sidebar-actions';sidebarActions.setAttribute('role','group');sidebarActions.setAttribute('aria-label','File and project actions');
-for(const id of ['file-search-toggle','add-file','deleted-files','duplicate']) sidebarActions.append(document.getElementById(id)!);
-sidebarTabs.after(sidebarActions);
+for(const id of ['add-file','deleted-files','duplicate']) sidebarActions.append(document.getElementById(id)!);
+sidebarTabs.append(sidebarActions);
 for(const [id,icon,label] of [['deleted-projects','trash','Deleted projects'],['deleted-files','trash','Deleted files'],['duplicate','copy','Duplicate project']] as const) {
   const button=document.getElementById(id)!;button.replaceChildren(actionIcon(icon));button.title=label;button.setAttribute('aria-label',label);
 }
 document.querySelector('.sidebar-footer')!.remove();
 $('#outline-toggle').replaceChildren(actionIcon('next'),document.createTextNode('Outline'));
-$('#file-search-toggle').setAttribute('aria-pressed','false');
-$('#file-search-toggle').setAttribute('aria-controls','file-search');
 $('#compile').title='Compile document';
 // Enable interaction only after all handlers have been registered.
 document.body.inert=false;

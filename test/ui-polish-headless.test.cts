@@ -139,7 +139,7 @@ test('headless comment keyboard actions restore focus without stealing a new des
   assert.equal(await cards.first().getByLabel('Write a reply').evaluate(el=>el===document.activeElement),true);
   await page.evaluate(()=>{(window as unknown as StateWindow).fixture.delay=1000;});
   await cards.nth(1).getByRole('button',{name:'Resolve',exact:true}).focus();await page.keyboard.press('Enter');
-  const elsewhere=page.locator('#file-search-toggle');await elsewhere.focus();
+  const elsewhere=page.locator('#file-search-input');await elsewhere.focus();
   await cards.nth(1).getByRole('button',{name:'Reopen',exact:true}).waitFor();
   assert.equal(await elsewhere.evaluate(el=>el===document.activeElement),true);
   await cards.nth(1).getByRole('button',{name:'Reopen',exact:true}).focus();await page.keyboard.press('Enter');
@@ -179,12 +179,11 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   await folder.click();assert.equal(await folder.evaluate(el=>(el.parentElement as HTMLDetailsElement).open),false);await folder.press('Enter');assert.equal(await folder.evaluate(el=>(el.parentElement as HTMLDetailsElement).open),true);
   assert.equal(await page.locator('#outline-toggle svg path').getAttribute('d'),await folder.locator('.folder-chevron path').getAttribute('d'));
   assert.equal(await page.locator('#project-trust').count(),0);
-  const actions=page.locator('.sidebar-actions>button');assert.equal(await actions.count(),4);
+  const actions=page.locator('.sidebar-actions>button');assert.equal(await actions.count(),3);
   const boxes=await actions.evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {y:r.y,width:r.width,height:r.height};}));
-  assert.ok(boxes.every(box=>box.y===boxes[0].y && box.width===32 && box.height===32));
+  assert.ok(boxes.every(box=>box.y===boxes[0].y && box.width===28 && box.height===32));
   assert.equal(await page.getByRole('button',{name:'Deleted files',exact:true}).getAttribute('title'),'Deleted files');
   assert.equal(await page.getByRole('button',{name:'Duplicate project',exact:true}).locator('svg').count(),1);
-  await page.locator('#file-search-toggle').click();await page.locator('#file-search-input').press('Escape');assert.equal(await page.locator('#file-search-toggle').evaluate(el=>el===document.activeElement),true);
   await page.locator('#pane-preview').click();assert.equal(await page.locator('.pdf-pane').isVisible(),false);
   await page.locator('#pane-agent').click();assert.equal(await page.locator('#chat').isVisible(),false);
   await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);
@@ -198,4 +197,47 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);assert.equal(await page.locator('.pdf-pane').isVisible(),false);
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
+});
+
+test('headless project search has its own row and retains content search', {timeout:30000}, async()=>{
+ for (const theme of ['light','dark'] as const) {
+  const {browser,page,errors}=await fixture.openHeadlessUi(theme,{pdf:'',source:'Introduction'});
+  try {
+   await page.evaluate(()=>{
+    const {store}=window as unknown as {store:{search:(id:string,query:string)=>Promise<unknown>}};
+    store.search=async(_id,query)=>query==='Introduction' ? [{file:'main.tex',line:1,column:0,text:'Introduction'}] : [];
+   });
+   await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+   await page.locator('#source').waitFor({state:'visible'});
+   const search=page.getByRole('textbox',{name:'Search project'});
+   const toolbar=page.locator('.tabs');
+   const tab=await toolbar.locator('#files-tab').boundingBox();
+   const field=await search.boundingBox();
+   assert.ok(tab && field && field.y>tab.y+tab.height);
+   for (const action of await toolbar.locator('.sidebar-actions button').all()) {
+    const box=await action.boundingBox();
+    assert.ok(box && box.y<tab.y+tab.height && box.y+box.height>tab.y);
+   }
+   await search.fill('Introduction');
+   await page.getByRole('button',{name:'main.tex:1 Introduction'}).click();
+   assert.equal(await page.locator('#source').evaluate((editor:HTMLTextAreaElement)=>editor.value.slice(editor.selectionStart,editor.selectionEnd)),'Introduction');
+   await page.getByRole('button',{name:'Clear file search'}).click();
+   assert.equal(await search.inputValue(),'');
+   assert.equal(await page.locator('#file-search-results button').count(),0);
+   await search.fill('missing');
+   await page.getByText('No matches. Try another search.').waitFor();
+   await search.press('Escape');
+   assert.equal(await search.inputValue(),'');
+   assert.equal(await search.evaluate(el=>el===document.activeElement),true);
+   await page.locator('#chats-tab').click();
+   assert.equal(await search.isVisible(),false);
+   await page.locator('#files-tab').click();
+   assert.equal(await search.isVisible(),true);
+   await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.setProperty('--sidebar-width','150px'));
+   const sidebar=await page.locator('.sidebar').boundingBox();
+   const narrowField=await search.boundingBox();
+   assert.ok(sidebar && narrowField && narrowField.x+narrowField.width<=sidebar.x+sidebar.width);
+   assert.deepEqual(errors,[]);
+  } finally {await browser.close();}
+ }
 });

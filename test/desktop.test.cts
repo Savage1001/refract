@@ -97,7 +97,6 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.locator('#source').press('Control+z');
  assert.equal(await page.locator('#source').inputValue(), source);
  await page.locator('#source').fill(source.replace('Introduction', 'Test Section'));
- await page.getByRole('button', {name:'Search files'}).click();
  await page.getByRole('textbox', {name:'Search project'}).fill('Test Section');
  await page.locator('#file-search-results button').first().click();
  assert.equal(await page.locator('#source').evaluate(el => (el as HTMLInputElement).value.slice(el.selectionStart, el.selectionEnd)), 'Test Section');
@@ -721,7 +720,7 @@ test('project search navigates to the original Unicode text offset', {timeout:60
  const env:NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const app=await launchDesktop(env);t.after(async()=>{await app.close().catch(()=>{});const resolved=await fs.realpath(data),parent=await fs.realpath(os.tmpdir());if(path.dirname(resolved).toLowerCase()!==parent.toLowerCase() || !path.basename(resolved).startsWith('refract-ui-search-unicode-'))throw new Error('Unsafe cleanup path');await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
  const page=await app.firstWindow();await page.locator('#list article').first().click();const source=page.locator('#source');await source.waitFor({state:'visible'});
- await page.getByRole('button',{name:'Search files'}).click();await page.getByRole('textbox',{name:'Search project'}).fill('a.b');await page.locator('#file-search-results button').first().click();
+ await page.getByRole('textbox',{name:'Search project'}).fill('a.b');await page.locator('#file-search-results button').first().click();
  await page.waitForFunction(()=>{const element=document.querySelector('#source') as HTMLTextAreaElement;return element.value.slice(element.selectionStart,element.selectionEnd)==='A.b';});
  assert.equal(await source.evaluate((element:HTMLTextAreaElement)=>element.value.slice(element.selectionStart,element.selectionEnd)),'A.b');
 });
