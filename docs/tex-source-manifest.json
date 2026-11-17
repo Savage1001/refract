@@ -1,0 +1,670 @@
+﻿[
+    {
+        "name":  "achemso",
+        "sha512":  "447feef887bf9f6421bad9f7b79e9d868ed9b727b77234b2ce5cbfb80298a372764ec92fc3be1f162dbce55ca41794643362e9c763d0a189b1d2d7ee04823b22"
+    },
+    {
+        "name":  "adjustbox",
+        "sha512":  "a5a204a83226664e9abbfc452d4f2425870dfcb3480738e377893dd943f8c75d17a0185f2e815079b5a5f87f4ad0a289b4d1bf3254ff2e9c2e7e0f3e8cb2048e"
+    },
+    {
+        "name":  "ae",
+        "sha512":  "5ce6970b8e5852c87cc80c0795112c704bcd1155a645776aaab00c20c4efa5afcc82d830c364a3f5be2d284d21fc2e3dc1de30f44f7f21f3f865ea4445ee0f0c"
+    },
+    {
+        "name":  "algorithms",
+        "sha512":  "a8ec8411c9dd81caf362c6ffe69586ae6aa08b8c6ce3f6dced360d2985a11d68e58b7b433e284bb55e02c73a930644215417b2f86ac373bf15b4b1e5eca8f4df"
+    },
+    {
+        "name":  "amscls",
+        "sha512":  "cce18b4529df7b39d72bf41a99a0dda9688933c4af1454d74f1165d5f69e8917da5de982d1a3ff3ca3577211083a870a3d2de0e8f41f2d2c8f9b3b3e36a9a10b"
+    },
+    {
+        "name":  "amsfonts",
+        "sha512":  "6e0c10317625b82374e3dc22ee9ba9fcfef5bebf7b51005907f96ae6ce80a631db0d88909f8251942bb1286100c9dc02f618608795bf7259930514f623b7a103"
+    },
+    {
+        "name":  "amsmath",
+        "sha512":  "26b09000b9e073b0dad7fd4936bf2bc98613420e3ec40484eaa8bfc65dbeaf3e5d351cd6d060ceb4991e40b9e12f20a6decdf78bfc421d4e7b4bce2c1d05c266"
+    },
+    {
+        "name":  "apacite",
+        "sha512":  "9593c223e1354971ded9111962fbe0ba36737704659a426041483144338e5fc6e557e12d7636041103f715694e5940937de0b93f40b0b4d8de1fc1a71b6aa3ae"
+    },
+    {
+        "name":  "appendix",
+        "sha512":  "aa125462d3a01fe3998f427d25c69a94033890f33d8c196750a5483e3335563a33512d593856c25055af8c28fb3f11a5faec23e48848df35a0f391f5c3d3a730"
+    },
+    {
+        "name":  "atbegshi",
+        "sha512":  "804e82f181e5d4404696c72c1600815dca7c4f85e157f44b2779a291c365593e71df07c058aabc35d215a9285452f012d192143b046d68fc14a0e90dcd7b2ec9"
+    },
+    {
+        "name":  "atveryend",
+        "sha512":  "7855f420d5a99caf4add9e8c7f48b9a576774e160572e3a15b05170d75552a78bdd4fa1368beea8369ec0d8b57254364026f365308cf9efd04df3aead5773628"
+    },
+    {
+        "name":  "auxhook",
+        "sha512":  "1d17f29a91ccbd016dd5ab59e1a92be403cc78f9a9ff5e9daf9630a154dc0fe1bda1f95f0ad355f9158902c72e328cf0b24744339aa12d06a0130bd2281f9899"
+    },
+    {
+        "name":  "babel",
+        "sha512":  "316a5dc679ae4827bb47c3fab209af901a28206f94e7446ae4790b4d8a8a5d946c2870e3a69191571baeec5dd4fd53e83a3b1bf16a3ed59748432e6cadde5194"
+    },
+    {
+        "name":  "babel-english",
+        "sha512":  "bad17e20ded019e7128cbff600377b5a393c7b1a360a4402a8705eb79194a41a32aa4021c486563d6bbcafb992ccf832742e2555a9e6b91de26cb467e8a5ce7e"
+    },
+    {
+        "name":  "babel-french",
+        "sha512":  "587b01625e3b4d21b4c14a2242c182392f390b162fa43a2e97d6aa1d064c0cec44e828212d962e712c1e2dd045c479dba7689757532b51ce89a874a3c665553a"
+    },
+    {
+        "name":  "bbm-macros",
+        "sha512":  "eb1e74947d9799414281a13dc0879a1237d54839c0ea43d59dd442f1abc4b6f7d2e092cda960cb73ceaac1a895753bb2b96879242f30252ae0ed19be91f478ad"
+    },
+    {
+        "name":  "biber",
+        "sha512":  "9f4b1016ccaf1c5e6fb3c16d208d6cb736827157fd7e953e415e08567553d7be31142f133e5222943db501c51a45242704a50b468349aaf79d0ce0f6d8f276dd"
+    },
+    {
+        "name":  "bigintcalc",
+        "sha512":  "27368745ba5bd2db04f61c237390e8bdda68dcde82c1c0a2700212193cb78a39f75854270f812ea842e7ab8cca163c1e5370b3d7c10ad7393425c1416a825534"
+    },
+    {
+        "name":  "bitset",
+        "sha512":  "f5937c31e52d5ee3b0fffd8ea86fb2673a021cf1765a08308170bc3cb2f48dc4418ae5a6e6a75fd82b3d0d3dada64a3907471f2d6e3220f7e5bfea0a4d98040e"
+    },
+    {
+        "name":  "bookmark",
+        "sha512":  "d81be62585d97ff75ebb0729016e843fe1168ed71773280105f242941bcfc0067ef0c51dbaddcd592d52cee6d96489c0f424e74f456fc37026490b65f6567d90"
+    },
+    {
+        "name":  "booktabs",
+        "sha512":  "6a1d3530671a7f173bd724a19d01f510f1472af0d3bc5b0b5f0d0680707f588502fa1214dbc00a78cade6a18b35fe7063f42a8e7e1fcff3a7685975dafedfc1e"
+    },
+    {
+        "name":  "breakurl",
+        "sha512":  "dd55bf2f0b6d5f311c69bfcc9dc3f0f2783433132171a9b0c16f7053a89ba8c755a4c1a8a9add43cc4f7e53729e9d484d76a1620a4f3551c8da3525ca0abcf24"
+    },
+    {
+        "name":  "caption",
+        "sha512":  "ad2b490f8f81d497d124a778cbfb0526a083c402eeada24077d40f0a6973ebf8ceeb189043fc99731d30b5ad5a956b34fad85ae83da26c912cd2af89b873df85"
+    },
+    {
+        "name":  "carlisle",
+        "sha512":  "d7d83883f9c31ec719e334b35f44b0999f2a0a413cf9c4f0ec0cd36879cafeca9bdc8f1be3b3c06da4530b80f274593fdc21236bd395adcd121402cbf65f4d29"
+    },
+    {
+        "name":  "ccicons",
+        "sha512":  "a3cc07206d218407cce365662309559ab4ddabd11d70a7788675c120dbf852423f6b3c07e3226a6a4349005d5cf1d4cd75a228ae391e0f9dd6d394e82aa0e683"
+    },
+    {
+        "name":  "changepage",
+        "sha512":  "2c543269f0003a47be7d8d5a3b74ad77408ef2586bfb13b8e1c21e76c06a0facdb8426b0eeff406371101c94c9c6a88a2e7c012a6e96e200fc6c00eff538b15a"
+    },
+    {
+        "name":  "cleveref",
+        "sha512":  "630d9899735f4684b52234d835c44b7ff8a3c9fdf652d47166e2d610e03c94c6b44d8174a735a700ccf141d82885507bc1ff32055c9d634302ff41a9371f2eb7"
+    },
+    {
+        "name":  "collectbox",
+        "sha512":  "b3621b833f299922037926d94831ba99b2da48edb09351a62b5565e013b391ac5f3c43f26d9fb45aedf4771c9f681e115c8d661d0f2502d9452f96f502aeaa55"
+    },
+    {
+        "name":  "colortbl",
+        "sha512":  "3759e152a2dfdc4ea7971f7580bd5c670a4dabea268b4e50f5e0b6ff60e5ef9435c4e9c6f95030389d903ace83a894d816732b4ddef8cc6e4fb317252a3b1918"
+    },
+    {
+        "name":  "count1to",
+        "sha512":  "e13204fedd57de2905b1edde40a28038c09cad5c40b65d3c6f10e2e09e19855b44da7e9cfe2268ce076b5c0b66c167866f9dec5437d36a08e045a75e2ce2daec"
+    },
+    {
+        "name":  "crop",
+        "sha512":  "15f201ad4070938619c89a25ee3d5a92ac502aa18b2022574cbf701c3515aa5d6768e2a7aea8ecac29935d2774b2bf8e8d0be6d32ab883eda91c3b0ddc3694ea"
+    },
+    {
+        "name":  "currfile",
+        "sha512":  "52218c6e7f3356de2fe63d375d544310a980eafca7f19b7ac005f191633b36233cb90b7dce2bfa36530d25a91b3c761b55e0a6045c1e2170cfeb2b2ef447c5d8"
+    },
+    {
+        "name":  "datetime",
+        "sha512":  "3e03ba12952ad5dafa701c7ddd5d79097890d13d3510d420cc399b30b1c60c2b6f72bc5caa2a6d2f53ec50430d13582c5c6fb549dcb3566f827af0d4abeaa011"
+    },
+    {
+        "name":  "doclicense",
+        "sha512":  "d8069086306f46b16c41e2bb38a8e64318697350309261ccbe3e475e5e551e9b9f0be8af23b9786377469308f4de4f237189f465348d187546a6df5907bf0c82"
+    },
+    {
+        "name":  "draftwatermark",
+        "sha512":  "ddf6e3371342bb8e5c83a5a06f86332bf7a97623257762a5ae538398c1179c6459e441c09ca086272f03fcab083aec182e70d94ad2cb53a3aaac43889a96a052"
+    },
+    {
+        "name":  "endfloat",
+        "sha512":  "83775f72bead776ac16fb03a0784d14ff26e5917083aa1c5366fed5996003f7d476c4a0a1626c79e1fba4548fa93a797189f80af6540d1abd286710db28abb57"
+    },
+    {
+        "name":  "environ",
+        "sha512":  "c9873e32b644311bf6f8b771324b99e381d8b96076fd833d6247540c10f75d20d05e5d6a961f8b220dfff6f6ce09afd8f1e2d324391a8b74eefe30c60acfd501"
+    },
+    {
+        "name":  "epstopdf-pkg",
+        "sha512":  "91fdc0d2df43685496e39d946113aeda19f43ed52c4f0c9290e676e63eb98a1e3e695d6299d65611b6d336739777cf1d9aed6468f558ef8cef6081357d537f47"
+    },
+    {
+        "name":  "eso-pic",
+        "sha512":  "d89bc7128bdfa26cdf7ba6dd276e1258d3f0fa2b418a12312fed9d9d633e6f4cfe084ed3a0e0b46dfbb645acaf79b94fbe3bea063fa2be1f94bd0a8c6c2c0dbd"
+    },
+    {
+        "name":  "esvect",
+        "sha512":  "1a75e2227be24149ca132ee83e0b161bf9d63817f44e22ce562e1cf9fa8627361a75e67bbde8a0e05be5b31867746111f70200e0da23acfb57c3461db07d378c"
+    },
+    {
+        "name":  "etexcmds",
+        "sha512":  "d91524c80d154a1d8c1c4d9859f0b8c5cf436153e316a53173ced8a3ef370431e25265c69fc46c8f212e57298ec5f52dcdc195c985a1da4077301347373fe5fe"
+    },
+    {
+        "name":  "euenc",
+        "sha512":  "4037c8f9961be1f4cd6a41d0cced28f4bcb54e5b7c4f9681b702f1d90e425ab0c772561b662fded93a0c469cfa1c43967fdfb3eb8c9e0e8c86d8340930565910"
+    },
+    {
+        "name":  "everysel",
+        "sha512":  "c288dd88a266e87bad6880e36a681e29f5f52f02b5f7b86133daae2972932572f0e529945acc6a0f00b844909da8f77cf3a524bece531667437a5ffa0dc2a684"
+    },
+    {
+        "name":  "everyshi",
+        "sha512":  "625a710c5467dd1e7125ffa3b34ecb4ebcc6764ab6b9564f613195a9bb78f8f5215288f9dc1abd28ff45634680f71b7b92e7cb4d13400cb659a5e59d0dd7b1fa"
+    },
+    {
+        "name":  "fancyhdr",
+        "sha512":  "333ab08361fcbd5cfe892e745de95e34b61da27dd30e349135666aec0018a8cf24dda585e7d926c653afb118714c23a7adadd138c405858837099155dc0e924b"
+    },
+    {
+        "name":  "filehook",
+        "sha512":  "779893abb0a2ab43af9b4918bef707dac7ceda68a9d2a1b06cb1132370be89712cbd168087cf054531995dd53834c1200619dd0ed9deeea2242f1cb87721ed42"
+    },
+    {
+        "name":  "firstaid",
+        "sha512":  "fcaf5d6c5d8e24aa28621a8f905fd9e69996087c3baadcc1d4d3b274c9c26eb754d5eb6a001cf8ee81bc3ec6158f4b0ed093eac4bfeb9106296fbd4d1f35b36f"
+    },
+    {
+        "name":  "float",
+        "sha512":  "7493ef00b1357c54d2912f5ed2b638a6e1fb408fd8d50dd18e6d95db1e8eac8f5ae5b72d5623b13d8b26a20fceb94af49a5cbea964d23d53c1f9dd72f7ce2136"
+    },
+    {
+        "name":  "floatflt",
+        "sha512":  "e01f72760cb9b93bc6093e86f47f2a5245732e77a7895f1bf09e4bd6a5d32afd6e9b9219c5e53beb43e53b96bf4591a7a196cc5dc1a8562cc9ba3ee404605708"
+    },
+    {
+        "name":  "floatrow",
+        "sha512":  "51f61517777f71e5ffed97d94b1493aad6fbbcfb626d0373edeb07409d341b64feb19be1a0ec376c2128288c63dd18513d0f0c77246cb605367b36dcd80800ba"
+    },
+    {
+        "name":  "fmtcount",
+        "sha512":  "5304f88e109e152b7f7130d94c62da07ea13ded345f4df19285adcb977011378fedc85beaaadabe731a3cda50bbc3ac68007b51d39ec6d22a398ac92df368828"
+    },
+    {
+        "name":  "fontaxes",
+        "sha512":  "699a2beea46da73c0981646d372481b23b131c79e22e40ac199f173594e69bb38767267b936d87b1a4298bf6075021066e96e1e1d5016c98c6f08e04b22129fb"
+    },
+    {
+        "name":  "fontspec",
+        "sha512":  "38feb72f04fc669c9d4a915e405828229123a8843eade188267145c7bcbbcf2495cbf2e8da9a8a65379c358ca81644d16b06bdac329e34821047fbf7f49eee5d"
+    },
+    {
+        "name":  "footmisc",
+        "sha512":  "aacba6cb4af825ad7493318378b5afc26cf7fc89c1ca64d3933df4f48867965eccb8d43d69f881a6f4218bca123527e7d928b9cd6143bb776bfa5657a4e91416"
+    },
+    {
+        "name":  "forarray",
+        "sha512":  "cdaaac8d60f4e773dadf86428f252dbc7ff177a27514838b5978e08cbe336b02325bf6ae91d8f801107e9aef3eeee4fd08337ae256e13a9a939e52333b76691c"
+    },
+    {
+        "name":  "fpl",
+        "sha512":  "561a329d07eec008be254e334ac2a50167c641685012d02171c3b934b90dd8d6d44a1e50b3edc240556fee6279c77a9a8ff565c65f10b904abb204dc2aa5ceb2"
+    },
+    {
+        "name":  "geometry",
+        "sha512":  "d13e71c192730a761983c31e6f9c7dce395b7b666bd26ab0f527b9bf2785f486b13e097cde7b3a460dfc6ba83ba74d13d184537bc5934568785795ea3d48df24"
+    },
+    {
+        "name":  "gettitlestring",
+        "sha512":  "e9e870850188b4685abce4534f3508b2f5233211deb8f9f8094581fbc9ef6f76c9d651842cda6ab9d68780a5854cd2feeb5e9b202e467a5a7d0b35d688e2a6d6"
+    },
+    {
+        "name":  "gincltex",
+        "sha512":  "6bfc4c94728e9a525d7f0f2b942f616675345f1976d061d9c0dbbdf794c3889e06f9e60d64fa1b2992169f533b40dc8d45314906f00b53542f4e58f55c00927d"
+    },
+    {
+        "name":  "graphics",
+        "sha512":  "97ac67859c9bb8e5f2b12f0b9acff095596df455ecc20a194fc3df8f504cdf9868dabb0677a444c21e3af3637ca4d75e6cc7f620e88c139a768df810992b0c51"
+    },
+    {
+        "name":  "grfext",
+        "sha512":  "034fb27ddbc2506c689878a64fac3ea9851f122e6563f9ae3baa504cf2a302e682221e685f9a0c011f96f73ec156c336287dafa567a6891074a8aed72492b4c6"
+    },
+    {
+        "name":  "grffile",
+        "sha512":  "4f82febead6ab711e11975324f8662f8a9da88100b90146f59c5d6fcaee745d764f8f34977999c6f8e6af3eab51f7fdfe8d4d0a2a25d035aa63d472197c04ad7"
+    },
+    {
+        "name":  "hardwrap",
+        "sha512":  "0a1d8325b1f0b667f599032a3555284c9f2ce5724909fe0462d550b4f9d7a1a55e58040afd99b239122fe08737bbe910bb7a1ae21098e3784abfbc341a74aefc"
+    },
+    {
+        "name":  "hycolor",
+        "sha512":  "af1b3c0c85a9972db2610d968cbe8086cb9fa2f0f21de0a7f57ed3d0eb0db5d3476f5e81a1bca4f9046b8717bd7897e7d448d8f57b2e9158ddc8237710bb9216"
+    },
+    {
+        "name":  "hyperref",
+        "sha512":  "43fd25622440e4dec466625d18a37e9773c4e19bf5ee5aac94643b470d8c7b6f00dd6801485f330f09057355a199eb1833837df354a5399b1e02fe0b3efb2b14"
+    },
+    {
+        "name":  "hyperxmp",
+        "sha512":  "89c25725d9d3628e27a8fbbf4d0877c9cf1c45be7f0ddedbea807b3a681fe64e844328f146b5874ea29834a7945024d2923bb209bccf89edf25ebcc7b0c9899b"
+    },
+    {
+        "name":  "hyph-utf8",
+        "sha512":  "9eb97662bbed75da83f79ffa078d51d9e7a79f82d734bb4bed88a55ae4e77d288134f12057f71fc8e7887d7d03312265186cc63dfe47018d1d696ea9ed9d059b"
+    },
+    {
+        "name":  "hyphenat",
+        "sha512":  "d976666dac841f960642c3ce7ef2296d0808e19e096ba2e6235d849ba90e7024f813b7a208bbd56ea440cf9c16be7ef377f6cf731b49404f3733b4ef5f452eb4"
+    },
+    {
+        "name":  "ifmtarg",
+        "sha512":  "5ddba3febcd664d3eef7240b540f6986337d02937e775d75733297a4d05a767d54bf34b046cbcfbbcefad81d917c49c5ac8b7e98140cac037f20f933fef59626"
+    },
+    {
+        "name":  "infwarerr",
+        "sha512":  "275179f6a7c380555be0f1f71b65749c18090d11eb16958544bd3baf3471fdd80305642973a68afb4d0cc3083433a5b00d3bdf647abffc356c77c39412a67eaf"
+    },
+    {
+        "name":  "intcalc",
+        "sha512":  "0b397bf5705f3e5069ef309797d18a4740b498fb1bc1c38f00d7d850b1ec5960b705e2c17ce45c1191f764335cf5447c08a6b360b663c0dbd057388659e45f3b"
+    },
+    {
+        "name":  "kastrup",
+        "sha512":  "60390a053fe2fa53685403df1d67a2bf8795f49db0f4eaa5a147ccaed951a55c1ed50c9cc5802bcdb5e356b694c2b4be78715022842c958f784908cab89a3f75"
+    },
+    {
+        "name":  "kvdefinekeys",
+        "sha512":  "66b40f046474ebd7ecf07a90aed786b1cca756bce5c67fa3296158f352a243fc6998f547ccf276ea79708336292e199e0eb7743c3ae33d6fe08758638f31308f"
+    },
+    {
+        "name":  "kvoptions",
+        "sha512":  "45287bed8460453fd8d8d7a0435ed06c32c9d343553c6182d4ce7231a13610f89219fcb5d7723226d5db2a0436fd0b9c0eb0ef3f4b626bd697cdd94092b2bf20"
+    },
+    {
+        "name":  "kvsetkeys",
+        "sha512":  "3a734a79b2176ed72fbec82f77fac12cb09bd95db738e956b1af1d065b85dcd06711c87c31afe6c71a59f14c889dc200a5fb10cb166b1765654e21044f902c1e"
+    },
+    {
+        "name":  "l3kernel",
+        "sha512":  "f8e7799ddb51661f0f30f711b43705fb369a8e6e752f2eee999501b9f18b069f0207ea9f520b171ed2afd7ad2ef1c839cd362589b095cb5245801cad26f0b91f"
+    },
+    {
+        "name":  "l3packages",
+        "sha512":  "799558793930588481129fe455a73006d3629f5710a3bcf0c54c2178e61983fcaeaf5e7f9912766a9a305586906b6208c31815d5aa18ff7717d29a9dd9540a8c"
+    },
+    {
+        "name":  "lastpage",
+        "sha512":  "bbcffb42e9bd4c579ddd917576a8f1a9b16dd36f93ff94b1c8a08a8de1f7bb0c9726595e67bcf5151b9b91d3cf2ffb549bed6bdf1ded055ed46d41298ecfe30a"
+    },
+    {
+        "name":  "latex",
+        "sha512":  "cde635a3602c5de04292e053c0f375074992ca51cb2e82efd534be6f975f7788599d5cd45091049181ca448a1369d59d5adbc2b8a919f8af690fc630f32efcd2"
+    },
+    {
+        "name":  "latex-lab",
+        "sha512":  "b482c2ef539b82c49931a8003f00f43701db4e5b2982426a1ba02e80943df22a92003f61e5109b98c30a9f25760abedd4098bdea614319f4b7b0784369c0d3bd"
+    },
+    {
+        "name":  "letltxmacro",
+        "sha512":  "4c2e01216f2b86c180f82828cc89d4d9834b8236295520638de38916f11d8d4f10091c0063e5e9029105119df648a432be2c6923929b743b698dbcde83aed0ea"
+    },
+    {
+        "name":  "lettrine",
+        "sha512":  "3a107376ab2262bd52b237fbcc03bf5f585ea5d0e4b0aebc3fb7aff885114b38ed2efa22a45a7407d5fd97af764376f98417159be0f26dfd16a06340e6bed1b4"
+    },
+    {
+        "name":  "lipsum",
+        "sha512":  "5fe30a3d755397000fc5e0d6464814d9613dfa5fe7207edeb72202bc264f55ef16b67d5f31a742971e61c63452902370efe17bf281761b7371c39407404d7494"
+    },
+    {
+        "name":  "listings",
+        "sha512":  "f09f3b3b5c05fdc34ebb80aab0b2db15944a541942829ca52637c3f7f381f999c75e78ddc138089943b2f4dabfa10f5729cdeb380b61f52dd881856c9464fd1c"
+    },
+    {
+        "name":  "ltxcmds",
+        "sha512":  "f10d9233a71a98df9913809a82e26a77dcba90e6599e02efb9a7456ddd6176eb9dc049bd73e2899f1f9468b43aca912f57d51e070ec72727c6a9f1366e5aa6d0"
+    },
+    {
+        "name":  "lualatex-math",
+        "sha512":  "fb689100713e17a7a6ab7b1f1c28d6a0bd9e3cdafe0dbe7a472143ebb2f5a5793e6826dc5e30d299a161e05bef4b73cf71dcb929659af8f2ce4d653f7878cfee"
+    },
+    {
+        "name":  "lualibs",
+        "sha512":  "4c423a4a6d43d8c03c966d6c6388b0a15564a5f23ecc2ee05e99cc39b331abfe726b8283887a7d49a277c3dc2e82712bde7c65971e19eed6a9d7e693de64e589"
+    },
+    {
+        "name":  "luamml",
+        "sha512":  "dc4596109f270a0a02b5d2a3cf1b63d299c7e649256eb56a74bcb548fa1cbd45fb8581425bed8d06f8df37157ae51890c335d690ce1430ccefbf36c2d7764cea"
+    },
+    {
+        "name":  "luaotfload",
+        "sha512":  "f6c1527aa32a519295c8f458526797bee0333915ec043dc64dd9811128b44c234863f7d8d67445b4792752a8657417fa391e13d8edacec56c805643fc7857429"
+    },
+    {
+        "name":  "makecell",
+        "sha512":  "ece8634cfe65f58129a894f6304634952e785c040ca5bfd9adb6aadf40002410994f2833d8a34645cbf03fa73c615c378953e46955984e518252db80cccf0051"
+    },
+    {
+        "name":  "makecmds",
+        "sha512":  "0b7e5d0f89a1dc1900be76e3afb0083332d80dc93c205ffa2cf209e9157d194411aa3123d1fe2e49de00bb244ad546b70ed66291b927c5cbb800d0d96525d8a5"
+    },
+    {
+        "name":  "marginnote",
+        "sha512":  "562b78b5148ae6bba038547f38621d0f123ec6ffeaff070f910d77ea42213843e0286acfb520a0f223297e48805703b817961c7a3c5b5150c145987c066e5e28"
+    },
+    {
+        "name":  "marvosym",
+        "sha512":  "cb0278da4953497373c65393bc51eddd29e3be359f1051ce6cc88f55eae226b5d3c5f5bf0b63a925067198377e665bb8d9a3e6cb472d8446959b9a1e6e985317"
+    },
+    {
+        "name":  "mathpazo",
+        "sha512":  "63a1c9798599c72aa45328e91d23a52091a2397a95933146ab89e771a051306d6bb798ff877ab1ad26c9870462ba92ab7c626b739e5b23f6776785b4e00e26ae"
+    },
+    {
+        "name":  "mathtools",
+        "sha512":  "c64a635aab8bee4d5305bb910b971f6a6682b25a6e15d3aae1340cf514660dcb73dcebb8bfc4bb558b27f029e1048b6cd1d142deecc21da08314f97dff0de842"
+    },
+    {
+        "name":  "mdframed",
+        "sha512":  "d96e918c1e4c783917cb5f5d9fc9ee30bee21a4eff1b13b12f6681d3e9500ddc414f5f99bf2e61777279d4b441606e831de754500f986f4f2130335afe8d3597"
+    },
+    {
+        "name":  "mdwtools",
+        "sha512":  "b3e6ba09116dd83187a55f205527c318d9afb4742404bc21b12e0be3b754140ecba82642154d92947cbc0706f0f9d3e6d876bc27108f13373d3c9d6ede4d7f5c"
+    },
+    {
+        "name":  "memoir",
+        "sha512":  "481ed8002cece0d37ac8b304933bad0f9a6943a8a5363880dac0ef26c8d52651dc87a45940b1e96c1bd7bfc172738a88faeb85c00170705e381d6780cf9a8975"
+    },
+    {
+        "name":  "metalogo",
+        "sha512":  "ccaefafb9be5fd812d4d32556c190597cacf2feb79c7a708c3d2fefb0eccae0c4514d1d34d097e917d1a79965edf478efae17fe68f0920bf6486e86aa3072fc7"
+    },
+    {
+        "name":  "microtype",
+        "sha512":  "2597f77d31a7043b454c968a4c5158f95964c712a391dbae95827886449f74e001798920575ed53e5b4093709b0efcdc5730be03db300765c02236161aa175a5"
+    },
+    {
+        "name":  "minifp",
+        "sha512":  "b106e12423067c03946b8a0a6aecf3ee9035c44d774ac1d7a05655251dd637f3f62ca61dc7f606c2da2705d18ea8bcf6ea9dfa678bc8628e4b01162303be9fc0"
+    },
+    {
+        "name":  "morefloats",
+        "sha512":  "f49721351ee5da58a329cd79ed8a41b95398e76e8782b51706ffd7724ae786252854d51c84b6dbf17cfa413ba46abe58f87d9724a7c57dfd89dbf9beb8e0facf"
+    },
+    {
+        "name":  "moreverb",
+        "sha512":  "504ba18400200d991c15e9891f1f08044e87750d72f7d1cbb907c8493d32ab806cc7e164d64ed197ceb660fd0fc5b976f287a19c3c7b8fba433082a5db37210c"
+    },
+    {
+        "name":  "multirow",
+        "sha512":  "7375bbfdac8edc2ef5d7112b5d51e55f606c421a4a5ab4369d0fa2ef3843b1ca9eee9e2c38c04bfbe86e025e8a1dac55df4bb0fdcd51addf57e9421833f4b34c"
+    },
+    {
+        "name":  "multitoc",
+        "sha512":  "d2bb078d4d2428f7f8110c679e498455f0419ac1c8b1f3792e34be20245ca4d264e98bbfdb669587ca0aa7b701d3bd470872f8482b03d6c6eb42a1c346e03deb"
+    },
+    {
+        "name":  "natbib",
+        "sha512":  "2acf3ed26155273ed668a633e2ab61695de2ea7258d0c95553035373129206e342899ad829c65a956b27a1a5949fa1db33affc3ba998db988308f1bd20601a61"
+    },
+    {
+        "name":  "needspace",
+        "sha512":  "28e1c19932f13d9b3e9d58d427f89adc1e941b5160b4812b14eeb5ade956392e80ca48c1e4c6f4b00dc18f3b190e30439a015ba998afd2058cdead1908f906a5"
+    },
+    {
+        "name":  "newfloat",
+        "sha512":  "e76957f5fe564d259a39b013c718212bdff799afb04730cfa2327f729f15c596ddc1cec3a9e8f7305af72ca96cdb6c0eab5c84921fb4559589ff5c7f9a8ac637"
+    },
+    {
+        "name":  "ntgclass",
+        "sha512":  "8a899c459aa8cb7488955071620b03359ce281d732b3f88c4aabb82a6bdcb15a3362329c453c8a090a83453496a5deabeaffea090436978e88bcb86ab7af0ec2"
+    },
+    {
+        "name":  "oberdiek",
+        "sha512":  "df3dd80ceaab19c418f811055303c6e79e79fada41e59f090731a72b2e6632dbb2071a02b148f61bbc446f7d09eb8325c0c67c0bffe5f29aafcfcf2d63a50d15"
+    },
+    {
+        "name":  "paralist",
+        "sha512":  "089d4918739855e2964dcec0d50ab157b115282f5d2877bfb84c45d88fa74279dc97cf08d689b2ad58d676be386d1fd8566bce5fad3655e52deabb178989cb8c"
+    },
+    {
+        "name":  "parskip",
+        "sha512":  "47c710d1c517f4000a836b5966308b2cc2ea1df73250c4cadf66447a1f981bdba6ec215c849d3be6c1f7e4ab2703b83a2fdc9e3258cbc734e9017f0ea997040d"
+    },
+    {
+        "name":  "pbox",
+        "sha512":  "6d24fa7549ebc2e5082e7545d2d83e9c217c2ac9a27163a0506ae7d2ccc863a5720e6a5edd2b36463cce686cac5485385603f9d5195a05444eee153c43652eb4"
+    },
+    {
+        "name":  "pdfcol",
+        "sha512":  "809ff5d55efa2fc61a63e7d115d77ac0c5ad5833a91bfb6c93175860303fc06d54b044c6d53c0b42dcd5ab2f752211f717de71538afd01f585e03da4df0a79bb"
+    },
+    {
+        "name":  "pdfescape",
+        "sha512":  "6bb5b3aa1ade105f317a75267e41d1075579e37c63936c15e6802daa07986b189e7f0ce7bcdefb4f75df70a3c8ac610febc12cc5d94eebd63dcc91d0b17b298d"
+    },
+    {
+        "name":  "pdflscape",
+        "sha512":  "817869fb3fe847e95f96dd7f421cbf8394a924424a3a2c7ac02b0d7a89a3f2ff928afc660d40a2d394c818d3e52b8e5ef036005a9a9330c51925549ac63b183c"
+    },
+    {
+        "name":  "pdfmanagement",
+        "sha512":  "ce95450c138d70ee33fd978a7de1781d94644ff29b7fedbd4ff377e3dc82308250e7e23fae260077ec003a78306be036d91bdd88974380b053299b3b26c68fff"
+    },
+    {
+        "name":  "pdfpages",
+        "sha512":  "57df16d9ec0f33b21dcb6f760cb1a1182dc96656a7862a5a8ef17dfa6555becacc79cf707eea19da389f2a44e93689278a8febd7581e6371130b96876fa136e5"
+    },
+    {
+        "name":  "pdftexcmds",
+        "sha512":  "aec11ec0c7ea8922793ff121660a8bc412c673c57e355d4243979a826abb5d8131d4509bc338fdfc40fcebc7098bc364f91ad2b5b99411a8458c8542aaec6a8c"
+    },
+    {
+        "name":  "prelim2e",
+        "sha512":  "9973bf9c746151b82fed31fe6c93bb5350dfc85e53442df34b09fcdd499ebbf62b8ccb4734210fbcf9da70bbef868fac5af33a11a9a084e3347d9719d02ec986"
+    },
+    {
+        "name":  "preprint",
+        "sha512":  "a7fe23d21dfee4071285ac0ca77a0b8936e8c149b804e9fc19e42cb5fa5eeac23ef3ed59e0433a965ec6203a1b031d2a76975248e624a6452e8fe6ea016be1c9"
+    },
+    {
+        "name":  "preview",
+        "sha512":  "462e6f1c81801d76172671daf5992f95635d36956aa998447e30995d567e6078e786025763466e7455dedf3be55cc97536e2360419e103ec025e6d50e753c140"
+    },
+    {
+        "name":  "psfrag",
+        "sha512":  "fd02b807b47f3818545e48825ddb11d188e9e3fa384b0f3412bb09051daedf73c2587a74d70aeda472047c1eac039252a25cacbf74a3c8df76be13a2644372de"
+    },
+    {
+        "name":  "psnfss",
+        "sha512":  "85984424cd972ab88b181ccaf34bba735d274e0c2dbcb30270de28c035a07a0e5924388015b8022f3169dcae2202df646b7e7e96b7e4266b7f407c687367dc9a"
+    },
+    {
+        "name":  "ragged2e",
+        "sha512":  "87b634e09036d7251bcfb7290ad18209825a5db32eb1d509b41ab608c439be5fe9038897cf1aa7748c44b29d168e9a8549d35e7a15288bdd5008ba87f5311a75"
+    },
+    {
+        "name":  "realscripts",
+        "sha512":  "ca18a9d40e982d6103d0d114bd8f92f56f0998c7f6c4cb03f8adeb3c21070791f5b6a67b0ff2dfc12df19f0c250fdd7c5479714dada9a3cae893b2ec1ff4f87b"
+    },
+    {
+        "name":  "refcount",
+        "sha512":  "246d639f414ef2032dc5d82374f680b9d943a92d6a17197c175f510e8a03769945a211780f779ba4044b292f5dff06c9a4e29fea6c5b64a207bd23ee6f25c27b"
+    },
+    {
+        "name":  "rerunfilecheck",
+        "sha512":  "a84357f22babc5aee5e8aed883fd5dd7851173d2e15b8f4d67d787fed3f517ec65fdd8cd213bacc6e3be685da41c878495add0e80626b08fe4012726141eddb3"
+    },
+    {
+        "name":  "revtex4-1",
+        "sha512":  "d21d299085b7ce98e665cdd28754878c95beb7b0f0dbec970be3e39334bb520eee0ae4784cb4118b60edc0a92c6abb5bca8ad567cda65f5acdfd72449b15f2f9"
+    },
+    {
+        "name":  "sauerj",
+        "sha512":  "60c548e312fc16d4501c480571f7c8add97bad017eaa13b054959e33a4e10e2938bea84a708ece33af1dc3aa8bd57dc1e5995946fdad4c2da7f2fad28239559a"
+    },
+    {
+        "name":  "sectsty",
+        "sha512":  "c77cb96d8c9e8f99d5af5d89c1098f31eeab844c37126bb944965280b2366c6aa34f06937b5a6321ccd334779e5608072649c66979d35b814cea36613d8a3272"
+    },
+    {
+        "name":  "seqsplit",
+        "sha512":  "f09558b063f49f310de4b6d956493af4f7007e3c9932037fe2121ef897b2bb732092ddacf5154b6af75ff890cd4d5e9ac61c320a8428dad8b8ad7a204b3377a0"
+    },
+    {
+        "name":  "sidecap",
+        "sha512":  "8f21d3fb2c0e9a11ea2ed82f465afee86a0bb5e9cf6c111bc90d0864b32812a3c1680f03c84747de1a08c7cc7d4a048fae9b393271084d13e5414cffa4c91e68"
+    },
+    {
+        "name":  "sidenotes",
+        "sha512":  "e82abf139734475297385fa042ef4f6083c3b819c061bdfa3b6c257eca27ef0c7b7d3b2536e20ba72c2d6c02df8c33fa35674dd722d49b5d907707b8436ac5cb"
+    },
+    {
+        "name":  "siunitx",
+        "sha512":  "7822d186acee6d022cae7f06075ed6eeb937dc65f74f0449c64706f5979a4ce733ee9f7d9515f5bf73157fa460f23fb08645782383593531f3bafa7cf03e9d22"
+    },
+    {
+        "name":  "soul",
+        "sha512":  "36fa719767bccdee8eda2e57c17fbdae0202a9d1942f7f925bea9f2d9a946620619186b77d287b7f41d71165342549f8db370a0c0881b390f7cf3e39c56f4f97"
+    },
+    {
+        "name":  "srcltx",
+        "sha512":  "6448fe8c4857464e01e5196758d6491f90e0f5398fe5fc4be471a0c3578d502f7a0919ff20ce44fc6894afdc374fc7611dae4ce74a9b004c41a48249fad0a71a"
+    },
+    {
+        "name":  "standalone",
+        "sha512":  "fd7302a6eea183564931f9b0cadc7825f29af9fce8b551e363b9df054c19f1b3cf021f733f1348f38add239a8ecb2181bf45be1c87d359110e979ae45c2965c4"
+    },
+    {
+        "name":  "stix",
+        "sha512":  "dd82295f891f6459839c15a1d606b0442e1f6689cf39861d8f7d4f36dc4dc249bb4ec2bad57bf37458c802d5ff8fdfe9105f31ae068e47c75683210bb13fad15"
+    },
+    {
+        "name":  "stmaryrd",
+        "sha512":  "e6a4f84716ef779af0170ae18fea9a72a2f884d6d6ec2ce673465a6a26b1d9c8d97e5df32da868b24ea04740431d4f297936e6d651ef6de9449d462aa501616a"
+    },
+    {
+        "name":  "stringenc",
+        "sha512":  "7fbd68204d876adf100fb8d600b5d2eb554a52348c0ffa8069afbf3623d6a0e6444439344f7c23771762d0daa4f634d56e91a4b291b08c4f5779cf9989f796d7"
+    },
+    {
+        "name":  "sttools",
+        "sha512":  "9e8f811aab43df0a9131e3171fb9c2b3daac1e9e167881e56295537ac7ccd99aa6b5118283100d9d13a7bfeb4027caceada77b3cf79d279402730a66f91aa406"
+    },
+    {
+        "name":  "subfig",
+        "sha512":  "bd96e934798fe9f6ad825c6e66bb3e77b2e84d574a284963a5aabc2f394669a1883a58833eed90b0e6e6aa53f5e2aad7a96e7225fd093cd1b46aeddd7f966725"
+    },
+    {
+        "name":  "subfigure",
+        "sha512":  "42ba0745bc102cd47fcbc9cfd1ded3350e15f4c48c87589f4c35dc9771aaa2de09f9d08d0eaec19025ea3d9cb1fbe786e485c142bc91ac5f02cfac33733d6b26"
+    },
+    {
+        "name":  "svn-prov",
+        "sha512":  "6951b60d742cc7269e77abb50f78721d5ce2fc2b3c6ca493eb942364589c895dfb23a9ea5e283bb3221482b573241fccff7a1f898f44027fbf3a35a6435d0855"
+    },
+    {
+        "name":  "tabu",
+        "sha512":  "8f5527a905b05bdcc7ef5731f4b8b3855724f5646a02836f58e76a34a06e65dbf77f9a3cf68ed8800cafdd44224e2c1a4b18a8acd68ecb6b255512247ee93e94"
+    },
+    {
+        "name":  "tagpdf",
+        "sha512":  "5df1ca96918f49f8ebc91a77b60fddce4b2dddd59861d5b67d4f4695000bb23fed7121dc0db8f0a4f4cf67c86c0d1ceb1e41a9473ddb677c022709a0051dc38e"
+    },
+    {
+        "name":  "tex-gyre",
+        "sha512":  "e958408e6e64a54b25fa89b38de181c96fffb9eb8762959209799c39cead7a5525f220b7b3cd278e35cb9e3e49c1c85d565d518ffacb0695b0c3c09ede935266"
+    },
+    {
+        "name":  "textcase",
+        "sha512":  "4577c3d477543d91cd06c82c04aaad46bdb2491127318bd6289fbec04c439ce3501dcfef9da21f9f0798baf4a228d7d5dc038ca33fcd0ec33ae492e574e58641"
+    },
+    {
+        "name":  "thmtools",
+        "sha512":  "591a7ac804b1fea4440488477746e2c0269aac00b0ab70ade5bdffbc49a6ad16a5f95ac0bceef9584f209432b7bfcfcbeff7c5700ba9ed1a77644ed54d5b519b"
+    },
+    {
+        "name":  "tools",
+        "sha512":  "801c0fec8dc1bcdcaa37b08071bcfa86aaa30935180523d628746c4bd64200afbf3cda016ed9297dffb1bcb098d9630a9c67e2db8f2eaac940e9dbb0f07f1e12"
+    },
+    {
+        "name":  "totcount",
+        "sha512":  "0cac46fa102d9f132c58cab45518c3edaab228c09bccf0bdbd49e543ec2372281ce4a24ef949fd462e68f61bb1313a1bbfb2a2997dd2634358ffeb4e6fb59408"
+    },
+    {
+        "name":  "totpages",
+        "sha512":  "5a3e92524c7f79fb53d1d1b918c697291890be32e63db546b7fb6e8391301c380d85366d0f19ad2aad5c03714c389e6445b98335d72d143a9b0a97a96a325b13"
+    },
+    {
+        "name":  "trimspaces",
+        "sha512":  "b36a7236d8e2dbf6a6050e29301f216883a4f4918b2f26652c6932ff8c08fc416885df0d24af225ea8e4f35c2f308fb94c10525d1fed632edecfea954af5bf8b"
+    },
+    {
+        "name":  "ucs",
+        "sha512":  "ab534b75f4b7968310003fd8816a3cd22b37acb74443f4438d6a5474408863dabfc3b1484336736d7eccef08b988e2c1713454b339b8d961a1ad3eab542cf089"
+    },
+    {
+        "name":  "unicode-math",
+        "sha512":  "559c0da4dcfc592118d1e2ec81218a7b6d8428f561cb5e8dd5b2051a7b2f84ce21d8adef43156a7bbe95803edc1f0ce480a4f13504a0d75a4a51a96cac12fab1"
+    },
+    {
+        "name":  "uniquecounter",
+        "sha512":  "e1e345bf31fd5b5c751adadbf9a6990753db2ee62341c48cc95a650222cb00b23b2aa6fb58798464ff3b1315e7fc8196c6508f4fc6d8d7c5ba85e53a81c40118"
+    },
+    {
+        "name":  "units",
+        "sha512":  "4e46631c2702cf46e10723c9378ecd994bf2f0e8078f99db808564dccdef5abcfb25102562c3f8f6c44e81381e8cefb9b8a3bcc90fabaae47e7fad26e115f163"
+    },
+    {
+        "name":  "upquote",
+        "sha512":  "504ac314466137576647f3569a6d8e8fe75583e36617d1305bde36d737c632aa4c6102167c963ea49693589a4df6f2116075eb06911d4429c8708d8563b91a83"
+    },
+    {
+        "name":  "urlbst",
+        "sha512":  "c518a51cbccb85554065185656f53bbe3148b01dad9d4ee4efaa63f03fb0aa20d0630bf786d56654d0ee4bd4890bbe78d10fa62cd9a89e1b500d1bbd19e09c5b"
+    },
+    {
+        "name":  "vmargin",
+        "sha512":  "2652ee542aa343a1d15ab11f084277c2e0967c986bd99784cc03ad1327a290707f80da0332668431be6fec12e2deb34b2b6f29236c4658782337c57e68e4f5d8"
+    },
+    {
+        "name":  "xargs",
+        "sha512":  "f468d7758e9b895a85e12f2b4156fff90bb2e4ab8a08c9470671755cb104c2d67384ecca5d69878ede84bd8064063f860b7d2a2750b5617da3ee3a5b5c320014"
+    },
+    {
+        "name":  "xcolor",
+        "sha512":  "fabf3014ede7786ddbd3588ad4fa2859fa9c1d451e4e12c01137be342440ffc4d8fea2b90cea48917a1b460c5c2c02dd3f7b89e849b9e8db2b8b3f92c2ecccf5"
+    },
+    {
+        "name":  "xkeyval",
+        "sha512":  "792a0d18513907b7ec1d0bd191cfc58957164963d35aac52529b0977722d056c2691ac79d0565f6c900b2f1b2499b0fb0052395907c63408541186c91d5d28fb"
+    },
+    {
+        "name":  "xltxtra",
+        "sha512":  "51ad3970dc4d4e47018de9b5f6f88f4fb8429fcf33ca91076a31d2ddae94dba526a83057276fa207b001550f9c373f8c9f6b9a209f6217dc9a07de3c7fc6e6d2"
+    },
+    {
+        "name":  "xpatch",
+        "sha512":  "def8a2b56f8f3ae35b11f2e5b7a897e0e6d7de5ea049ce033fe80ae04711e8ccf75ea4daa57125e9532fcaca05e6d48927b03e5e649085ff54523446f310aea2"
+    },
+    {
+        "name":  "zref",
+        "sha512":  "36df1bb7d2b8661409590f354cb8f575aa617f5a0a8a723a01bba322792de8cf70f47a222cf538226591f31483d1dffe3945021d6d560819292e14d175d03490"
+    }
+]

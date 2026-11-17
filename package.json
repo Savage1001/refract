@@ -1,0 +1,77 @@
+{
+  "name": "refract",
+  "version": "0.3.0",
+  "private": true,
+  "main": "build/main.cjs",
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').copyFileSync('index.html','build/index.html');require('fs').copyFileSync('style.css','build/style.css');require('fs').copyFileSync('resources/logo.png','build/logo.png');require('fs').cpSync('resources/provider-logos','build/provider-logos',{recursive:true});require('fs').cpSync('resources/fonts','build/fonts',{recursive:true})\"",
+    "start": "npm run build && electron .",
+    "test": "npm run build && install-electron && node --test build/test/*.test.cjs",
+    "verify:tex-sources": "npm run build && node build/scripts/verify-tex-sources.cjs",
+    "benchmark:tools": "npm run build && node build/scripts/benchmark-assistant-tools.cjs",
+    "benchmark:pipeline": "npm run build && node build/scripts/benchmark-agent-pipeline.cjs",
+    "build:win": "npm run build && electron-builder --win --dir",
+    "build:installer": "npm run build && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "electron": "^45.2.0",
+    "electron-builder": "^26.18.0",
+    "playwright": "^1.64.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "adm-zip": "^0.6.1",
+    "dompurify": "^3.4.17",
+    "katex": "^0.19.1",
+    "marked": "^18.1.2",
+    "pdfjs-dist": "^4.10.38",
+    "zod": "^4.6.7"
+  },
+  "build": {
+    "appId": "app.refract.desktop",
+    "productName": "Refract",
+    "asar": false,
+    "files": [
+      "build/main.cjs",
+      "build/preload.cjs",
+      "build/renderer.js",
+      "build/model-picker.js",
+      "build/src/**/*.cjs",
+      "build/index.html",
+      "build/style.css",
+      "build/logo.png",
+      "build/provider-logos/**/*",
+      "build/fonts/**/*",
+      "node_modules/**/*",
+      "!node_modules/@napi-rs/canvas/**",
+      "!node_modules/@napi-rs/canvas-*/**",
+      "LICENSE",
+      "package.json"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": "dir",
+      "icon": "resources/logo.ico",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "include": "scripts/installer.nsh",
+      "installerIcon": "resources/logo.ico",
+      "uninstallerIcon": "resources/logo.ico",
+      "installerHeaderIcon": "resources/logo.ico",
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "beforePack": "build/scripts/distribution-boundary.cjs",
+    "afterPack": "build/scripts/distribution-boundary.cjs"
+  },
+  "license": "MIT",
+  "overrides": {
+    "minimatch@^10.2.5": "^11.0.3",
+    "minimatch@^9.0.3": "^11.0.3"
+  }
+}

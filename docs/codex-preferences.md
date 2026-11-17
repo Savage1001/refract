@@ -1,0 +1,5 @@
+# Codex preferences integration
+
+`CodexPreferences` is the shared snapshot: `{ model: string | null, reasoningEffort: ReasoningEffort | null, favorites: string[] }`. The preload exposes `store.codexPreferencesLoad()` and `store.codexPreferencesSave(snapshot)`. A null model or effort means the CLI default. The save operation replaces the complete snapshot; the picker must serialize updates and await saves before sending, and report a failed save rather than assuming it succeeded. Loading a missing file returns defaults. Invalid JSON, invalid data, and I/O failures reject without overwriting the file. A send also fails if the preferences cannot be read, rather than silently using different settings.
+
+The picker consumes this API and waits for pending saves before sending. Discovery supplies CLI model identifiers; unavailable saved values are retained. Model identifiers are nonempty, trimmed strings of at most 200 characters without control characters, matching execution. Supported efforts are minimal, low, medium, high, xhigh, max and ultra, subject to the selected model's catalog.

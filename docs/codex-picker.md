@@ -1,0 +1,8 @@
+﻿# Codex picker integration
+
+The renderer consumes `store.discoverCodexModels()` and `store.codexPreferencesLoad()` / `store.codexPreferencesSave()`. The catalog's `model` value, rather than its catalog `id`, is the CLI override stored in preferences and favorites. The picker displays supported effort values accepted by the preferences API (minimal, low, medium, high, xhigh, max, ultra). An unrecognized or currently unsupported saved effort is retained and shown as unavailable until the user changes it. A null model and effort preserve CLI defaults. The picker leaves them unset on first use and offers CLI default and Default effort choices to restore them.
+
+Preferences are loaded before the picker allows changes. A failed load disables editing to avoid overwriting saved data. Writes are serialized, and a failed save is surfaced with a retry action. Discovery failures and unavailable models do not erase preferences. Saved preferences are passed to new and resumed Codex conversations. Discovery and preferences are whole-snapshot APIs; any other writer must coordinate updates to avoid lost changes.
+
+
+The Codex picker footer includes a Standard / Fast control, inspired by T3 Code. Fast mode is saved with the Codex preferences and passed to both new and resumed CLI runs using `service_tier="fast"` and `features.fast_mode=true`. Selecting Standard explicitly passes `service_tier="default"`. Existing preferences without a speed choice continue to inherit the CLI configuration until a speed is selected. OpenCode does not expose this control. Fast availability and higher usage depend on the selected model and account; see [OpenAI speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed).

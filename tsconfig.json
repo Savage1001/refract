@@ -1,0 +1,23 @@
+﻿{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "outDir": "build",
+    "strict": false,
+    "types": [
+      "node",
+      "electron"
+    ],
+    "skipLibCheck": true
+  },
+  "include": [
+    "*.cts",
+    "renderer.ts",
+    "model-picker.ts",
+    "scripts/**/*.cts",
+    "src/**/*.cts",
+    "test/**/*.cts"
+  ]
+}
+

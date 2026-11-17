@@ -1,0 +1,298 @@
+{
+  "renderer": "Headless Chromium with isolated sample IPC data",
+  "pairedStateVerified": true,
+  "captures": {
+    "populated-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "grid-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "workspace-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "dialog-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "tools-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "comments-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": [
+        "Clarify the assumptions before stating the main result.",
+        "Check the references in the related work."
+      ]
+    },
+    "versions-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "models-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "compact-light": {
+      "width": 1000,
+      "height": 740,
+      "sidebar": 209,
+      "chat": 258,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "compact-preview-light": {
+      "width": 1000,
+      "height": 740,
+      "sidebar": 209,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "short-light": {
+      "width": 900,
+      "height": 650,
+      "sidebar": 209,
+      "chat": 233,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "conversation-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 378,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "expanded-chat-light": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 617,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "populated-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "grid-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "workspace-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "dialog-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "tools-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "comments-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": [
+        "Clarify the assumptions before stating the main result.",
+        "Check the references in the related work."
+      ]
+    },
+    "versions-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "models-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 278,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "compact-dark": {
+      "width": 1000,
+      "height": 740,
+      "sidebar": 209,
+      "chat": 258,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "compact-preview-dark": {
+      "width": 1000,
+      "height": 740,
+      "sidebar": 209,
+      "chat": 0,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "short-dark": {
+      "width": 900,
+      "height": 650,
+      "sidebar": 209,
+      "chat": 233,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "conversation-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 378,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    },
+    "expanded-chat-dark": {
+      "width": 1440,
+      "height": 900,
+      "sidebar": 231,
+      "chat": 617,
+      "selection": [
+        0,
+        0
+      ],
+      "comments": []
+    }
+  }
+}

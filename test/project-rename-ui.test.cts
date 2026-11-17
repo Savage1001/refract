@@ -1,0 +1,36 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { _electron: electron } = require('playwright');
+
+test('project rename submits with Enter and preserves cancellation', {timeout:30000}, async t => {
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-rename-'));
+  const env: NodeJS.ProcessEnv = {...process.env, REFRACT_DATA_DIR:data, REFRACT_TEST_HIDDEN:'1'};
+  delete env.ELECTRON_RUN_AS_NODE;
+  const app = await electron.launch({args:[path.resolve(__dirname,'..','..')],env});
+  t.after(async () => { await app.close().catch(() => {}); await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200}); });
+  const page = await app.firstWindow();
+  await page.locator('#new').click();
+  const name = page.locator('#project-name');
+  await name.click();
+  await page.locator('#rename-name').fill('Keyboard rename');
+  await page.locator('#rename-name').press('Enter');
+  await page.waitForFunction(() => document.querySelector('#project-name')?.textContent === 'Keyboard rename');
+  await name.click();
+  await page.locator('#rename-name').fill('Cancelled rename');
+  await page.locator('#rename-dialog button[value="cancel"]').click();
+  assert.equal(await name.textContent(),'Keyboard rename');
+  await name.click();
+  await page.locator('#rename-name').fill('Mouse rename');
+  await page.locator('#rename-dialog button[value="rename"]').click();
+  await page.waitForFunction(() => document.querySelector('#project-name')?.textContent === 'Mouse rename');
+  await name.click();
+  await page.locator('#rename-name').fill('Escape rename');
+  await page.locator('#rename-name').press('Escape');
+  assert.equal(await name.textContent(),'Mouse rename');
+  const projects = (await fs.readdir(path.join(data,'projects'))).filter((name:string)=>/^[0-9a-f-]{36}$/.test(name));
+  const metadata = JSON.parse(await fs.readFile(path.join(data,'projects',projects[0],'.refract.json'),'utf8'));
+  assert.equal(metadata.name,'Mouse rename');
+});
