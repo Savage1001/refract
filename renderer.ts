@@ -1,7 +1,7 @@
 // All action glyphs use the same view box, stroke and fixed geometry.
-type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview';
+type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview' | 'download' | 'export';
 function actionIcon(name:ActionIcon):SVGSVGElement {
-  const paths:Record<ActionIcon,string> = {agent:'M4 4h16v12H9l-5 4V4zM8 8h8M8 12h5',editor:'M4 3h16v18H4zM8 8l-2 2 2 2M16 8l2 2-2 2M13 7l-2 7',preview:'M4 3h16v18H4zM8 7h8M8 11h8M8 15h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
+  const paths:Record<ActionIcon,string> = {download:'M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4',export:'M14 3h7v7m0-7L10 14M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5',agent:'M4 4h16v12H9l-5 4V4zM8 8h8M8 12h5',editor:'M4 3h16v18H4zM8 8l-2 2 2 2M16 8l2 2-2 2M13 7l-2 7',preview:'M4 3h16v18H4zM8 7h8M8 11h8M8 15h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false',class:'ui-icon'})) svg.setAttribute(key,value);
   const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;
@@ -118,7 +118,7 @@ function renderProjects() {
   $('#list').replaceChildren(...matches.map(p => {
     const row = document.createElement('article'), name = document.createElement('button'), date = document.createElement('span'), remove=document.createElement('button');
     const projectLabel = document.createElement('span'); projectLabel.className='project-label'; projectLabel.textContent=p.name;
-    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project →'; openHint.setAttribute('aria-hidden','true');
+    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project â†’'; openHint.setAttribute('aria-hidden','true');
     name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!remove.disabled) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
     remove.textContent='Delete';remove.className='project-delete';remove.setAttribute('aria-label',`Delete ${p.name}`);
     remove.onclick=async event=>{event.stopPropagation();if(!confirm(`Move ${p.name} to Deleted projects?`))return;remove.disabled=true;try{await store.trashProject(p.id);projects=await store.list();renderProjects();}catch(error){report('delete project',error);remove.disabled=false;}};
@@ -238,7 +238,7 @@ function clearFilePreview() {
 }
 async function showProjectPdf(encoded: string, request: number, id: string, name: string) {
   const panel = $('#file-preview'), loading = document.createElement('p');
-  loading.textContent = 'Loading PDF…'; panel.replaceChildren(loading); panel.hidden = false;
+  loading.textContent = 'Loading PDFâ€¦'; panel.replaceChildren(loading); panel.hidden = false;
   try {
     const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
     const pdfModulePath: string = '../node_modules/pdfjs-dist/build/pdf.mjs';
@@ -260,7 +260,7 @@ async function showProjectPdf(encoded: string, request: number, id: string, name
     const renderPage = async number => {
       const generation = ++previewGeneration;
       previous.disabled = true; next.disabled = true; count.textContent = `Page ${number} of ${doc.numPages}`;
-      pageArea.textContent = `Loading page ${number}…`;
+      pageArea.textContent = `Loading page ${number}â€¦`;
       try {
         const page = await doc.getPage(number), natural = page.getViewport({scale:1});
         if (!Number.isFinite(natural.width) || !Number.isFinite(natural.height) || natural.width <= 0 || natural.height <= 0) throw new Error('Invalid PDF page size');
@@ -427,10 +427,10 @@ let pdfDocument:PdfDocument | null = null, pdfRenderRevision=0;
 let lastPdfSync:{page:number;x:number;y:number}|null=null;
 let pdfSharpTimer: ReturnType<typeof setTimeout> | null = null;
 const pdfControls=document.createElement('div');pdfControls.className='pdf-controls';
-pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">›</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
+pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">â€¹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">â€º</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">âˆ’</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
 $('#zoom-fit').textContent='Fit width'; $('#zoom-fit').setAttribute('aria-label','Fit PDF to width');
-$('#download').textContent='Download'; $('#download').setAttribute('aria-label','Download PDF');
-$('#export-project').textContent='Export'; $('#export-project').setAttribute('aria-label','Export project');
+$('#download').replaceChildren(actionIcon('download')); $('#download').setAttribute('aria-label','Download PDF');
+$('#export-project').replaceChildren(actionIcon('export')); $('#export-project').setAttribute('aria-label','Export project');
 $('#zoom-fit').before(pdfControls);
 const fitPage = document.createElement('button'); fitPage.type='button'; fitPage.className='icon fit-page'; fitPage.textContent='Fit page'; fitPage.setAttribute('aria-label','Fit PDF page to view');
 function fitPdfPage():void { const frame=pdfArea.querySelector<HTMLElement>('.pdf-pages .pdf-page-frame'); if(!frame) return; const height=frame.getBoundingClientRect().height; if(height>0) { changePdfZoom(Math.min(100,Math.floor(pdfZoom * Math.max(1,pdfArea.clientHeight - 36) / height)),'page'); goToPdfPage(pdfPage); } }
@@ -641,7 +641,7 @@ async function compilePreview(force=false) {
   if (compileRunning) { compileQueued = true; return; }
   compileRunning = true;
   const id = active.id, version = revision;
-  $('#compile').disabled = true; $('#compile').textContent = 'Compiling…';
+  $('#compile').disabled = true; $('#compile').textContent = 'Compilingâ€¦';
   try {
     const saveResults = await Promise.all([...(pendingSaves.get(id)?.values() || [])]);
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
@@ -783,7 +783,7 @@ async function sendChat() {
   const id = active.id, chatId = currentChat, prompt = $('#chat-input').value, images = attachments, provider = ($('#chat-provider') as HTMLSelectElement).value;
   $('#chat-provider').disabled = true; $('#chat-provider').dispatchEvent(new Event('providerstate'));
   attachments = []; renderAttachments();
-  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
+  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparingâ€¦'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
   saveChatDraft();
   const pending = document.createElement('div'); pending.className = 'message user'; pending.textContent = prompt;
   if ($('#chat-messages .dismiss-welcome')) $('#chat-messages').replaceChildren(pending); else $('#chat-messages').append(pending);
@@ -843,7 +843,7 @@ $('#send').before(cancelChatButton);
 function updateCancelButton() {cancelChatButton.hidden=!active || !chatBusy.has(active.id);cancelChatButton.disabled=false;cancelChatButton.setAttribute('aria-label','Stop');$('#send').hidden=!cancelChatButton.hidden;}
 cancelChatButton.onclick=async()=>{
   if(!active || !chatBusy.has(active.id)) return;
-  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stopping…');
+  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stoppingâ€¦');
   try {await store.chatCancel(id);} catch(error) {if(active?.id===id){report('stop assistant',error);updateCancelButton();}}
 };
 $('#send').onclick = sendChat;
@@ -920,7 +920,7 @@ async function refreshChats() {
       finally {if(active?.id===id && request===chatOpening){chatLoading=false;updateSendState();}}
     };
     const row = document.createElement('div'); row.className = 'chat-row';
-    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = '✎'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
+    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = 'âœŽ'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
     rename.onclick = () => {
       const input = document.createElement('input'); input.value = chat.title; input.maxLength = 100; input.setAttribute('aria-label', 'Chat name');
       row.replaceChildren(input); input.focus(); input.select();
@@ -963,7 +963,7 @@ function highlightLatex(text) {
 // path so saving, comment anchors, compilation and undo remain consistent.
 const findPanel = document.createElement('div');
 findPanel.className = 'editor-find'; findPanel.hidden = true;
-findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">↑</button><button type="button" aria-label="Next match">↓</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">×</button>';
+findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">â†‘</button><button type="button" aria-label="Next match">â†“</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">Ã—</button>';
 const wrapLabel=document.createElement('label');wrapLabel.innerHTML='<input type="checkbox" aria-label="Wrap search" checked> Wrap';
 findPanel.insertBefore(wrapLabel,findPanel.querySelector('[aria-label="Previous match"]'));
 $('.editor-wrap').before(findPanel);
@@ -1032,7 +1032,7 @@ function findPositions(): number[] {
 }
 function updateFindStatus() {
   const positions=findPositions(), index=positions.findIndex(position=>position===sourceEditor.selectionStart && sourceEditor.selectionEnd===position+findInput.value.length);
-  findStatus.textContent=positions.length ? `${index<0 ? '–' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
+  findStatus.textContent=positions.length ? `${index<0 ? 'â€“' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
 }
 function findNext(backward=false) {
   const positions=findPositions();
@@ -1269,7 +1269,7 @@ function renderToolPanel() {
     const log = document.createElement('pre'); log.className = 'tool-log';
     let errors = 0, warnings = 0; const diagnostics: { text: string; kind: 'error' | 'warning' }[] = [];
     for (const line of compileLog.split('\n')) { const item = document.createElement('span'); item.className = /^!|(?:^|:)\s*error\b/i.test(line) ? 'log-error' : /\bwarning\b/i.test(line) ? 'log-warning' : ''; if(item.className === 'log-error') errors++; if(item.className === 'log-warning') warnings++; if(item.className && diagnostics.length < 20) diagnostics.push({ text: line, kind: item.className === 'log-error' ? 'error' : 'warning' }); item.textContent = line + '\n'; log.append(item); }
-    const summary = document.createElement('p'); summary.className = 'log-summary'; summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} · ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
+    const summary = document.createElement('p'); summary.className = 'log-summary'; summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} Â· ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
     const wrap = document.createElement('button'); wrap.className = 'secondary log-wrap'; wrap.textContent = 'Disable line wrap'; wrap.setAttribute('aria-pressed','true');
     wrap.onclick = () => { const enabled = wrap.getAttribute('aria-pressed') === 'true'; wrap.setAttribute('aria-pressed',String(!enabled)); wrap.textContent = enabled ? 'Enable line wrap' : 'Disable line wrap'; log.classList.toggle('unwrapped', enabled); };
     const diagnosticList = document.createElement('div'); diagnosticList.className = 'log-diagnostics';
@@ -1359,7 +1359,7 @@ async function renderVersions() {
     const body = document.getElementById('tool-body')!, heading = document.createElement('div'); body.classList.remove('has-open-comparison'); heading.className = 'tool-heading'; heading.textContent = 'Versions'; body.replaceChildren(heading);
     for (const [index, version] of versions.entries()) {
       const row = document.createElement('div'); row.className = 'version-row';
-      const label = document.createElement('span'); label.textContent = `v${versions.length - index} \u00b7 ${new Date(version.created).toLocaleString()} · ${version.files.length} ${version.files.length === 1 ? 'file' : 'files'}`;
+      const label = document.createElement('span'); label.textContent = `v${versions.length - index} \u00b7 ${new Date(version.created).toLocaleString()} Â· ${version.files.length} ${version.files.length === 1 ? 'file' : 'files'}`;
       const restore = document.createElement('button'); restore.textContent = 'Restore file';
       restore.disabled = !version.files.includes(currentFile) || chatBusy.has(id) || !!restoringProject;
       restore.onclick = async () => {
@@ -1397,7 +1397,7 @@ async function renderVersions() {
         row.classList.toggle('comparison-selected', compare.open); body.classList.toggle('has-open-comparison', compare.open);
         if (!compare.open) return;
         if (window.matchMedia('(min-width: 1201px)').matches) { $('#workspace').classList.add('tools-expanded'); expandTools.textContent='Collapse panel'; expandTools.setAttribute('aria-label','Collapse tools panel'); }
-        changes.textContent = 'Loading changes…';
+        changes.textContent = 'Loading changesâ€¦';
         try {
           const differences = await store.versionCompare(id,version.id);
           if (active?.id !== id || !compare.open) return;
@@ -1600,7 +1600,7 @@ async function renderTrash(id) {
   for(const item of items) {
     const row=document.createElement('div'), label=document.createElement('span'), button=document.createElement('button');
     row.className='trash-row'; label.textContent=item.kind==='folder' ? `${item.name}/` : item.name; button.textContent='Restore';
-    const description = document.createElement('div'), kind = document.createElement('small'); description.className='trash-description'; const deleted = Date.parse(item.deleted); kind.textContent=`${item.kind==='folder' ? 'Folder' : 'File'}${Number.isFinite(deleted) ? ` · Deleted ${new Date(deleted).toLocaleString()}` : ''}`; description.append(label,kind);
+    const description = document.createElement('div'), kind = document.createElement('small'); description.className='trash-description'; const deleted = Date.parse(item.deleted); kind.textContent=`${item.kind==='folder' ? 'Folder' : 'File'}${Number.isFinite(deleted) ? ` Â· Deleted ${new Date(deleted).toLocaleString()}` : ''}`; description.append(label,kind);
     button.onclick=async()=>{button.disabled=true;try {const name=await store.restoreTrash(id,item.id);if(active?.id===id){await refreshFiles();revision++;scheduleCompile();await renderTrash(id);if(item.kind!=='folder') await openFile(name);else if(!currentFile && (active.rootFile || 'main.tex').toLowerCase().startsWith(name.toLowerCase()+'/')) await openFile(active.rootFile);}}catch(error){report('restore file',error);button.disabled=false;}};
     row.append(description,button);list.append(row);
   }
