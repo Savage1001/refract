@@ -18,7 +18,7 @@ const search = document.createElement('input'); search.type = 'search'; search.p
 const list = document.createElement('div'); list.className = 'model-list';
 const effort = document.createElement('div'); effort.className = 'effort-options'; effort.setAttribute('role', 'group'); effort.setAttribute('aria-label', 'Reasoning effort');
 const sidebar = document.createElement('div'); sidebar.className = 'model-sidebar';
-const favoritesTab = document.createElement('button'); favoritesTab.type = 'button'; favoritesTab.textContent = '★'; favoritesTab.setAttribute('aria-label', 'Favorite models');
+const favoritesTab = document.createElement('button'); favoritesTab.type = 'button'; favoritesTab.className = 'model-favorites-tab'; favoritesTab.textContent = '★'; favoritesTab.setAttribute('aria-label', 'Favorite models');
 favoritesTab.dataset.label = 'Favorites';
 function providerLogo(provider: 'codex' | 'opencode'): HTMLPictureElement {
   const picture = document.createElement('picture'); picture.className = `provider-logo provider-logo-${provider}`; picture.setAttribute('aria-hidden', 'true');
