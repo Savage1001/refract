@@ -575,8 +575,18 @@ main {
   margin-bottom:32px;
 }
 
-.eyebrow {
-  margin-bottom:8px;
+.homepage-brand {
+  display:flex;
+  align-items:center;
+  gap:24px;
+  margin-bottom:20px;
+  font-size:32px;
+  font-weight:700;
+}
+
+.homepage-brand img {
+  flex:none;
+  border-radius:14px;
 }
 
 .project-header h1 {
