@@ -63,7 +63,7 @@ jobs:
           # TinyTeX omits SyncTeX. Fetch the upstream tool only for this runner;
           # neither archive nor toolchain is packaged or uploaded.
           $synctexArchive = Join-Path $env:RUNNER_TEMP 'synctex.windows.r78097.tar.xz'
-          Invoke-WebRequest 'https://mirrors.ctan.org/systems/texlive/tlnet/archive/synctex.windows.tar.xz' -OutFile $synctexArchive
+          Invoke-WebRequest 'https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/synctex.windows.r78097.tar.xz' -OutFile $synctexArchive
           if ((Get-FileHash -LiteralPath $synctexArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '09ff70bf3a0de6b1c81c5aa3eb136473fce83314dc407a9ad6c4592376a6a83c') {
             throw 'SyncTeX archive checksum mismatch'
           }
