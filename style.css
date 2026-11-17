@@ -586,10 +586,6 @@ main {
   border-radius:14px;
 }
 
-.project-header h1 {
-  margin-bottom:8px;
-}
-
 .project-header p {
   color:var(--muted);
   margin:0;
@@ -598,6 +594,7 @@ main {
 
 .project-header-actions {
   display:flex;
+  align-items:center;
   gap:var(--action-gap);
   flex:none;
 }
@@ -2855,14 +2852,6 @@ dialog .dialog-actions {
     padding:28px;
   }
 
-  .project-header-top {
-    align-items:flex-start;
-  }
-
-  .project-header-actions {
-    flex-direction:column;
-  }
-
   .model-panel {
     width:min(520px,calc(100vw - 80px));
   }
@@ -2881,10 +2870,6 @@ dialog .dialog-actions {
   .project-header-top {
     flex-wrap:wrap;
     gap:16px;
-  }
-
-  .project-header-actions {
-    flex-direction:row;
   }
 
   .project-search {
