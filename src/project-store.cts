@@ -1,4 +1,3 @@
-import trust = require('./project-trust.cjs');
 ﻿const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -37,7 +36,6 @@ class ProjectStore {
     const meta = { id, name: String(name).trim() || 'New Project', created: new Date().toISOString() };
     await fs.writeFile(path.join(dir, '.refract.json'), JSON.stringify(meta, null, 2));
     await fs.writeFile(path.join(dir, 'main.tex'), '\\documentclass[11pt]{article}\n\\usepackage[margin=1in]{geometry}\n\\usepackage{amsmath,amssymb}\n\n\\title{Untitled}\n\\author{Author Name}\n\\date{\\today}\n\n\\begin{document}\n\\maketitle\n\n\\section{Introduction}\n\n\\end{document}\n');
-    await trust.grantTrust(dir);
     return meta;
   }
   async list() {

@@ -9,7 +9,6 @@ function actionIcon(name:ActionIcon):SVGSVGElement {
 declare const store: any;
 let projects = [], active = null, currentFile = 'main.tex', opening = 0, projectOpening = 0, currentChat = 'default';
 let revision = 0, compileTimer = null, compileRunning = false, compileQueued = false;
-let projectTrusted = false;
 let restoringProject: string | null = null;
 const chatBusy = new Set();
 const chatProgress = new Map<string,{chatId:string;status:string}>();
@@ -40,7 +39,7 @@ function readChatDraft(key:string):ChatDraft {
 function saveChatDraft() {if(active)writeChatDraft(draftKey(active.id,currentChat),{text:$('#chat-input').value,attachments:[...attachments]});}
 function restoreChatDraft(id:string,chatId:string) {const draft=readChatDraft(draftKey(id,chatId));$('#chat-input').value=draft.text;attachments=[...draft.attachments];renderAttachments();}
 const $ = (s: string): any => document.querySelector(s);
-function updateSendState() {$('#send').disabled=!active || !projectTrusted || !providerAvailable || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
+function updateSendState() {$('#send').disabled=!active || !providerAvailable || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
 function setEditorReadOnly(value:boolean) {$('#source').readOnly=value;completionButton.disabled=value || $('.source-container').hidden;}
 function report(action, error) { alert(`Could not ${action}: ${error.message}`); }
 function showRestoreNotice(visible:boolean) {
@@ -313,20 +312,7 @@ async function openFile(name) {
     else { $('#file-preview').textContent = file.reason; $('#file-preview').hidden = false; }
   } catch (error) { if (request === opening && active?.id === id) report('open file', error); }
 }
-async function refreshProjectTrust(id:string):Promise<void> {
-  const trusted=await store.projectTrust(id);if(active?.id!==id)return;
-  projectTrusted=trusted;
-  let panel=document.getElementById('project-trust');
-  if(!panel){panel=document.createElement('details');panel.id='project-trust';panel.setAttribute('aria-label','Project trust');$('#project-side').append(panel);}
-  const text=document.createElement('p');text.setAttribute('role','status');
-  text.textContent=trusted ? 'Trusted project: compilation and assistants run with your account access. New files and restored versions share this trust.' : 'Untrusted project: you can review and edit files. Compilation and assistants are blocked until you review and approve trust.';
-  const button=document.createElement('button');button.type='button';button.textContent=trusted?'Revoke project trust':'Review project trust';
-  button.onclick=async()=>{button.disabled=true;try {if(trusted)await store.revokeProjectTrust(id);else await store.requestProjectTrust(id);await refreshProjectTrust(id);if(active?.id===id && projectTrusted)scheduleCompile();}catch(error){report('project trust',error);}finally{button.disabled=false;}};
-  const summary=document.createElement('summary');summary.textContent=trusted?'Trusted project':'Project trust required';
-  (panel as HTMLDetailsElement).open=!trusted;panel.replaceChildren(summary,text,button);updateSendState();
-}
 async function openProject(p) {
-  projectTrusted=false;
   const request = ++projectOpening;
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
@@ -337,7 +323,6 @@ async function openProject(p) {
   $('#home-side').hidden = true; $('#project-side').hidden = false; $('#project-name').textContent = p.name;
   showRestoreNotice(false);
   try {
-    await refreshProjectTrust(p.id);if(request!==projectOpening)return;
     const retained=await store.versionRetainedStages(p.id);if(request!==projectOpening)return;showRestoreNotice(retained>0);
     await store.versionSnapshot(p.id); if (request !== projectOpening) return;
     await refreshFiles(); if (request !== projectOpening) return;
@@ -642,7 +627,6 @@ function scheduleCompile() {
   compileTimer = setTimeout(() => compilePreview(), 0);
 }
 async function compilePreview(force=false) {
-  if(!projectTrusted)return;
   if (!active) return;
   if (restoringProject === active.id) { compileQueued = true; return; }
   if (compileRunning) { compileQueued = true; return; }

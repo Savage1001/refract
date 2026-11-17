@@ -190,7 +190,6 @@ class ChatService {
     return {token,name:'Pasted screenshot.png'};
   }
   async send(id, prompt, chatId = 'default', attachments = [], signal?: AbortSignal, onProgress?: (status:string)=>void, options?: CodexOptions, provider?: Provider, buildInstructions?: string) {
-    await require('./project-trust.cjs').assertTrusted(this.store.projectDir(id));
     const contextStarted=performance.now();
     if (provider !== undefined && provider !== 'codex' && provider !== 'opencode') throw new Error('Invalid provider');
     const key = `${id}:${chatId}`;

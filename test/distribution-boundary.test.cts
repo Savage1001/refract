@@ -82,9 +82,6 @@ test('missing external configuration reports setup instructions without replacin
   await fs.mkdir(output);
   await fs.writeFile(path.join(root, 'main.tex'), 'inert source fixture');
   await fs.writeFile(path.join(output, 'main.pdf'), 'previous PDF');
-  const trust = require('../src/project-trust.cjs') as typeof import('../src/project-trust.cjs');
-  await trust.grantTrust(root);
-  t.after(() => trust.revokeTrust(root));
   const previous = process.env.REFRACT_TEX_BIN;
   delete process.env.REFRACT_TEX_BIN;
   try {

@@ -1,12 +1,10 @@
-import trust = require('./project-trust.cjs');
 const { texBin } = require('./tex-toolchain.cjs');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { cancelProcess } = require('./chat.cjs');
 
-async function runCompilerProcess(command:string, commandArgs:string[], cwd:string, env:NodeJS.ProcessEnv, signal?:AbortSignal, projectDir=cwd): Promise<{code:number|null;output:string}> {
-  await trust.assertTrusted(projectDir);
+async function runCompilerProcess(command:string, commandArgs:string[], cwd:string, env:NodeJS.ProcessEnv, signal?:AbortSignal): Promise<{code:number|null;output:string}> {
   return new Promise((resolve,reject)=>{
     if(signal?.aborted) {resolve({code:null,output:'Compilation cancelled.'});return;}
     const child=spawn(command,commandArgs,{cwd,env,windowsHide:true,shell:false});
@@ -20,7 +18,6 @@ async function runCompilerProcess(command:string, commandArgs:string[], cwd:stri
   });
 }
 async function compile(projectDir, options: { executable?: string; rootFile?: string; draftMode?: boolean; signal?:AbortSignal } = {}) {
-  await trust.assertTrusted(projectDir);
   if (options.signal?.aborted) return {ok:false,log:'Compilation cancelled.',exitCode:null};
   const rootInfo=await fs.lstat(projectDir);
   if(rootInfo.isSymbolicLink() || !rootInfo.isDirectory())throw new Error('Invalid project directory');
@@ -85,7 +82,7 @@ async function compile(projectDir, options: { executable?: string; rootFile?: st
       env.FONTCONFIG_FILE=config;
     }
   }
-  const run = (command, commandArgs, cwd = projectDir) => runCompilerProcess(command,commandArgs,cwd,env,options.signal,projectDir);
+  const run = (command, commandArgs, cwd = projectDir) => runCompilerProcess(command,commandArgs,cwd,env,options.signal);
   let log = '';
   let exitCode: number | null = null;
   const step = async (command, commandArgs, cwd = projectDir) => { const result = await run(command, commandArgs, cwd); exitCode = result.code; log = (log + '\n' + result.output).slice(-250000); return result.code === 0; };

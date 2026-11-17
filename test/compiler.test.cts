@@ -4,14 +4,11 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const compiler = require('../src/compiler.cjs');
-const trust = require('../src/project-trust.cjs');
-// These tests exercise compiler mechanics using explicitly trusted test fixtures.
-const compile = async (directory:string,options?:Parameters<typeof compiler.compile>[1]) => {await trust.grantTrust(directory);return compiler.compile(directory,options);};
+const compile = compiler.compile;
 const runCompilerProcess = compiler.runCompilerProcess;
 test('cancelling a compiler process stops it and reports cancellation', {timeout:15000}, async t=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'refract-cancel-'));
- t.after(async()=>{await trust.revokeTrust(directory);await fs.rm(directory,{recursive:true,force:true});});
- await trust.grantTrust(directory);
+ t.after(async()=>{await fs.rm(directory,{recursive:true,force:true});});
  const controller=new AbortController();
  const running=runCompilerProcess(process.execPath,['-e','setInterval(() => {}, 1000)'],directory,process.env,controller.signal);
  controller.abort();const result=await running;

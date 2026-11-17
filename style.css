@@ -2789,9 +2789,6 @@ dialog .dialog-actions {
   color:var(--muted);
   font-size:11px;
 }
-#project-trust {margin:8px 0;flex:none;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;line-height:1.45;}
-#project-trust p {margin:8px 0;color:var(--text);}
-#project-trust button {white-space:normal;width:100%;}
 
 #file-list button:has(.tree-image-thumbnail){align-items:center}
 #file-list .tree-image-thumbnail{width:32px;height:32px;flex:none;object-fit:contain;border-radius:4px;background:#8882}
@@ -2810,7 +2807,6 @@ dialog .dialog-actions {
 .pdf-controls button { display:inline-grid; place-items:center; min-width:28px; min-height:28px; }
 #file-search-toggle[aria-pressed="true"] { background:var(--selected); color:var(--text); }
 
-#project-trust summary { cursor:pointer; font-weight:550; color:var(--sidebar-muted); }
 
 .sidebar-actions { display:flex; align-items:center; gap:4px; padding:4px 0 8px; border-bottom:1px solid var(--border); flex:none; }
 .sidebar-actions>button { display:inline-grid; place-items:center; width:32px; height:32px; padding:6px; color:var(--sidebar-muted); flex:none; }

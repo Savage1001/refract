@@ -1,4 +1,3 @@
-import trust = require('./project-trust.cjs');
 import fs = require('node:fs/promises');
 import path = require('node:path');
 import crypto = require('node:crypto');
@@ -41,7 +40,6 @@ class BuildCache {
     return new Map(entries);
   }
   async run(id:string,cwd:string,options:Options,force=false):Promise<Result> {
-    await trust.assertTrusted(cwd);
     if(options.signal?.aborted)return {ok:false,log:'Compilation cancelled.',exitCode:null};
     const key=await this.key(id,options),cached=this.entries.get(id);
     if(!force && cached?.key===key && Date.now()-cached.created<60000) {
