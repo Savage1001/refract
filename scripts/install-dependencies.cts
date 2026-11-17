@@ -38,7 +38,8 @@ async function install(options: InstallOptions = {}): Promise<void> {
     await fetchArchive('https://github.com/rstudio/tinytex-releases/releases/download/v2026.10/TinyTeX-v2026.10.zip', 'dc1d6e63b21af62130ede1dcc4113bffdc184544690a23e3f489d75340f4ff61', archive);
     unpack(archive, staging);
     const sync = path.join(staging, 'sync.tar.xz');
-    await fetchArchive('https://mirrors.ctan.org/systems/texlive/tlnet/archive/synctex.windows.tar.xz', '09ff70bf3a0de6b1c81c5aa3eb136473fce83314dc407a9ad6c4592376a6a83c', sync);
+    // Pin the upstream revision as well as its checksum.
+    await fetchArchive('https://mirrors.ctan.org/systems/texlive/tlnet/archive/synctex.windows.r78097.tar.xz', '09ff70bf3a0de6b1c81c5aa3eb136473fce83314dc407a9ad6c4592376a6a83c', sync);
     unpack(sync, path.join(staging, 'TinyTeX'), ['bin/windows/synctex.exe']);
     if (!await complete(path.join(staging, 'TinyTeX'))) throw new Error('Downloaded TeX is missing required tools');
     // Preserve any incomplete previous installation rather than deleting user files.
