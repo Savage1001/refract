@@ -13,7 +13,9 @@ function selectRelease(releases: Release[], track: UpdateTrack, current: string)
     const version = semver.valid(release.tag_name);
     if (!version || release.draft || !semver.gt(version, current)) return false;
     const pre = semver.prerelease(version);
-    return track === 'stable' ? !release.prerelease && !pre : (!release.prerelease && !pre) || (release.prerelease && pre?.length === 2 && pre[0] === 'beta' && typeof pre[1] === 'number');
+    const supportedPrerelease = pre?.length === 2 && pre[0] === 'beta' && typeof pre[1] === 'number'
+      || pre?.length === 1 && typeof pre[0] === 'string' && /^pre-release-[1-9]\d*$/.test(pre[0]);
+    return track === 'stable' ? !release.prerelease && !pre : (!release.prerelease && !pre) || (release.prerelease && supportedPrerelease);
   }).sort((a, b) => semver.rcompare(a.tag_name, b.tag_name))[0];
 }
 
