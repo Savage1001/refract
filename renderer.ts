@@ -336,14 +336,53 @@ async function createProject() {
   try { const p = await store.create('New Project'); projects = await store.list(); renderProjects(); await openProject(p); }
   catch (error) { report('create project', error); }
 }
+function* outlineSections(source:string): Generator<{title:string; index:number}> {
+  const heading = /\\(?:sub)*section\*?\{/g;
+  for (let match = heading.exec(source); match; match = heading.exec(source)) {
+    const start = heading.lastIndex;
+    const braces = /\\[\s\S]|[{}]/g;
+    braces.lastIndex = start;
+    let depth = 1;
+    for (let token = braces.exec(source); token; token = braces.exec(source)) {
+      if (token[0] === '{') depth++;
+      if (token[0] === '}') depth--;
+      if (depth === 0) {
+        heading.lastIndex = braces.lastIndex;
+        if (token.index > start) yield {title:source.slice(start, token.index), index:match.index};
+        break;
+      }
+    }
+  }
+}
+function renderOutlineTitle(button:HTMLButtonElement, title:string): void {
+  const equations = [...title.matchAll(/\\\(((?:\\(?!\))[^\n]|[^\\\n])+?)\\\)|\\.|\$\$|\$((?:\\.|[^\\$\n])+)\$/g)]
+    .filter(match => match[1] !== undefined || match[2] !== undefined);
+  if (!equations.length) return;
+  void mathFormatting.then(({renderMath, sanitize}) => {
+    if (!button.isConnected) return;
+    const label = document.createDocumentFragment();
+    let offset = 0;
+    for (const match of equations) {
+      label.append(title.slice(offset, match.index));
+      const math = document.createElement('span');
+      math.innerHTML = sanitize(renderMath(match[1] ?? match[2], false), ['annotation']);
+      label.append(math);
+      offset = match.index + match[0].length;
+    }
+    label.append(title.slice(offset));
+    button.replaceChildren(label);
+  }).catch(error => console.error('Outline math formatting unavailable', error));
+}
 function updateEditor() {
   const source = $('#source').value;
   highlightLatex(source);
   updateActiveLine();
   $('#numbers').textContent = Array.from({length: source.split('\n').length}, (_, i) => i + 1).join('\n');
-  const sections = [...source.matchAll(/\\(?:sub)*section\*?\{([^}]+)\}/g)];
+  const sections = [...outlineSections(source)];
   $('#outline-list').replaceChildren(...sections.map(match => {
-    const button = document.createElement('button'); button.textContent = match[1];
+    const button = document.createElement('button');
+    button.textContent = match.title;
+    renderOutlineTitle(button, match.title);
     button.onclick = () => {
       const editor = $('#source') as HTMLTextAreaElement;
       const line = source.slice(0, match.index).split('\n').length;
@@ -686,11 +725,15 @@ async function compilePreview(force=false) {
 }
 $('#compile').onclick = () => { scheduleCompile(); clearTimeout(compileTimer); compilePreview(true); };
 $('#download').onclick = () => { if (active && compiledProject === active.id && compiledPdf) store.savePdf(compiledPdf).catch(error => report('save PDF', error)); };
+const purifierPath: string='../node_modules/dompurify/dist/purify.es.mjs';
+const katexPath: string='../node_modules/katex/dist/katex.mjs';
+const mathFormatting = Promise.all([import(purifierPath), import(katexPath)]).then(([{default:purify}, {default:katex}]) => ({
+  renderMath: (text:string, displayMode:boolean):string => katex.renderToString(text,{displayMode,output:'mathml',throwOnError:false,trust:false}),
+  sanitize: (html:string, dropContents:string[] = []):string => purify.sanitize(html,{ADD_FORBID_CONTENTS:dropContents,USE_PROFILES:{html:true,mathMl:true},FORBID_TAGS:['img','style','iframe'],FORBID_ATTR:['src','style']})
+}));
 const assistantFormatter: Promise<(text:string)=>string> = (async () => {
   const markedPath: string='../node_modules/marked/lib/marked.esm.js';
-  const purifierPath: string='../node_modules/dompurify/dist/purify.es.mjs';
-  const katexPath: string='../node_modules/katex/dist/katex.mjs';
-  const [{Marked}, {default:purify}, {default:katex}] = await Promise.all([import(markedPath),import(purifierPath),import(katexPath)]);
+  const [{Marked}, {renderMath, sanitize}] = await Promise.all([import(markedPath), mathFormatting]);
   const math = (display:boolean) => ({
     name:display ? 'displayMath' : 'inlineMath', level:display ? 'block' : 'inline',
     start(source:string) { return source.search(display ? /\$\$|\\\[/ : /\$|\\\(/); },
@@ -698,10 +741,10 @@ const assistantFormatter: Promise<(text:string)=>string> = (async () => {
       const match=display ? /^(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])(?:\n|$)/.exec(source) : /^(?:\$(?![\s$])((?:\\.|[^$\\\n])+?)(?<!\s)\$|\\\(([^\n]+?)\\\))/.exec(source);
       if(match) return {type:display ? 'displayMath' : 'inlineMath',raw:match[0],text:match[1] ?? match[2]};
     },
-    renderer(token:{text:string}) { return katex.renderToString(token.text,{displayMode:display,output:'mathml',throwOnError:false,trust:false}); }
+    renderer(token:{text:string}) { return renderMath(token.text, display); }
   });
   const parser=new Marked({extensions:[math(true),math(false)]});
-  return (text:string) => purify.sanitize(parser.parse(text),{USE_PROFILES:{html:true,mathMl:true},FORBID_TAGS:['img','style','iframe'],FORBID_ATTR:['src','style']});
+  return (text:string) => sanitize(parser.parse(text));
 })();
 function renderChat(chat) {
   if (active?.id) window.dispatchEvent(new CustomEvent('picker-project', {detail:active.id}));
