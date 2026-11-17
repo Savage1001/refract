@@ -40,7 +40,12 @@ test('real NSIS updater rejects corrupt downloads, reuses verified cache and req
    const arch = Object.getOwnPropertyDescriptor(process, 'arch')!;
    try {
     Object.defineProperty(process, 'arch', {value:'arm64'});
-    createUpdateClient({tag_name:'v99.0.0', draft:false, prerelease:false, assets:[{name:'latest.yml'}]});
+    const client: InstanceType<typeof NsisUpdater> = createUpdateClient({
+     tag_name:'v99.0.0', draft:false, prerelease:false, assets:[{name:'latest.yml'}]
+    });
+    const provider: import('electron-updater/out/providers/Provider').Provider<import('electron-updater').UpdateInfo> =
+     await Reflect.get(client, 'clientPromise');
+    if (provider.isUseMultipleRangeRequest) throw new Error('GitHub downloads must use single byte ranges');
    } finally {Object.defineProperty(process, 'arch', arch);}
    const config = dir + '/app-update.yml';
    await fs.writeFile(config, 'updaterCacheDirName: updater-test\n');

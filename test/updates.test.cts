@@ -36,20 +36,24 @@ test('switching track during a download prevents arming the previous track', asy
  let finish!:()=>void;let started!:()=>void;
  const downloading=new Promise<void>(r=>started=r);const download=new Promise<void>(r=>finish=r);
  let armed=false;
- const progress = new eventsModule.EventEmitter<{'download-progress': [{percent: number}]; error: [Error]}>();
+ const progress = new eventsModule.EventEmitter<{'download-progress': [{percent: number; total: number}]; error: [Error]}>();
  await fs.writeFile(path.join(dir,'settings.json'),JSON.stringify({track:'beta'}));
  const service=new UpdateService(path.join(dir,'settings.json'),'1.0.0',true,async()=>[release('v1.1.0-beta.1',true)],()=>({autoDownload:false,autoInstallOnAppQuit:false,allowPrerelease:true,allowDowngrade:false,on:progress.on.bind(progress),checkForUpdates:async()=>({updateInfo:{version:'1.1.0-beta.1'}}),downloadUpdate:async()=>{started();await download;},quitAndInstall:()=>{armed=true;}}));
  try {
   await service.start();await downloading;
   assert.equal(service.status().downloadPercent,undefined);
-  progress.emit('download-progress',{percent:64.8});
+  progress.emit('download-progress',{percent:64.8,total:615 * 1024});
   assert.equal(service.status().downloadPercent,64);
-  progress.emit('download-progress',{percent:NaN});
-  assert.equal(service.status().downloadPercent,64);
+  assert.match(service.status().message,/615\.0 KiB/);
+  progress.emit('download-progress',{percent:25,total:131 * 1024 ** 2});
+  assert.equal(service.status().downloadPercent,25);
+  assert.match(service.status().message,/131\.0 MiB/);
+  progress.emit('download-progress',{percent:NaN,total:0});
+  assert.equal(service.status().downloadPercent,25);
   const stable=service.setTrack('stable');
   // Wait until the new preference has been published while the old download is in flight.
   while(service.status().track!=='stable') await new Promise<void>(r=>setImmediate(r));
-  progress.emit('download-progress',{percent:90});
+  progress.emit('download-progress',{percent:90,total:131 * 1024 ** 2});
   assert.equal(service.status().downloadPercent,undefined);
   finish();await stable;
   assert.equal(armed,false);assert.equal(service.status().phase,'idle');assert.throws(()=>service.prepareRestart());
@@ -120,7 +124,7 @@ test('beta track accepts numbered beta and pre-release versions', () => {
 
 test('installer handoff errors are persisted and allow downloading a retry', async () => {
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'refract-update-handoff-'));
- const events = new eventsModule.EventEmitter<{'download-progress': [{percent: number}]; error: [Error]}>();
+ const events = new eventsModule.EventEmitter<{'download-progress': [{percent: number; total: number}]; error: [Error]}>();
  const service=new UpdateService(path.join(dir,'settings.json'),'1.0.0',true,async()=>[release('v1.1.0')],()=>({
   autoDownload:false,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,
   on:events.on.bind(events), checkForUpdates:async()=>({updateInfo:{version:'1.1.0'}}),
