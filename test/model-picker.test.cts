@@ -25,6 +25,27 @@ async function picker(t, mode = 'ok') {
  await page.addScriptTag({ content: await fs.readFile(path.join(root, 'build/model-picker.js'), 'utf8') });
  return page;
 }
+test('OpenAI artwork stays centered inside its crop in both themes', async t => {
+ const page: import('playwright').Page = await picker(t);
+ await page.waitForFunction(() => !(document.querySelector('.model-trigger') as HTMLButtonElement).disabled);
+ await page.locator('.model-trigger').click();
+ for (const colorScheme of ['light', 'dark'] as const) {
+  await page.emulateMedia({colorScheme});
+  const logos = await page.locator('.provider-logo-codex').all();
+  assert.ok(logos.length > 1, 'checks the provider tab and model rows');
+  for (const logo of logos) {
+   const {crop, image} = await logo.evaluate(element => ({
+    crop: element.getBoundingClientRect().toJSON(),
+    image: element.querySelector('img')!.getBoundingClientRect().toJSON()
+   }));
+   assert.equal(image.width, 32);
+   assert.equal(image.height, 32);
+   assert.ok(Math.abs(image.x + image.width / 2 - crop.x - crop.width / 2) < 0.1);
+   assert.ok(Math.abs(image.y + image.height / 2 - crop.y - crop.height / 2) < 0.1);
+  }
+ }
+});
+
 test('picker restores, searches, navigates, favorites and saves supported choices', {timeout:30000}, async t => {
  const page = await picker(t); const trigger = page.locator('.model-trigger'); const panel = page.locator('.model-panel');
  await trigger.waitFor({state:'visible'}); await page.waitForFunction(() => !(document.querySelector('.model-trigger') as HTMLButtonElement).disabled);

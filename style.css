@@ -1713,8 +1713,9 @@ main {
 }
 
 .provider-logo {
-  display:inline-grid;
-  place-items:center;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
   width:16px;
   height:16px;
   flex:none;
@@ -1722,6 +1723,7 @@ main {
 }
 
 .provider-logo img {
+  flex:none;
   width:16px;
   height:16px;
   object-fit:contain;
