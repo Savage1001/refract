@@ -95,7 +95,15 @@ jobs:
           REFRACT_TEX_BIN: ''
         run: |
           $env:REFRACT_TEST_INSTALLER_PATH = @(Get-ChildItem dist -Filter '*Setup*.exe').FullName
-          node --test --test-reporter=tap build/test/installer.test.cjs | Tee-Object -Variable results
+          $cache = Join-Path $env:LOCALAPPDATA 'electron-builder/Cache'
+          $compilerDirectory = Join-Path $cache 'nsis/nsis-3.0.4.1'
+          if (!(Test-Path (Join-Path $compilerDirectory 'makensis.exe'))) {
+            $compiler = Get-ChildItem (Join-Path $cache 'nsis-3.0.4.1') -Recurse -Filter makensis.exe | Select-Object -First 1
+            if (!$compiler) { throw 'The installer build did not cache the NSIS compiler' }
+            New-Item -ItemType Directory -Path (Split-Path $compilerDirectory) -Force | Out-Null
+            Copy-Item -LiteralPath $compiler.DirectoryName -Destination $compilerDirectory -Recurse
+          }
+          node --test --test-reporter=tap build/test/installer.test.cjs build/test/installer-dependencies.test.cjs | Tee-Object -Variable results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($results -notcontains '# skipped 0') { throw 'An installer test was skipped' }
       - name: Upload verified release files
@@ -107,4 +115,5 @@ jobs:
           path: |
             dist/*Setup*.exe
             dist/*Setup*.exe.blockmap
-            dist/latest.yml
+            dist/*.yml
+            !dist/builder-*.yml
