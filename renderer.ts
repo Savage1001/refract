@@ -1,7 +1,7 @@
 // All action glyphs use the same view box, stroke and fixed geometry.
-type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy';
+type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview';
 function actionIcon(name:ActionIcon):SVGSVGElement {
-  const paths:Record<ActionIcon,string> = {search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
+  const paths:Record<ActionIcon,string> = {agent:'M4 4h16v12H9l-5 4V4zM8 8h8M8 12h5',editor:'M4 3h16v18H4zM8 8l-2 2 2 2M16 8l2 2-2 2M13 7l-2 7',preview:'M4 3h16v18H4zM8 7h8M8 11h8M8 15h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false',class:'ui-icon'})) svg.setAttribute(key,value);
   const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;
@@ -446,30 +446,6 @@ pdfArea.style.overflowAnchor='none';
 const pdfPageInput=pdfControls.querySelector<HTMLInputElement>('[aria-label="Go to compiled PDF page"]')!;
 const showInPdf=document.createElement('button');showInPdf.type='button';showInPdf.className='plain';showInPdf.textContent='Show in PDF';showInPdf.title='Show the current source line in the compiled PDF';
 $('.editor-header').insertBefore(showInPdf,$('#tools'));
-const compactPreview = document.createElement('button'); compactPreview.type='button'; compactPreview.className='plain compact-preview'; compactPreview.textContent='Preview'; compactPreview.setAttribute('aria-label','Show PDF preview');
-const compactEditor = document.createElement('button'); compactEditor.type='button'; compactEditor.className='plain compact-editor'; compactEditor.textContent='Editor'; compactEditor.setAttribute('aria-label','Return to editor');
-const focusEditor=document.createElement('button'); focusEditor.type='button'; focusEditor.className='plain focus-editor'; focusEditor.textContent='Focus editor'; focusEditor.setAttribute('aria-pressed','false'); focusEditor.setAttribute('aria-label','Expand editor workspace');
-function setEditorFocus(enabled:boolean):void {
-  const workspace = document.getElementById('workspace')!;
-  workspace.classList.remove('show-compact-preview', 'tools-expanded');
-  workspace.classList.toggle('editor-focus', enabled);
-  expandTools.textContent = 'Expand panel';
-  expandTools.setAttribute('aria-label', 'Expand tools panel');
-  focusEditor.textContent = enabled ? 'Split view' : 'Focus editor';
-  focusEditor.setAttribute('aria-pressed', String(enabled));
-  focusEditor.setAttribute('aria-label', enabled ? 'Return to split workspace' : 'Expand editor workspace');
-  if (enabled) {
-    document.querySelector('.editor-pane')!.classList.remove('chat-expanded');
-    expandChat.textContent = 'Expand chat';
-    expandChat.setAttribute('aria-pressed', 'false');
-  }
-}
-focusEditor.onclick=()=>{ setEditorFocus(!$('#workspace').classList.contains('editor-focus')); $('#source').focus(); };
-$('.editor-header').insertBefore(focusEditor,$('#tools'));
-
-compactPreview.onclick = () => { setEditorFocus(false); $('.editor-pane').classList.remove('chat-expanded'); const chatExpandButton = document.querySelector<HTMLButtonElement>('.expand-chat'); if (chatExpandButton) { chatExpandButton.textContent='Expand chat'; chatExpandButton.setAttribute('aria-pressed','false'); } $('#workspace').classList.add('show-compact-preview'); requestAnimationFrame(()=>{if(pdfFitMode==='page') fitPdfPage(); else schedulePdfSharpen();}); };
-compactEditor.onclick = () => { setEditorFocus(true); requestAnimationFrame(()=>{if(pdfFitMode==='page') fitPdfPage(); else schedulePdfSharpen();}); $('#source').focus(); };
-$('.editor-header').append(compactPreview); $('.pdf-pane header').prepend(compactEditor);
 function updatePdfControls() {
   pdfControls.hidden = pdfPageCount === 0;
   $('#zoom-fit').hidden = pdfPageCount === 0; fitPage.hidden = pdfPageCount === 0;
@@ -550,15 +526,14 @@ pdfPageInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.pr
 pdfPageInput.addEventListener('change',submitPdfPage);
 showInPdf.onclick=async()=>{
   if(!active || !compiledProject || compiledProject!==active.id || !currentFile || $('.source-container').hidden)return;
-  if ($('#workspace').classList.contains('editor-focus')) setEditorFocus(false);
-  if ($('.editor-pane').classList.contains('chat-expanded')) { $('.editor-pane').classList.remove('chat-expanded'); const button=document.querySelector<HTMLButtonElement>('.expand-chat'); if(button){button.textContent='Expand chat';button.setAttribute('aria-pressed','false');} }
+  closeLayoutTools();paneLayout={...visiblePaneLayout(),preview:true};if(window.matchMedia('(max-width:1200px)').matches) paneLayout={agent:false,editor:false,preview:true};applyPaneLayout();
   const id=active.id,file=currentFile,version=revision,editor=$('#source') as HTMLTextAreaElement,line=editor.value.slice(0,editor.selectionStart).split('\n').length;
   try {
     const position=await store.syncForward(id,file,line),doc=pdfDocument;
     if(active?.id!==id || currentFile!==file || revision!==version || compiledProject!==id || !doc)return;
     const viewport=(await doc.getPage(position.page)).getViewport({scale:1});
     if(active?.id!==id || currentFile!==file || revision!==version || compiledProject!==id || pdfDocument!==doc)return;
-    if (window.matchMedia('(max-width: 1200px)').matches) { $('#workspace').classList.add('show-compact-preview'); schedulePdfSharpen(); }
+    schedulePdfSharpen();
     const canvas=pdfArea.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')[position.page-1];if(!canvas)return;
     const bounds=canvas.getBoundingClientRect(),area=pdfArea.getBoundingClientRect();
     lastPdfSync=position;pdfPage=position.page;pdfArea.scrollTop+=bounds.top-area.top+(position.y/viewport.height)*bounds.height-area.height/2;updatePdfControls();
@@ -576,7 +551,7 @@ async function navigatePdfSource(canvas:HTMLCanvasElement,clientX:number,clientY
     if(active?.id!==id || revision!==version || compiledProject!==id || pdfDocument!==doc)return;
     await openFile(result.file);if(active?.id!==id || revision!==version || currentFile!==result.file)return;
     const editor=$('#source') as HTMLTextAreaElement,lines=editor.value.split('\n');if(result.line<1 || result.line>lines.length)return;
-    const offset=lines.slice(0,result.line-1).reduce((n,line)=>n+line.length+1,0); $('#workspace').classList.remove('show-compact-preview'); editor.focus();editor.setSelectionRange(offset,offset+lines[result.line-1].length);
+    const offset=lines.slice(0,result.line-1).reduce((n,line)=>n+line.length+1,0); closeLayoutTools();paneLayout={...visiblePaneLayout(),editor:true};if(window.matchMedia('(max-width:1200px)').matches)paneLayout.preview=false;applyPaneLayout(); editor.focus();editor.setSelectionRange(offset,offset+lines[result.line-1].length);
     const style=getComputedStyle(editor),lineHeight=parseFloat(style.lineHeight);
     editor.scrollTop=Math.max(0,parseFloat(style.paddingTop)+(result.line-1)*lineHeight-(editor.clientHeight-lineHeight)/2);
     syncEditorScroll();
@@ -1088,7 +1063,7 @@ findPanel.addEventListener('keydown',event=>{
 });
 document.addEventListener('keydown',event=>{
   if(event.isComposing) return;
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase()==='f' && active && !$('.source-container').hidden && !$('.editor-pane').classList.contains('chat-expanded') && !$('#workspace').classList.contains('show-compact-preview')) {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase()==='f' && active && !$('.source-container').hidden && displayedPaneLayout().editor) {
     event.preventDefault();openFind();
   } else if(!findPanel.hidden && event.key==='F3') {event.preventDefault();findNext(event.shiftKey);}
   else if(!findPanel.hidden && event.key==='Escape' && event.target===sourceEditor) {event.preventDefault();closeFind();}
@@ -1206,10 +1181,13 @@ $('#source').addEventListener('keydown', (event: KeyboardEvent) => {
   editor.setSelectionRange(first+mapOffset(start-first),first+mapOffset(end-first),direction);
 });
 const expandChat = document.createElement('button'); expandChat.type = 'button'; expandChat.className = 'expand-chat'; expandChat.textContent = 'Expand chat'; expandChat.setAttribute('aria-pressed','false');
-expandChat.onclick = () => { const expanded = $('.editor-pane').classList.toggle('chat-expanded'); expandChat.textContent = expanded ? 'Show editor' : 'Expand chat'; expandChat.setAttribute('aria-pressed',String(expanded)); if (expanded) { const pane = $('#chat-messages'), users = pane.querySelectorAll('.message.user'), last = users.length ? users[users.length-1] as HTMLElement : null; pane.scrollTop = last ? last.offsetTop : 0; } };
+expandChat.onclick = () => {
+  const expanded=!$('.editor-pane').classList.contains('chat-expanded');
+  closeLayoutTools();paneLayout={...visiblePaneLayout(),agent:true,editor:!expanded};applyPaneLayout();
+};
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
-$('#toggle-agent').onclick = () => { const pane = $('.editor-pane'); const hidden = pane.classList.toggle('agent-hidden'); if (hidden) { pane.classList.remove('chat-expanded'); expandChat.textContent='Expand chat'; expandChat.setAttribute('aria-pressed','false'); } const button = $('#toggle-agent'); button.textContent = hidden ? 'Show agent' : 'Hide agent'; button.setAttribute('aria-label', hidden ? 'Show agent menu' : 'Hide agent menu'); button.setAttribute('title', hidden ? 'Show agent menu' : 'Hide agent menu'); button.setAttribute('aria-pressed', String(hidden)); };
+$('#toggle-agent').onclick = () => togglePane('agent');
 $('#collapse').onclick = () => { const sidebar = document.querySelector('.sidebar'); sidebar.classList.toggle('collapsed'); $('#collapse').setAttribute('aria-label', sidebar.classList.contains('collapsed') ? 'Expand sidebar' : 'Collapse sidebar'); };
 $('#outline-toggle').onclick = () => { const list = $('#outline-list'); list.hidden = !list.hidden; $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden)); };
 $('#grid-view').onclick = () => { $('#list').classList.add('grid'); $('#grid-view').classList.add('selected'); $('#list-view').classList.remove('selected'); $('#grid-view').setAttribute('aria-pressed','true'); $('#list-view').setAttribute('aria-pressed','false'); renderProjects(); };
@@ -1327,12 +1305,13 @@ function renderToolPanel() {
   }
 }
 $('#tools').onclick = () => {
-  setEditorFocus(false);
-  if ($('.editor-pane').classList.contains('chat-expanded')) { $('.editor-pane').classList.remove('chat-expanded'); expandChat.textContent='Expand chat'; expandChat.setAttribute('aria-pressed','false'); }
-  showingTools = !showingTools; $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
-  if (showingTools && window.matchMedia('(max-width: 1200px)').matches) $('#workspace').classList.add('show-compact-preview');
-  if (!showingTools) { $('#workspace').classList.remove('tools-expanded'); expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel'); }
-  $('#tools').textContent = showingTools ? 'Close tools' : 'Tools ▾'; if (showingTools) renderToolPanel();
+  showingTools = !showingTools;
+  $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
+  $('#workspace').classList.remove('tools-expanded');
+  expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
+  $('#tools').textContent=showingTools?'Close tools':'Tools \u25be';
+  applyPaneLayout(false);
+  if(showingTools) renderToolPanel();
 };
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 expandTools.onclick = () => { const expanded = $('#workspace').classList.toggle('tools-expanded'); expandTools.textContent=expanded ? 'Collapse panel' : 'Expand panel'; expandTools.setAttribute('aria-label',expanded ? 'Collapse tools panel' : 'Expand tools panel'); };
@@ -1694,49 +1673,84 @@ const trailDivider = document.createElement('span'); trailDivider.textContent = 
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
 projectNameControl.title = 'Rename project'; projectTrail.append(libraryButton, trailDivider, projectNameControl);
 const viewControls = document.createElement('div'); viewControls.className = 'workspace-view-controls'; viewControls.setAttribute('role','group'); viewControls.setAttribute('aria-label','Workspace layout');
-compactPreview.textContent = 'Preview'; focusEditor.textContent = 'Focus editor';
-const layoutMenu=document.createElement('details');layoutMenu.className='layout-menu';
-const layoutSummary=document.createElement('summary');layoutSummary.textContent='Layout';
-const layoutPanel=document.createElement('div');layoutPanel.className='layout-panel';
-const viewLabel=document.createElement('label');viewLabel.textContent='Workspace view';
-const viewSelect=document.createElement('select');viewSelect.setAttribute('aria-label','Workspace view');
-for(const [value,label] of [['split','Editor & PDF'],['editor','Editor only'],['pdf','PDF only']]) {const option=document.createElement('option');option.value=value;option.textContent=label;viewSelect.append(option);}
-const contextualView=document.createElement('option');contextualView.value='context';contextualView.disabled=true;contextualView.hidden=true;viewSelect.append(contextualView);
-viewLabel.append(viewSelect);
-const agentLabel=document.createElement('label');agentLabel.className='agent-layout-option';
-const agentCheck=document.createElement('input');agentCheck.type='checkbox';agentCheck.checked=true;agentLabel.append(agentCheck,document.createTextNode('Show agent'));
-layoutPanel.append(viewLabel,agentLabel);layoutMenu.append(layoutSummary,layoutPanel);
-const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.hidden=true;
-focusEditor.hidden=true;compactPreview.hidden=true;
-viewControls.append(layoutMenu,oldAgent,workspaceShell.querySelector<HTMLButtonElement>('#tools')!);
-function syncLayout():void {
+type PaneName='agent'|'editor'|'preview';
+type PaneLayout=Record<PaneName,boolean>;
+const layoutStorageKey='refract.workspace-panes.v1';
+let paneLayout:PaneLayout={agent:true,editor:true,preview:true};
+try {
+  const saved:unknown=JSON.parse(localStorage.getItem(layoutStorageKey) || 'null');
+  if(saved && typeof saved==='object' && ['agent','editor','preview'].every(key=>typeof (saved as Record<string,unknown>)[key]==='boolean')) {
+    const value=saved as PaneLayout;paneLayout={agent:value.agent,editor:value.editor,preview:value.preview};
+  }
+} catch { /* Unavailable storage or invalid preferences use the default layout. */ }
+function visiblePaneLayout():PaneLayout {
   const narrow=window.matchMedia('(max-width:1200px)').matches;
-  viewSelect.options[0].disabled=narrow;
-  const expandedChat=$('.editor-pane').classList.contains('chat-expanded');
-  const context=showingTools || expandedChat;contextualView.hidden=!context;contextualView.textContent=showingTools?'Tools panel':'Expanded chat';
-  viewSelect.value=context?'context':workspace.classList.contains('show-compact-preview')?'pdf':workspace.classList.contains('editor-focus') || narrow?'editor':'split';
-  agentCheck.checked=!document.querySelector('.editor-pane')!.classList.contains('agent-hidden');
-  agentCheck.disabled=viewSelect.value==='pdf' || workspace.classList.contains('tools-expanded') || workspace.classList.contains('show-compact-preview');
-  layoutSummary.title=`${viewSelect.selectedOptions[0].textContent}; agent ${agentCheck.checked?'shown':'hidden'}`;
+  return {...paneLayout,preview:paneLayout.preview && !(narrow && (paneLayout.editor || paneLayout.agent))};
 }
-viewSelect.onchange=()=>{
-  const selectedView=viewSelect.value;
-  // Close Tools first so its own layout reset cannot override the chosen view.
-  if(showingTools) document.getElementById('tools')!.click();
-  $('.editor-pane').classList.remove('chat-expanded');expandChat.textContent='Expand chat';expandChat.setAttribute('aria-pressed','false');
-  if(selectedView==='pdf') compactPreview.click();else setEditorFocus(selectedView==='editor');
-  requestAnimationFrame(()=>{if(pdfFitMode==='page')fitPdfPage();else schedulePdfSharpen();});syncLayout();
-};
-agentCheck.onchange=()=>{oldAgent.click();syncLayout();};
-layoutMenu.addEventListener('toggle',()=>{if(layoutMenu.open)syncLayout();});
-document.addEventListener('pointerdown',event=>{if(!layoutMenu.contains(event.target as Node))layoutMenu.open=false;});
-layoutMenu.addEventListener('focusout',event=>{if(!layoutMenu.contains(event.relatedTarget as Node | null))layoutMenu.open=false;});
-layoutMenu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();layoutMenu.open=false;layoutSummary.focus();}});
-const layoutObserver=new MutationObserver(syncLayout);
-layoutObserver.observe(workspace,{attributes:true,attributeFilter:['class']});
-layoutObserver.observe(workspaceShell.querySelector('.editor-pane')!,{attributes:true,attributeFilter:['class']});
-window.addEventListener('resize',syncLayout);
-workspaceBar.append(projectTrail, viewControls); workspace.append(workspaceBar, workspaceShell);syncLayout();
+const paneButtons=new Map<PaneName,HTMLButtonElement>();
+const paneToggles=document.createElement('div');paneToggles.className='pane-toggles';paneToggles.setAttribute('role','group');paneToggles.setAttribute('aria-label','Visible panes');
+for(const [name,label,controls] of [['agent','Agent','chat'],['editor','Editor','editor-pane'],['preview','Preview','pdf-content']] as const) {
+  const button=document.createElement('button');button.type='button';button.id=`pane-${name}`;
+  button.className='pane-toggle';button.setAttribute('aria-label',label);button.setAttribute('aria-controls',name==='editor'?'editor-content':controls);
+  button.append(actionIcon(name));button.onclick=()=>togglePane(name);paneButtons.set(name,button);paneToggles.append(button);
+}
+workspaceShell.querySelector('.editor-wrap')!.id='editor-content';
+const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.remove();
+viewControls.append(paneToggles,workspaceShell.querySelector<HTMLButtonElement>('#tools')!);
+function closeLayoutTools():void {
+  showingTools=false;$('#tools-panel').hidden=true;$('#pdf-content').hidden=false;$('#tools').textContent='Tools \u25be';
+  $('#workspace').classList.remove('tools-expanded');
+  expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
+}
+function togglePane(name:PaneName):void {
+  const wasVisible=displayedPaneLayout()[name];
+  closeLayoutTools();
+  const next=visiblePaneLayout();next[name]=!wasVisible;
+  if(next[name] && window.matchMedia('(max-width:1200px)').matches) {
+    if(name==='preview') {next.agent=false;next.editor=false;} else next.preview=false;
+  }
+  if(!next.agent && !next.editor && !next.preview) next.editor=true;
+  paneLayout=next;applyPaneLayout();
+}
+function applyPaneLayout(persist=true):void {
+  if(!paneLayout.agent && !paneLayout.editor && !paneLayout.preview) paneLayout.editor=true;
+  const visible=visiblePaneLayout();
+  workspace.classList.add('pane-layout');
+  workspace.classList.remove('editor-focus','show-compact-preview');
+  workspace.classList.toggle('pane-left-hidden',!visible.agent && !visible.editor);
+  workspace.classList.toggle('pane-preview-hidden',!visible.preview && !showingTools);
+  workspace.classList.toggle('pane-editor-hidden',!visible.editor);
+  workspace.classList.toggle('pane-agent-hidden',!visible.agent);
+  workspace.classList.toggle('pane-tools',showingTools);
+  const editorPane=workspaceShell.querySelector('.editor-pane')!;
+  editorPane.classList.toggle('agent-hidden',!visible.agent);
+  editorPane.classList.toggle('chat-expanded',visible.agent && !visible.editor);
+  expandChat.textContent=visible.editor?'Expand chat':'Show editor';expandChat.setAttribute('aria-pressed',String(!visible.editor));
+  syncPaneButtons();
+  if(persist) {try {localStorage.setItem(layoutStorageKey,JSON.stringify(paneLayout));} catch { /* Layout remains usable without storage. */ }}
+  requestAnimationFrame(()=>{if(pdfFitMode==='page')fitPdfPage();else schedulePdfSharpen();});
+}
+function displayedPaneLayout():PaneLayout {
+  const visible=visiblePaneLayout();
+  if(showingTools) {
+    visible.preview=false;
+    if(workspace.classList.contains('tools-expanded') || window.matchMedia('(max-width:1200px)').matches) {visible.editor=false;visible.agent=false;}
+  }
+  return visible;
+}
+function syncPaneButtons():void {
+  const displayed=displayedPaneLayout();
+  for(const [name,button] of paneButtons) {
+    button.setAttribute('aria-pressed',String(displayed[name]));
+    const label=name==='agent'?'agent':name==='editor'?'editor':'preview';
+    button.title=displayed[name]?`Hide ${label}`:`Show ${label}`;
+    if(displayed[name] && Object.values(displayed).filter(Boolean).length===1) button.title+=' (restores editor)';
+  }
+}
+// Tool expansion is transient and must update the indicators without saving it.
+new MutationObserver(syncPaneButtons).observe(workspace,{attributes:true,attributeFilter:['class']});
+window.addEventListener('resize',()=>applyPaneLayout(false));
+workspaceBar.append(projectTrail, viewControls); workspace.append(workspaceBar, workspaceShell);applyPaneLayout(false);
 const fileSectionLabel = document.createElement('div'); fileSectionLabel.className = 'sidebar-label'; fileSectionLabel.textContent = 'Project'; document.getElementById('project-side')!.prepend(fileSectionLabel);
 // Normalize the remaining static and generated toolbar actions.
 for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#collapse','menu'],['#chat-image-close','close'],['[aria-label="Previous compiled PDF page"]','previous'],['[aria-label="Next compiled PDF page"]','next'],['[aria-label="Zoom out compiled PDF"]','minus'],['[aria-label="Zoom in compiled PDF"]','plus']] as const) {

@@ -2,7 +2,7 @@
 
 The goal is a polished Windows Electron alternative inspired by Prism, with similar core workflows where they make sense locally. Exact visual and feature parity is not required. Projects, editing, and compilation must work offline; the Codex CLI may use the internet. Follow the Windows light/dark theme and use Refract branding.
 
-Task IDs: **RF-001** through **RF-030** have been allocated. Next task ID: **RF-031**. Keep IDs stable when tasks move or change status; never reuse an allocated ID, including after a task is removed. Allocate each new ID from this counter and advance it. For parallel work, reserve IDs through a serialized update to the latest main branch before assigning them.
+Task IDs: **RF-001** through **RF-031** have been allocated. Next task ID: **RF-032**. Keep IDs stable when tasks move or change status; never reuse an allocated ID, including after a task is removed. Allocate each new ID from this counter and advance it. For parallel work, reserve IDs through a serialized update to the latest main branch before assigning them.
 
 ## Comparison and acceptance
 
@@ -39,6 +39,8 @@ Task IDs: **RF-001** through **RF-030** have been allocated. Next task ID: **RF-
 - [x] **RF-019** Verify version and comment data are durable across failures and that duplication/export behavior is clear and reliable. Local duplication independently copies comments and versions; ZIP exports contain project files only, as documented and tested. A failed history copy removes the incomplete duplicate, preserves the source data and permits a retry. Snapshot metadata is published atomically; failed metadata writes remove incomplete snapshots.
 
 ## Editor and assistant layout
+
+- [x] **RF-031** Replace the layout menu with persistent Agent, Editor and Preview icon toggles; restore the editor when hiding the last pane and switch preview versus editor/agent on narrow windows.
 
 - [x] **RF-026** Add a toggle to hide and restore the agent menu so the LaTeX editor can use the available space.
 
