@@ -44,9 +44,7 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  let app = await launchDesktop(env);
  t.after(async () => { if (app) await app.close().catch(() => {}); await fs.rm(data, {recursive:true,force:true, maxRetries:5, retryDelay:200}); });
  let page = await app.firstWindow();
- assert.equal(await page.locator('#home').innerText(), 'Refract');
- assert.equal(await page.locator('.app-titlebar').evaluate(el => getComputedStyle(el).backgroundColor), await page.locator('.sidebar').evaluate(el => getComputedStyle(el).backgroundColor));
- assert.ok(await page.locator('#home img').evaluate(el => (el as HTMLImageElement).naturalWidth > 0));
+ assert.equal(await page.locator('#project-navigation').isHidden(), true);
  assert.equal(await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isMenuBarVisible()), false);
  const errors=[]; page.on('pageerror', e => errors.push(e.message));
  await page.emulateMedia({colorScheme:'dark'});
@@ -56,6 +54,9 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.locator('#list-view').click();
  await page.locator('#new').click();
  await page.locator('#source').waitFor({state:'visible'});
+ assert.equal(await page.locator('#home').innerText(), 'Refract');
+ assert.equal(await page.locator('.app-titlebar').evaluate(el => getComputedStyle(el).backgroundColor), await page.locator('.sidebar').evaluate(el => getComputedStyle(el).backgroundColor));
+ assert.ok(await page.locator('#home img').evaluate(el => (el as HTMLImageElement).naturalWidth > 0));
  const projectDirs = (await fs.readdir(path.join(data,'projects'))).filter((name:string)=>/^[0-9a-f-]{36}$/.test(name));
  await fs.writeFile(path.join(data, 'projects', projectDirs[0], 'pixel.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJZkAAAAASUVORK5CYII=', 'base64'));
  await page.locator('#file-list button[title="pixel.png"]').waitFor({state:'visible'});
@@ -97,7 +98,6 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.locator('#source').press('Control+z');
  assert.equal(await page.locator('#source').inputValue(), source);
  await page.locator('#source').fill(source.replace('Introduction', 'Test Section'));
- await page.getByRole('button', {name:'Search files'}).click();
  await page.getByRole('textbox', {name:'Search project'}).fill('Test Section');
  await page.locator('#file-search-results button').first().click();
  assert.equal(await page.locator('#source').evaluate(el => (el as HTMLInputElement).value.slice(el.selectionStart, el.selectionEnd)), 'Test Section');
@@ -721,7 +721,7 @@ test('project search navigates to the original Unicode text offset', {timeout:60
  const env:NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const app=await launchDesktop(env);t.after(async()=>{await app.close().catch(()=>{});const resolved=await fs.realpath(data),parent=await fs.realpath(os.tmpdir());if(path.dirname(resolved).toLowerCase()!==parent.toLowerCase() || !path.basename(resolved).startsWith('refract-ui-search-unicode-'))throw new Error('Unsafe cleanup path');await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
  const page=await app.firstWindow();await page.locator('#list article').first().click();const source=page.locator('#source');await source.waitFor({state:'visible'});
- await page.getByRole('button',{name:'Search files'}).click();await page.getByRole('textbox',{name:'Search project'}).fill('a.b');await page.locator('#file-search-results button').first().click();
+ await page.getByRole('textbox',{name:'Search project'}).fill('a.b');await page.locator('#file-search-results button').first().click();
  await page.waitForFunction(()=>{const element=document.querySelector('#source') as HTMLTextAreaElement;return element.value.slice(element.selectionStart,element.selectionEnd)==='A.b';});
  assert.equal(await source.evaluate((element:HTMLTextAreaElement)=>element.value.slice(element.selectionStart,element.selectionEnd)),'A.b');
 });
