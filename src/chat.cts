@@ -45,8 +45,8 @@ class ChatService {
     if(chatId!=='default')await this.privateDir(id,'.refract-chats',create);
     return file;
   }
-  async regularFile(file:string,allowMissing=false):Promise<import('node:fs').Stats|null> {
-    try {const info=await fs.lstat(file);if(info.isSymbolicLink() || !info.isFile() || info.nlink>1)throw new Error('Only regular private project files can be used');return info;}
+  async regularFile(file:string,allowMissing=false):Promise<import('node:fs').BigIntStats|null> {
+    try {const info=await fs.lstat(file,{bigint:true});if(info.isSymbolicLink() || !info.isFile() || info.nlink>1)throw new Error('Only regular private project files can be used');return info;}
     catch(error) {if(error.code==='ENOENT' && allowMissing)return null;throw error;}
   }
   private async textAttachmentPreview(id:string,file:string,limit:number):Promise<{text:string;bytes:number;truncated:boolean}|null> {
@@ -54,16 +54,18 @@ class ChatService {
     if(!before)throw new Error('Attachment is unavailable');
     const handle:import('node:fs/promises').FileHandle=await fs.open(file,'r');
     try {
-      const info=await handle.stat();
-      if(!info.isFile() || info.nlink>1 || info.size>MAX_ATTACHMENT_BYTES || info.dev!==before.dev || info.ino!==before.ino)throw new Error('Attachment changed while opening');
+      const info=await handle.stat({bigint:true});
+      // Some Windows Node versions return a zero device ID for path-based stats.
+      const missingPathDevice=process.platform==='win32' && before.dev===0n;
+      if(!info.isFile() || info.nlink>1 || info.size>MAX_ATTACHMENT_BYTES || (!missingPathDevice && info.dev!==before.dev) || info.ino!==before.ino)throw new Error('Attachment changed while opening');
       await this.privateDir(id,'.refract-attachments');
       const buffer=Buffer.alloc(limit+1);let length=0;
       while(length<buffer.length) {
         const {bytesRead}=await handle.read(buffer,length,buffer.length-length,null);
         if(!bytesRead)break;length+=bytesRead;
       }
-      const after=await handle.stat(),current=await this.regularFile(file);
-      if(!current || current.dev!==info.dev || current.ino!==info.ino || after.size!==info.size || after.mtimeMs!==info.mtimeMs)throw new Error('Attachment changed while reading');
+      const after=await handle.stat({bigint:true}),current=await this.regularFile(file);
+      if(!current || current.dev!==before.dev || current.ino!==info.ino || after.size!==info.size || after.mtimeNs!==info.mtimeNs)throw new Error('Attachment changed while reading');
       const bytes=buffer.subarray(0,Math.min(length,limit)),truncated=info.size>bytes.length;
       if(bytes.includes(0))return null;
       try {return {text:new TextDecoder('utf-8',{fatal:true}).decode(bytes,{stream:truncated}),bytes:bytes.length,truncated};}
