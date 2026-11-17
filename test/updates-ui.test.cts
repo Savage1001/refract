@@ -12,6 +12,14 @@ test('settings gear appears only at home and offers persisted update tracks', {t
   await page.getByRole('button',{name:'Close',exact:true}).click();
   await page.getByRole('button',{name:'Settings',exact:true}).click();
   assert.equal(await page.getByLabel('Update track',{exact:true}).inputValue(),'beta');
+  await page.evaluate(()=>{(window as unknown as {fixture:{delay:number}}).fixture.delay=300;});
+  const check = page.getByRole('button',{name:'Check for updates',exact:true});
+  await check.click();
+  assert.equal(await check.isDisabled(),true);
+  assert.equal(await page.getByLabel('Update track',{exact:true}).isDisabled(),true);
+  await page.waitForFunction(()=>!(document.querySelector('#check-updates') as HTMLButtonElement).disabled);
+  assert.equal(await page.evaluate(()=>(window as unknown as {fixture:{counters:Record<string,number>}}).fixture.counters.updateCheck),1);
+  await page.getByText('You are up to date. Checking every 10 minutes.',{exact:true}).waitFor();
   await page.evaluate(()=>document.fonts.ready);
   await fs.mkdir('docs/updates',{recursive:true});
   await page.screenshot({path:'docs/updates/settings-menu.png'});

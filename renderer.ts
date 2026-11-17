@@ -1826,6 +1826,8 @@ updateResizeAccessibility();
 const settingsDialog = document.querySelector<HTMLDialogElement>('#settings-dialog')!;
 const updateTrack = document.querySelector<HTMLSelectElement>('#update-track')!;
 const updateStatus = document.querySelector<HTMLParagraphElement>('#update-status')!;
+const checkUpdates = document.querySelector<HTMLButtonElement>('#check-updates')!;
+let manualUpdateCheck = false;
 let settingsPoll: ReturnType<typeof setInterval> | undefined;
 function renderUpdateStatus(status: {track: 'stable' | 'beta'; message: string}): void {
   updateTrack.value = status.track; updateStatus.textContent = status.message;
@@ -1836,14 +1838,22 @@ async function refreshUpdateStatus(): Promise<void> {
 }
 $('#settings').onclick = () => {
   settingsDialog.showModal(); void refreshUpdateStatus();
-  settingsPoll = setInterval(() => { if (!updateTrack.disabled) void refreshUpdateStatus(); }, 2000);
+  settingsPoll = setInterval(() => { if (!updateTrack.disabled || manualUpdateCheck) void refreshUpdateStatus(); }, 2000);
 };
 $('#settings-close').onclick = () => settingsDialog.close();
 settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); $('#settings').focus(); });
 updateTrack.onchange = async () => {
-  updateTrack.disabled = true;
+  updateTrack.disabled = true; checkUpdates.disabled = true;
   updateStatus.textContent = 'Saving track and checking for updates...';
   try { renderUpdateStatus(await store.updateTrack(updateTrack.value)); }
   catch { await refreshUpdateStatus(); updateStatus.textContent = 'Could not save the update track. Please try again.'; }
-  finally { updateTrack.disabled = false; }
+  finally { updateTrack.disabled = false; checkUpdates.disabled = false; }
+};
+
+checkUpdates.onclick = async () => {
+  checkUpdates.disabled = true; updateTrack.disabled = true; manualUpdateCheck = true;
+  updateStatus.textContent = 'Checking for updates...';
+  try { renderUpdateStatus(await store.updateCheck()); }
+  catch { updateStatus.textContent = 'Could not check for updates. Please try again.'; }
+  finally { checkUpdates.disabled = false; updateTrack.disabled = false; manualUpdateCheck = false; }
 };

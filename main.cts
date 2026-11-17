@@ -65,6 +65,7 @@ app.whenReady().then(async () => {
   await updates.start();
   app.on('before-quit', () => updates.stop());
   ipcMain.handle('updates:status', () => updates.status());
+  ipcMain.handle('updates:check', async () => { await updates.check(); return updates.status(); });
   ipcMain.handle('updates:track', (_, track: unknown) => updates.setTrack(track));
   ipcMain.handle('providers:discover', () => require('./src/providers.cjs').discoverProviders());
   const store = new ProjectStore(path.join(app.getPath('userData'), 'projects'));

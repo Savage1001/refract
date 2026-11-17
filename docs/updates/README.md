@@ -2,7 +2,7 @@
 
 The installed Windows app checks Savage1001/refract releases at startup and every ten minutes. It downloads newer versions automatically, verifies the installer through electron-updater (including the metadata SHA-512 checksum), and installs silently on normal app exit after the existing save/compiler/assistant shutdown barrier. Development runs never download or install updates.
 
-The gear beside Import on the project home page opens Settings. Stable is the default and excludes prereleases. Beta selects the highest semantic version among stable releases and GitHub prereleases tagged `vX.Y.Z-beta.N`. Drafts, alpha/RC releases, and older/equal versions are ignored. Switching from a beta to stable waits for a newer stable release; it never downgrades. The preference is stored in the app data directory and survives restart. Failed checks or downloads retry on the next interval.
+The gear beside Import on the project home page opens Settings. Use **Check for updates** to run a check immediately on the selected track; repeated clicks are disabled while it checks or downloads. Stable is the default and excludes prereleases. Beta selects the highest semantic version among stable releases and GitHub prereleases tagged `vX.Y.Z-beta.N`. Drafts, alpha/RC releases, and older/equal versions are ignored. Switching from a beta to stable waits for a newer stable release; it never downgrades. The preference is stored in the app data directory and survives restart. Failed checks or downloads retry on the next interval.
 
 ## Publishing compatible releases
 

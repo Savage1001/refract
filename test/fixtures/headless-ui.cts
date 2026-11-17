@@ -35,6 +35,7 @@ function installFixture(data:{pdf:string; source:string}):void {
  };
  let updateTrack: 'stable' | 'beta' = 'stable';
  w.store = {
+  updateCheck:async()=>{await pause('updateCheck');return {track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
   updateStatus:async()=>({track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'}),
   updateTrack:async(track:'stable' | 'beta')=>{updateTrack=track;return {track,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
   projectTrust:async()=>true, requestProjectTrust:async()=>false,revokeProjectTrust:async()=>{},
