@@ -12,7 +12,7 @@ Release downloads use the public repository without a bundled credential. A priv
 
 ## Evidence
 
-`home-settings-icon.png` shows the home-only gear; `settings-menu.png` shows Beta selected. `update-available.png` shows a newer version downloading; `update-ready.png` shows the downloaded update and the **Restart to update** button. These use the real renderer with simulated update status and isolated sample data in headless Chromium (example version v0.3.1, not a published release). The restart button appears only when a downloaded update is ready; Settings Close and normal app exits never apply updates. Tests cover semantic release ordering, saved preferences, retries, failed downloads, metadata mismatch, switching tracks while a download is in flight, and home-only settings visibility. A full live installed-app upgrade still requires a newer published release with updater metadata.
+`home-settings-icon.png` shows the home-only gear; `settings-menu.png` shows Beta selected. `update-available.png` shows the Beta track downloading an update at 64%; `update-ready.png` shows the downloaded update and the **Restart to update** button. These use the real renderer with simulated update status and isolated sample data in headless Chromium. The restart button appears only when a downloaded update is ready; Settings Close and normal app exits never apply updates. Tests cover semantic release ordering, saved preferences, retries, failed downloads, metadata mismatch, switching tracks while a download is in flight, and home-only settings visibility. A full live installed-app upgrade still requires a newer published release with updater metadata.
 
 ## Reliability audit
 

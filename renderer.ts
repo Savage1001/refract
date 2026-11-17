@@ -1884,28 +1884,44 @@ updateResizeAccessibility();
 const settingsDialog = document.querySelector<HTMLDialogElement>('#settings-dialog')!;
 const updateTrack = document.querySelector<HTMLSelectElement>('#update-track')!;
 const updateStatus = document.querySelector<HTMLParagraphElement>('#update-status')!;
+const updateDownload = document.querySelector<HTMLDivElement>('#update-download')!;
+const updateProgress = document.querySelector<HTMLProgressElement>('#update-progress')!;
+const updatePercent = document.querySelector<HTMLSpanElement>('#update-percent')!;
 const checkUpdates = document.querySelector<HTMLButtonElement>('#check-updates')!;
 const restartUpdate = document.querySelector<HTMLButtonElement>('#restart-update')!;
 let restartingUpdate = false;
-let manualUpdateCheck = false;
 let settingsPoll: ReturnType<typeof setInterval> | undefined;
-function renderUpdateStatus(status: {track: 'stable' | 'beta'; phase: string; message: string}): void {
+function renderUpdateStatus(status: import('./src/updates.cjs').UpdateStatus): void {
+  updateDownload.hidden = status.phase !== 'downloading';
+  const percent = status.downloadPercent;
+  updatePercent.hidden = percent === undefined;
+  if (percent === undefined) {
+    updateProgress.removeAttribute('value');
+  } else {
+    updateProgress.value = percent;
+    updatePercent.textContent = `${percent}%`;
+  }
   restartUpdate.hidden = status.phase !== 'ready' && status.phase !== 'restarting';
   restartUpdate.disabled = restartingUpdate || status.phase !== 'ready' || updateTrack.disabled;
-  updateTrack.value = status.track; updateStatus.textContent = status.message;
+  updateTrack.value = status.track;
+  if (updateStatus.textContent !== status.message) updateStatus.textContent = status.message;
 }
 async function refreshUpdateStatus(): Promise<void> {
   try { renderUpdateStatus(await store.updateStatus()); }
-  catch { updateStatus.textContent = 'Could not read update status. Close settings and try again.'; }
+  catch {
+    updateDownload.hidden = true;
+    updateStatus.textContent = 'Could not read update status. Close settings and try again.';
+  }
 }
 $('#settings').onclick = () => {
   settingsDialog.showModal(); void refreshUpdateStatus();
-  settingsPoll = setInterval(() => { if (!updateTrack.disabled || manualUpdateCheck) void refreshUpdateStatus(); }, 2000);
+  settingsPoll = setInterval(() => { if (!restartingUpdate) void refreshUpdateStatus(); }, 2000);
 };
 $('#settings-close').onclick = () => settingsDialog.close();
 settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); $('#settings').focus(); });
 updateTrack.onchange = async () => {
   restartUpdate.hidden = true;
+  updateDownload.hidden = true;
   updateTrack.disabled = true; checkUpdates.disabled = true;
   updateStatus.textContent = 'Saving track and checking for updates...';
   try { renderUpdateStatus(await store.updateTrack(updateTrack.value)); }
@@ -1915,11 +1931,11 @@ updateTrack.onchange = async () => {
 
 checkUpdates.onclick = async () => {
   restartUpdate.disabled = true;
-  checkUpdates.disabled = true; updateTrack.disabled = true; manualUpdateCheck = true;
+  checkUpdates.disabled = true; updateTrack.disabled = true;
   updateStatus.textContent = 'Checking for updates...';
   try { renderUpdateStatus(await store.updateCheck()); }
   catch { updateStatus.textContent = 'Could not check for updates. Please try again.'; }
-  finally { checkUpdates.disabled = false; updateTrack.disabled = false; manualUpdateCheck = false; await refreshUpdateStatus(); }
+  finally { checkUpdates.disabled = false; updateTrack.disabled = false; await refreshUpdateStatus(); }
 };
 
 restartUpdate.onclick = async () => {

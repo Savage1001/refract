@@ -5,7 +5,7 @@ import diagnosticsModule = require('./update-diagnostics.cjs');
 const { UpdateDiagnostics } = diagnosticsModule;
 
 export type UpdateTrack = 'stable' | 'beta';
-export interface UpdateStatus { track: UpdateTrack; phase: 'idle' | 'checking' | 'downloading' | 'ready' | 'restarting' | 'error' | 'disabled'; message: string }
+export interface UpdateStatus { track: UpdateTrack; phase: 'idle' | 'checking' | 'downloading' | 'ready' | 'restarting' | 'error' | 'disabled'; message: string; downloadPercent?: number }
 interface Release { tag_name: string; draft: boolean; prerelease: boolean; assets: { name: string }[] }
 const CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const repository = 'Savage1001/refract';
@@ -43,6 +43,7 @@ export interface UpdateClient {
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
   on(event: 'error', listener: (error: Error) => void): unknown;
+  on(event: 'download-progress', listener: (progress: {percent: number}) => void): unknown;
 }
 function createUpdateClient(release: Release): UpdateClient {
   const channel = semver.prerelease(release.tag_name) ? 'beta' : 'latest';
@@ -100,7 +101,10 @@ class UpdateService {
       this.track = value; this.generation++;
       if (this.prepared) this.prepared.autoInstallOnAppQuit = false;
       this.prepared = undefined;
-      if (this.running) await this.running;
+      if (this.running) {
+        this.state = {track: value, phase: 'checking', message: 'Waiting for the previous update check to finish...'};
+        await this.running;
+      }
       await this.check();
       return this.status();
     });
@@ -141,7 +145,12 @@ class UpdateService {
       const result = await updater.checkForUpdates();
       if (!result || !semver.eq(result.updateInfo.version, release.tag_name)) throw new Error('Release metadata does not match the selected version.');
       if (generation !== this.generation) return;
-      this.state = {track, phase: 'downloading', message: `Downloading ${release.tag_name}...`};
+      const download: UpdateStatus = {track, phase: 'downloading', message: `Downloading ${release.tag_name}...`};
+      this.state = download;
+      updater.on('download-progress', ({percent}) => {
+        if (generation !== this.generation || this.state !== download || !Number.isFinite(percent)) return;
+        download.downloadPercent = Math.max(0, Math.min(100, Math.floor(percent)));
+      });
       await updater.downloadUpdate();
       if (generation !== this.generation) return;
       if (this.prepared) this.prepared.autoInstallOnAppQuit = false;
