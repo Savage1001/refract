@@ -6,11 +6,9 @@
 
 Refract is a Windows Electron workspace for local LaTeX writing, inspired by OpenAI Prism. Projects, editing, compilation, and displayed chat history are local. The assistant uses an installed Codex or OpenCode CLI, which may require network access and authentication.
 
-## Project trust
+## Local execution
 
-Review imported or existing projects before selecting **Review project trust** and **Trust project**. Until then, source editing is available but compilation and assistants are blocked. Cancel leaves the project untrusted. New projects made from Refract's built-in template start trusted; duplicates and ZIP imports require their own approval. Trust persists locally and covers subsequent edits, uploads, and restored versions. Use **Revoke project trust** before adding unfamiliar content.
-
-TeX and assistants run with your Windows account's access, including files outside the project. `-no-shell-escape` is not a filesystem sandbox. See [Security](SECURITY.md#project-trust-and-local-execution) for the trust boundary and limitations.
+Projects can compile and use assistants immediately, including imported and duplicated projects. Review unfamiliar content before opening it: TeX and assistants run with your Windows account's access, including files outside the project. `-no-shell-escape` is not a filesystem sandbox. See [Security](SECURITY.md#local-execution) for the execution boundary and limitations.
 
 ## Current status
 

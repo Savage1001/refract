@@ -1,5 +1,4 @@
 const { UpdateService } = require('./src/updates.cjs');
-import projectTrust = require('./src/project-trust.cjs');
 const { texBin } = require('./src/tex-toolchain.cjs');
 const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
 const fs = require('node:fs/promises');
@@ -95,7 +94,7 @@ app.whenReady().then(async () => {
   const openCodePreferences = new CodexPreferencesStore(path.join(app.getPath('userData'), 'opencode-preferences.json'), true);
   ipcMain.handle('opencode-preferences:load', () => openCodePreferences.load());
   ipcMain.handle('opencode-preferences:save', (_, value: unknown) => openCodePreferences.save(value));
-  ipcMain.handle('opencode:discover-models', async (_, projectId?: string) => { if (projectId) await projectTrust.assertTrusted(store.projectDir(projectId)); return require('./src/opencode.cjs').discoverOpenCodeModels(undefined, projectId ? store.projectDir(projectId) : undefined); });
+  ipcMain.handle('opencode:discover-models', async (_, projectId?: string) => { return require('./src/opencode.cjs').discoverOpenCodeModels(undefined, projectId ? store.projectDir(projectId) : undefined); });
   ipcMain.handle('codex-preferences:load', () => codexPreferences.load());
   ipcMain.handle('codex-preferences:save', (_, value: unknown) => codexPreferences.save(value));
   const versions = new Versions(store);
@@ -180,18 +179,6 @@ app.whenReady().then(async () => {
     catch { return { ok: false, error: 'Codex model discovery failed' }; }
   });
   ipcMain.handle('projects:list', () => store.list());
-  ipcMain.handle('projects:trust-status', (_,id:string) => projectTrust.isTrusted(store.projectDir(id)));
-  ipcMain.handle('projects:trust-request', async (event,id:string) => {
-    assertAssistantIdle(id);await writes;await waitForCompilation(id);assertAssistantIdle(id);
-    return projectTrust.requestTrust(store.projectDir(id),async message => {
-      const result=await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {type:'warning',title:'Trust this project?',message:'Allow compilation and assistant execution?',detail:message,buttons:['Cancel','Trust project'],defaultId:0,cancelId:0,noLink:true});
-      return result.response===1;
-    });
-  });
-  ipcMain.handle('projects:trust-revoke', async (_,id:string) => {
-    assertAssistantIdle(id);await writes;await waitForCompilation(id);assertAssistantIdle(id);
-    await projectTrust.revokeTrust(store.projectDir(id));
-  });
   ipcMain.handle('projects:create', (_, name) => store.create(name));
   ipcMain.handle('projects:trash', (_, id) => {
     assertAssistantIdle(id);
@@ -408,7 +395,6 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('chat:send', async (event, id, prompt, chatId, attachments, provider = 'codex') => {
-    await projectTrust.assertTrusted(store.projectDir(id));
     if(!acceptingAssistantOperations) throw new Error('Application is shutting down');
     if(deletingProjects.has(id)) throw new Error('Project deletion is in progress');
     clearTimeout(snapshotTimers.get(id));snapshotTimers.delete(id);
@@ -434,7 +420,6 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('chat:cancel', (_,id)=>assistant.cancel(id));
   ipcMain.handle('projects:preview', async (_, id: string) => {
-    if(!await projectTrust.isTrusted(store.projectDir(id)))return null;
     try { return (await fs.readFile(path.join(store.projectDir(id), '.refract-build', 'main.pdf'))).toString('base64'); } catch { return null; }
   });
   ipcMain.handle('compile', async (_, id, force=false) => {
@@ -457,13 +442,11 @@ app.whenReady().then(async () => {
   const syncExecutable=()=>path.join(texBin(),'synctex.exe');
   ipcMain.handle('synctex:forward',async (_,id,file,line)=>{
     await writes;if(compilations.has(id))throw new Error('Compilation is in progress');
-    await projectTrust.assertTrusted(store.projectDir(id));
     const project=await store.destinationDir(id);await store.existingFile(id,file);
     return synctex.forward(syncExecutable(),project,file,line);
   });
   ipcMain.handle('synctex:reverse',async (_,id,page,x,y)=>{
     await writes;if(compilations.has(id))throw new Error('Compilation is in progress');
-    await projectTrust.assertTrusted(store.projectDir(id));
     const project=await store.destinationDir(id),result=await synctex.reverse(syncExecutable(),project,page,x,y);
     await store.existingFile(id,result.file);return result;
   });

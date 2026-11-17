@@ -165,7 +165,7 @@ test('headless typography loads bundled Inter and uses the stable T3 code stack'
 });
 
 
-test('headless sidebar action geometry, trust disclosure and explicit workspace layouts', {timeout:60000}, async()=>{
+test('headless sidebar action geometry and explicit workspace layouts', {timeout:60000}, async()=>{
  const {browser,page,errors}=await fixture.openHeadlessUi('dark');
  try {
   const branding=await page.locator('.brand').evaluate(el=>{const logo=el.querySelector('img')!.getBoundingClientRect(),toggle=el.querySelector('#collapse')!.getBoundingClientRect();return [logo.left,logo.top,Math.abs(logo.top+logo.height/2-toggle.top-toggle.height/2)];});assert.deepEqual(branding,[18,18,0]);
@@ -178,14 +178,12 @@ test('headless sidebar action geometry, trust disclosure and explicit workspace 
   const gaps=await folder.evaluate(el=>{const [arrow,icon,name]=Array.from(el.children).map(child=>child.getBoundingClientRect());return [icon.left-arrow.right,name.left-icon.right,Math.abs((arrow.top+arrow.height/2)-(icon.top+icon.height/2))];});assert.deepEqual(gaps,[8,8,0]);
   await folder.click();assert.equal(await folder.evaluate(el=>(el.parentElement as HTMLDetailsElement).open),false);await folder.press('Enter');assert.equal(await folder.evaluate(el=>(el.parentElement as HTMLDetailsElement).open),true);
   assert.equal(await page.locator('#outline-toggle svg path').getAttribute('d'),await folder.locator('.folder-chevron path').getAttribute('d'));
+  assert.equal(await page.locator('#project-trust').count(),0);
   const actions=page.locator('.sidebar-actions>button');assert.equal(await actions.count(),4);
   const boxes=await actions.evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {y:r.y,width:r.width,height:r.height};}));
   assert.ok(boxes.every(box=>box.y===boxes[0].y && box.width===32 && box.height===32));
   assert.equal(await page.getByRole('button',{name:'Deleted files',exact:true}).getAttribute('title'),'Deleted files');
   assert.equal(await page.getByRole('button',{name:'Duplicate project',exact:true}).locator('svg').count(),1);
-  assert.equal(await page.locator('#project-trust').evaluate(el=>(el as HTMLDetailsElement).open),false);
-  await page.locator('#project-trust>summary').click();assert.equal(await page.getByRole('button',{name:'Revoke project trust'}).isVisible(),true);
-  await page.locator('#project-trust>summary').click();
   await page.locator('#file-search-toggle').click();await page.locator('#file-search-input').press('Escape');assert.equal(await page.locator('#file-search-toggle').evaluate(el=>el===document.activeElement),true);
   await page.locator('#pane-preview').click();assert.equal(await page.locator('.pdf-pane').isVisible(),false);
   await page.locator('#pane-agent').click();assert.equal(await page.locator('#chat').isVisible(),false);

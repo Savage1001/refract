@@ -11,7 +11,6 @@ const {ProjectStore} = require('../src/project-store.cjs');
 test('a build cancelled before it starts preserves previous outputs', async t => {
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'refract-cancelled-build-'));
  t.after(()=>fs.rm(root,{recursive:true,force:true}));
- await require('../src/project-trust.cjs').grantTrust(root);
  const output=path.join(root,'.refract-build');await fs.mkdir(output);
  await fs.writeFile(path.join(output,'main.pdf'),'previous PDF');
  await fs.writeFile(path.join(output,'main.synctex.gz'),'previous SyncTeX');

@@ -39,7 +39,6 @@ function installFixture(data:{pdf:string; source:string}):void {
   updateCheck:async()=>{await pause('updateCheck');return {track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
   updateStatus:async()=>({track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'}),
   updateTrack:async(track:'stable' | 'beta')=>{updateTrack=track;return {track,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
-  projectTrust:async()=>true, requestProjectTrust:async()=>false,revokeProjectTrust:async()=>{},
   list:async()=>structuredClone(projects), projectPreview:async()=>null,
   create:async(name:string)=>{await pause('create');const value={...projects[0],id:`project-${projects.length}`,name};projects.push(value);return value;},
   rename:async(id:string,name:string)=>{await pause('rename');project(id).name=name;return project(id);},
@@ -82,7 +81,6 @@ async function fixtureDocument():Promise<{pdf:string;source:string}> {
   try {
    await fs.writeFile(path.join(directory,'main.tex'),source);
    const {compile}:{compile(directory:string):Promise<{ok:boolean;pdf?:string;log:string}>}=require('../../src/compiler.cjs');
-   await require('../../src/project-trust.cjs').grantTrust(directory);
    const result=await compile(directory);if(!result.ok || !result.pdf)throw new Error(result.log);
    return {pdf:result.pdf,source};
   } finally {await fs.rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:200});}

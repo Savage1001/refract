@@ -107,7 +107,7 @@ test('a failed extraction removes its partial project without affecting existing
  await assert.rejects(importProject(store,archive,'Bad'));
  assert.deepEqual((await store.list()).map(project=>project.id),[existing.id]);
  assert.match(await store.read(existing.id,'main.tex'),/documentclass/);
- assert.deepEqual((await fs.readdir(store.root)).sort(),['.refract-local-trust',existing.id]);
+ assert.deepEqual((await fs.readdir(store.root)).sort(),[existing.id]);
 });
 
 test('imports and compiles a project with a non-default root filename', async t => {
@@ -118,7 +118,6 @@ test('imports and compiles a project with a non-default root filename', async t 
  assert.equal(project.rootFile,'paper.tex'); assert.equal((await store.metadata(project.id)).rootFile,'paper.tex');
  const exe = path.join(process.env.REFRACT_TEX_BIN || 'missing-tex','pdflatex.exe');
  try { await fs.access(exe); } catch { return t.skip('External TeX is not configured'); }
- await require('../src/project-trust.cjs').grantTrust(store.projectDir(project.id));
  const {compile} = require('../src/compiler.cjs'); const result = await compile(store.projectDir(project.id),{rootFile:project.rootFile});
  assert.equal(result.ok,true,result.log); assert.equal(Buffer.from(result.pdf,'base64').subarray(0,5).toString(),'%PDF-');
 });
