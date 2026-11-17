@@ -601,7 +601,7 @@ main {
 
 .project-header-actions {
   display:flex;
-  gap:8px;
+  gap:6px;
   flex:none;
 }
 
