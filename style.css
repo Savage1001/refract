@@ -3,7 +3,7 @@
 /* Standard T3 Code desktop palette, stable v0.1.9. See docs/ui-theme.md. */
 :root {
   --action-gap:6px;
-  --window-controls-height:28px;
+  --window-controls-height:36px;
   --font-sans:-apple-system,BlinkMacSystemFont,"Inter Variable","Segoe UI",system-ui,sans-serif;
   --font-mono:"SF Mono","SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
   color-scheme:light;
@@ -1038,10 +1038,6 @@ main {
 
 .project-trail>span {
   color:var(--muted);
-}
-
-.project-trail>button {
-  font-size:12px;
 }
 
 .project-trail #project-name {

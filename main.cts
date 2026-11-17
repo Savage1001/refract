@@ -511,8 +511,9 @@ app.whenReady().then(async () => {
     },()=>{let files=failedSaves.get(id);if(!files){files=new Set();failedSaves.set(id,files);}files.add(name);});
     return operation;
   });
-  const window = new BrowserWindow({ titleBarStyle: 'hidden', titleBarOverlay: { color: nativeTheme.shouldUseDarkColors ? '#000000' : '#fafafa', symbolColor: nativeTheme.shouldUseDarkColors ? '#f1f3f7' : '#27272a', height: 28 }, icon: path.join(__dirname, 'logo.png'), show: !process.env.REFRACT_TEST_HIDDEN, width: 1440, height: 900, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, plugins: true } });
-  nativeTheme.on('updated', () => { if (!window.isDestroyed()) window.setTitleBarOverlay({ color: nativeTheme.shouldUseDarkColors ? '#000000' : '#fafafa', symbolColor: nativeTheme.shouldUseDarkColors ? '#f1f3f7' : '#27272a' }); });
+  const titleBarHeight = 36;
+  const window = new BrowserWindow({ titleBarStyle: 'hidden', titleBarOverlay: { color: nativeTheme.shouldUseDarkColors ? '#000000' : '#fafafa', symbolColor: nativeTheme.shouldUseDarkColors ? '#f1f3f7' : '#27272a', height: titleBarHeight }, icon: path.join(__dirname, 'logo.png'), show: !process.env.REFRACT_TEST_HIDDEN, width: 1440, height: 900, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, plugins: true } });
+  nativeTheme.on('updated', () => { if (!window.isDestroyed()) window.setTitleBarOverlay({ color: nativeTheme.shouldUseDarkColors ? '#000000' : '#fafafa', symbolColor: nativeTheme.shouldUseDarkColors ? '#f1f3f7' : '#27272a', height: titleBarHeight }); });
   window.removeMenu();
   window.webContents.on('before-input-event', (event: Electron.Event, input: Electron.Input) => {
     if (input.type !== 'keyDown' || !input.control || input.alt || input.meta) return;
