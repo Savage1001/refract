@@ -3,7 +3,7 @@
 /* Standard T3 Code desktop palette, stable v0.1.9. See docs/ui-theme.md. */
 :root {
   --action-gap:6px;
-  --window-controls-height:28px;
+  --window-controls-height:42px;
   --font-sans:-apple-system,BlinkMacSystemFont,"Inter Variable","Segoe UI",system-ui,sans-serif;
   --font-mono:"SF Mono","SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
   color-scheme:light;
@@ -1019,7 +1019,7 @@ main {
   height:env(titlebar-area-height, var(--window-controls-height));
   gap:8px;
   padding:0 12px;
-  padding-left:clamp(12px, calc(var(--titlebar-sidebar-width, 0px) - env(titlebar-area-x, 0px)), calc(env(titlebar-area-width, 100%) - 150px));
+  padding-left:clamp(12px, calc(var(--titlebar-sidebar-width, 0px) + 12px - env(titlebar-area-x, 0px)), calc(env(titlebar-area-width, 100%) - 150px));
 }
 
 .workspace-topbar button {
@@ -1037,11 +1037,8 @@ main {
   color:var(--muted);
 }
 
-.project-trail>button {
-  font-size:12px;
-}
-
 .project-trail #project-name {
+  font-size:16px;
   width:auto;
   min-width:0;
   margin:0;
