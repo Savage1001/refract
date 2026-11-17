@@ -585,9 +585,41 @@ main {
   flex-wrap:wrap;
 }
 
-#search {
-  width:260px;
+.project-search {
+  position:relative;
+  width:280px;
+  max-width:100%;
   margin-right:auto;
+}
+
+.project-search svg {
+  position:absolute;
+  top:50%;
+  left:10px;
+  transform:translateY(-50%);
+  color:var(--muted);
+  pointer-events:none;
+}
+
+#search {
+  display:block;
+  width:100%;
+  height:36px;
+  padding:0 10px 0 36px;
+  background:transparent;
+  border:1px solid transparent;
+  border-radius:8px;
+  font-weight:500;
+}
+
+#search:hover,
+#search:focus {
+  background:var(--hover);
+}
+
+#search:focus {
+  outline:1px solid var(--accent);
+  outline-offset:-1px;
 }
 
 .project-controls label {
@@ -2747,7 +2779,7 @@ dialog .dialog-actions {
     gap:8px;
   }
 
-  #search {
+  .project-search {
     width:100%;
   }
 
