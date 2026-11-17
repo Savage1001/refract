@@ -168,10 +168,12 @@ test('headless typography loads bundled Inter and uses the stable T3 code stack'
 test('headless sidebar action geometry and explicit workspace layouts', {timeout:60000}, async()=>{
  const {browser,page,errors}=await fixture.openHeadlessUi('dark');
  try {
+  assert.equal(await page.locator('#project-navigation').isHidden(),true);
+  assert.equal(await page.locator('#projects').evaluate(el => el.clientWidth),1440);
+  await openProject(page);
   const branding=await page.locator('.brand').evaluate(el=>{const logo=el.querySelector('img')!.getBoundingClientRect(),toggle=el.querySelector('#collapse')!.getBoundingClientRect();return [logo.left,logo.top,Math.abs(logo.top+logo.height/2-toggle.top-toggle.height/2)];});assert.deepEqual(branding,[18,18,0]);
   await page.locator('#collapse').click();assert.equal(await page.locator('#home').isVisible(),false);await page.locator('#collapse').click();
   await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.setProperty('--sidebar-width','150px'));assert.deepEqual(await page.locator('.brand-home img').evaluate(el=>{const r=el.getBoundingClientRect();return [r.width,r.height];}),[28,28]);await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.removeProperty('--sidebar-width'));
-  await openProject(page);
   const header=await page.locator('.project-trail').evaluate(el=>{const children=Array.from(el.children).map(child=>child.getBoundingClientRect()).filter(r=>r.height>0);const logo=document.querySelector('.brand-home img')!.getBoundingClientRect();return {centers:children.map(r=>r.top+r.height/2),top:document.querySelector('.workspace-topbar')!.getBoundingClientRect().top,logoCenter:logo.top+logo.height/2};});assert.ok(header.centers.every(y=>Math.abs(y-header.centers[0])<0.5),JSON.stringify(header));assert.equal(header.top,28);assert.ok(header.centers[0]>header.logoCenter);
   assert.equal(await page.locator('#home').evaluate(el=>getComputedStyle(el).getPropertyValue('-webkit-app-region')),'no-drag');
   const folder=page.locator('#file-list summary').first();
@@ -198,4 +200,36 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);assert.equal(await page.locator('.pdf-pane').isVisible(),false);
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
+});
+
+test('headless icon controls share idle and hover colors in both themes', {timeout:60000}, async()=>{
+ for (const theme of ['light','dark'] as const) {
+  const {browser,page}=await fixture.openHeadlessUi(theme,{pdf:'',source:'% Icon appearance sample'});
+  try {
+   const colors=await page.locator('html').evaluate(el=>{
+    const style=getComputedStyle(el);
+    return ['--sidebar-muted','--text','--hover'].map(property=>style.getPropertyValue(property).trim());
+   });
+   const [idle,hover,box]=colors.map(hex=>`rgb(${hex.slice(1).match(/../g)!.map(pair=>parseInt(pair,16)).join(', ')})`);
+   async function check(selector:string, glyph='svg'):Promise<void> {
+    const button=page.locator(selector);
+    const icon=glyph ? button.locator(glyph) : button;
+    await page.mouse.move(0,0);
+    assert.equal(await icon.evaluate(el=>getComputedStyle(el).color),idle,selector);
+    await button.hover();
+    assert.equal(await icon.evaluate(el=>getComputedStyle(el).color),hover,selector);
+    assert.equal(await button.evaluate(el=>getComputedStyle(el).backgroundColor),box,selector);
+   }
+   await check('#settings');
+   await check('#deleted-projects');
+   await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+   await page.locator('#source').waitFor({state:'visible'});
+   for (const selector of ['#duplicate','#pane-editor','#attach','#send']) await check(selector);
+   await page.locator('#file-search-toggle').click();
+   await check('#file-search-toggle');
+   await page.keyboard.press('Escape');
+   await page.locator('#chats-tab').click();
+   await check('.chat-rename','');
+  } finally {await browser.close();}
+ }
 });

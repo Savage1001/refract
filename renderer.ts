@@ -1,7 +1,7 @@
 // All action glyphs use the same view box, stroke and fixed geometry.
-type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview' | 'download' | 'export';
+type ActionIcon = 'search' | 'plus' | 'close' | 'menu' | 'chevron' | 'previous' | 'next' | 'minus' | 'trash' | 'copy' | 'agent' | 'editor' | 'preview' | 'download' | 'export' | 'wrench';
 function actionIcon(name:ActionIcon):SVGSVGElement {
-  const paths:Record<ActionIcon,string> = {download:'M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4',export:'M14 3h7v7m0-7L10 14M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5',agent:'M15 14H7l-4 3V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2Z M10 14v2a2 2 0 0 0 2 2h5l4 3v-8a2 2 0 0 0-2-2h-2',editor:'m7 8-4 4 4 4m10-8 4 4-4 4M14 5l-4 14',preview:'M14 2H5v20h14V7Z M14 2v5h5M8 11h8M8 15h8M8 18h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
+  const paths:Record<ActionIcon,string> = {wrench:'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-7 7a2.1 2.1 0 0 1-3-3l7-7a6 6 0 0 1 7.9-7.9z',download:'M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4',export:'M14 3h7v7m0-7L10 14M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5',agent:'M15 14H7l-4 3V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2Z M10 14v2a2 2 0 0 0 2 2h5l4 3v-8a2 2 0 0 0-2-2h-2',editor:'m7 8-4 4 4 4m10-8 4 4-4 4M14 5l-4 14',preview:'M14 2H5v20h14V7Z M14 2v5h5M8 11h8M8 15h8M8 18h5',search:'M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',plus:'M12 5v14M5 12h14',close:'M6 6l12 12M18 6 6 18',menu:'M4 6h16M4 12h16M4 18h16',chevron:'m6 9 6 6 6-6',previous:'m15 6-6 6 6 6',next:'m9 6 6 6-6 6',minus:'M5 12h14',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',copy:'M9 9h12v12H9zM5 15H3V3h12v2'};
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false',class:'ui-icon'})) svg.setAttribute(key,value);
   const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;
@@ -117,7 +117,7 @@ function renderProjects() {
   $('#list').replaceChildren(...matches.map(p => {
     const row = document.createElement('article'), name = document.createElement('button'), date = document.createElement('span'), remove=document.createElement('button');
     const projectLabel = document.createElement('span'); projectLabel.className='project-label'; projectLabel.textContent=p.name;
-    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project â†’'; openHint.setAttribute('aria-hidden','true');
+    const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project →'; openHint.setAttribute('aria-hidden','true');
     name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!remove.disabled) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
     remove.textContent='Delete';remove.className='project-delete';remove.setAttribute('aria-label',`Delete ${p.name}`);
     remove.onclick=async event=>{event.stopPropagation();if(!confirm(`Move ${p.name} to Deleted projects?`))return;remove.disabled=true;try{await store.trashProject(p.id);projects=await store.list();renderProjects();}catch(error){report('delete project',error);remove.disabled=false;}};
@@ -237,7 +237,7 @@ function clearFilePreview() {
 }
 async function showProjectPdf(encoded: string, request: number, id: string, name: string) {
   const panel = $('#file-preview'), loading = document.createElement('p');
-  loading.textContent = 'Loading PDFâ€¦'; panel.replaceChildren(loading); panel.hidden = false;
+  loading.textContent = 'Loading PDF…'; panel.replaceChildren(loading); panel.hidden = false;
   try {
     const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
     const pdfModulePath: string = '../node_modules/pdfjs-dist/build/pdf.mjs';
@@ -259,7 +259,7 @@ async function showProjectPdf(encoded: string, request: number, id: string, name
     const renderPage = async number => {
       const generation = ++previewGeneration;
       previous.disabled = true; next.disabled = true; count.textContent = `Page ${number} of ${doc.numPages}`;
-      pageArea.textContent = `Loading page ${number}â€¦`;
+      pageArea.textContent = `Loading page ${number}…`;
       try {
         const page = await doc.getPage(number), natural = page.getViewport({scale:1});
         if (!Number.isFinite(natural.width) || !Number.isFinite(natural.height) || natural.width <= 0 || natural.height <= 0) throw new Error('Invalid PDF page size');
@@ -318,9 +318,9 @@ async function openProject(p) {
   ++opening;
   ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = true; $('#file-search-toggle').setAttribute('aria-pressed','false'); $('#file-search-input').value = ''; const clearSearch = document.querySelector<HTMLButtonElement>('.clear-file-search'); if (clearSearch) clearSearch.hidden = true; $('#file-search-results').replaceChildren();
   attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p; restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false;
-  compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; $('#tools').textContent = 'Tools \u25be'; $('#compile').textContent = 'Compile';
+  compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; toolsButton.setAttribute('aria-expanded', 'false'); $('#compile').textContent = 'Compile';
   pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
-  $('#home-side').hidden = true; $('#project-side').hidden = false; $('#project-name').textContent = p.name;
+  $('#project-navigation').hidden = false; $('#project-name').textContent = p.name;
   showRestoreNotice(false);
   try {
     const retained=await store.versionRetainedStages(p.id);if(request!==projectOpening)return;showRestoreNotice(retained>0);
@@ -336,14 +336,53 @@ async function createProject() {
   try { const p = await store.create('New Project'); projects = await store.list(); renderProjects(); await openProject(p); }
   catch (error) { report('create project', error); }
 }
+function* outlineSections(source:string): Generator<{title:string; index:number}> {
+  const heading = /\\(?:sub)*section\*?\{/g;
+  for (let match = heading.exec(source); match; match = heading.exec(source)) {
+    const start = heading.lastIndex;
+    const braces = /\\[\s\S]|[{}]/g;
+    braces.lastIndex = start;
+    let depth = 1;
+    for (let token = braces.exec(source); token; token = braces.exec(source)) {
+      if (token[0] === '{') depth++;
+      if (token[0] === '}') depth--;
+      if (depth === 0) {
+        heading.lastIndex = braces.lastIndex;
+        if (token.index > start) yield {title:source.slice(start, token.index), index:match.index};
+        break;
+      }
+    }
+  }
+}
+function renderOutlineTitle(button:HTMLButtonElement, title:string): void {
+  const equations = [...title.matchAll(/\\\(((?:\\(?!\))[^\n]|[^\\\n])+?)\\\)|\\.|\$\$|\$((?:\\.|[^\\$\n])+)\$/g)]
+    .filter(match => match[1] !== undefined || match[2] !== undefined);
+  if (!equations.length) return;
+  void mathFormatting.then(({renderMath, sanitize}) => {
+    if (!button.isConnected) return;
+    const label = document.createDocumentFragment();
+    let offset = 0;
+    for (const match of equations) {
+      label.append(title.slice(offset, match.index));
+      const math = document.createElement('span');
+      math.innerHTML = sanitize(renderMath(match[1] ?? match[2], false), ['annotation']);
+      label.append(math);
+      offset = match.index + match[0].length;
+    }
+    label.append(title.slice(offset));
+    button.replaceChildren(label);
+  }).catch(error => console.error('Outline math formatting unavailable', error));
+}
 function updateEditor() {
   const source = $('#source').value;
   highlightLatex(source);
   updateActiveLine();
   $('#numbers').textContent = Array.from({length: source.split('\n').length}, (_, i) => i + 1).join('\n');
-  const sections = [...source.matchAll(/\\(?:sub)*section\*?\{([^}]+)\}/g)];
+  const sections = [...outlineSections(source)];
   $('#outline-list').replaceChildren(...sections.map(match => {
-    const button = document.createElement('button'); button.textContent = match[1];
+    const button = document.createElement('button');
+    button.textContent = match.title;
+    renderOutlineTitle(button, match.title);
     button.onclick = () => {
       const editor = $('#source') as HTMLTextAreaElement;
       const line = source.slice(0, match.index).split('\n').length;
@@ -364,7 +403,7 @@ function updateEditor() {
   }));
 }
 $('#new').onclick = createProject; $('#start').onclick = createProject;
-$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; $('#project-side').hidden = true; $('#home-side').hidden = false; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
+$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
 const pendingSaves = new Map<string, Map<string, Promise<Error | null>>>();
 $('#source').oninput = () => {
   const id = active.id, name = currentFile, content = $('#source').value;
@@ -412,7 +451,7 @@ let pdfDocument:PdfDocument | null = null, pdfRenderRevision=0;
 let lastPdfSync:{page:number;x:number;y:number}|null=null;
 let pdfSharpTimer: ReturnType<typeof setTimeout> | null = null;
 const pdfControls=document.createElement('div');pdfControls.className='pdf-controls';
-pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">â€¹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">â€º</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">âˆ’</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
+pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">›</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
 $('#zoom-fit').textContent='Fit width'; $('#zoom-fit').setAttribute('aria-label','Fit PDF to width');
 $('#download').replaceChildren(actionIcon('download')); $('#download').setAttribute('aria-label','Download PDF');
 $('#export-project').replaceChildren(actionIcon('export')); $('#export-project').setAttribute('aria-label','Export project');
@@ -625,7 +664,7 @@ async function compilePreview(force=false) {
   if (compileRunning) { compileQueued = true; return; }
   compileRunning = true;
   const id = active.id, version = revision;
-  $('#compile').disabled = true; $('#compile').textContent = 'Compilingâ€¦';
+  $('#compile').disabled = true; $('#compile').textContent = 'Compiling…';
   try {
     const saveResults = await Promise.all([...(pendingSaves.get(id)?.values() || [])]);
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
@@ -686,11 +725,15 @@ async function compilePreview(force=false) {
 }
 $('#compile').onclick = () => { scheduleCompile(); clearTimeout(compileTimer); compilePreview(true); };
 $('#download').onclick = () => { if (active && compiledProject === active.id && compiledPdf) store.savePdf(compiledPdf).catch(error => report('save PDF', error)); };
+const purifierPath: string='../node_modules/dompurify/dist/purify.es.mjs';
+const katexPath: string='../node_modules/katex/dist/katex.mjs';
+const mathFormatting = Promise.all([import(purifierPath), import(katexPath)]).then(([{default:purify}, {default:katex}]) => ({
+  renderMath: (text:string, displayMode:boolean):string => katex.renderToString(text,{displayMode,output:'mathml',throwOnError:false,trust:false}),
+  sanitize: (html:string, dropContents:string[] = []):string => purify.sanitize(html,{ADD_FORBID_CONTENTS:dropContents,USE_PROFILES:{html:true,mathMl:true},FORBID_TAGS:['img','style','iframe'],FORBID_ATTR:['src','style']})
+}));
 const assistantFormatter: Promise<(text:string)=>string> = (async () => {
   const markedPath: string='../node_modules/marked/lib/marked.esm.js';
-  const purifierPath: string='../node_modules/dompurify/dist/purify.es.mjs';
-  const katexPath: string='../node_modules/katex/dist/katex.mjs';
-  const [{Marked}, {default:purify}, {default:katex}] = await Promise.all([import(markedPath),import(purifierPath),import(katexPath)]);
+  const [{Marked}, {renderMath, sanitize}] = await Promise.all([import(markedPath), mathFormatting]);
   const math = (display:boolean) => ({
     name:display ? 'displayMath' : 'inlineMath', level:display ? 'block' : 'inline',
     start(source:string) { return source.search(display ? /\$\$|\\\[/ : /\$|\\\(/); },
@@ -698,10 +741,10 @@ const assistantFormatter: Promise<(text:string)=>string> = (async () => {
       const match=display ? /^(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])(?:\n|$)/.exec(source) : /^(?:\$(?![\s$])((?:\\.|[^$\\\n])+?)(?<!\s)\$|\\\(([^\n]+?)\\\))/.exec(source);
       if(match) return {type:display ? 'displayMath' : 'inlineMath',raw:match[0],text:match[1] ?? match[2]};
     },
-    renderer(token:{text:string}) { return katex.renderToString(token.text,{displayMode:display,output:'mathml',throwOnError:false,trust:false}); }
+    renderer(token:{text:string}) { return renderMath(token.text, display); }
   });
   const parser=new Marked({extensions:[math(true),math(false)]});
-  return (text:string) => purify.sanitize(parser.parse(text),{USE_PROFILES:{html:true,mathMl:true},FORBID_TAGS:['img','style','iframe'],FORBID_ATTR:['src','style']});
+  return (text:string) => sanitize(parser.parse(text));
 })();
 function renderChat(chat) {
   if (active?.id) window.dispatchEvent(new CustomEvent('picker-project', {detail:active.id}));
@@ -767,7 +810,7 @@ async function sendChat() {
   const id = active.id, chatId = currentChat, prompt = $('#chat-input').value, images = attachments, provider = ($('#chat-provider') as HTMLSelectElement).value;
   $('#chat-provider').disabled = true; $('#chat-provider').dispatchEvent(new Event('providerstate'));
   attachments = []; renderAttachments();
-  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparingâ€¦'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
+  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
   saveChatDraft();
   const pending = document.createElement('div'); pending.className = 'message user'; pending.textContent = prompt;
   if ($('#chat-messages .dismiss-welcome')) $('#chat-messages').replaceChildren(pending); else $('#chat-messages').append(pending);
@@ -827,7 +870,7 @@ $('#send').before(cancelChatButton);
 function updateCancelButton() {cancelChatButton.hidden=!active || !chatBusy.has(active.id);cancelChatButton.disabled=false;cancelChatButton.setAttribute('aria-label','Stop');$('#send').hidden=!cancelChatButton.hidden;}
 cancelChatButton.onclick=async()=>{
   if(!active || !chatBusy.has(active.id)) return;
-  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stoppingâ€¦');
+  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stopping…');
   try {await store.chatCancel(id);} catch(error) {if(active?.id===id){report('stop assistant',error);updateCancelButton();}}
 };
 $('#send').onclick = sendChat;
@@ -904,7 +947,7 @@ async function refreshChats() {
       finally {if(active?.id===id && request===chatOpening){chatLoading=false;updateSendState();}}
     };
     const row = document.createElement('div'); row.className = 'chat-row';
-    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = 'âœŽ'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
+    const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = '✎'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
     rename.onclick = () => {
       const input = document.createElement('input'); input.value = chat.title; input.maxLength = 100; input.setAttribute('aria-label', 'Chat name');
       row.replaceChildren(input); input.focus(); input.select();
@@ -947,7 +990,7 @@ function highlightLatex(text) {
 // path so saving, comment anchors, compilation and undo remain consistent.
 const findPanel = document.createElement('div');
 findPanel.className = 'editor-find'; findPanel.hidden = true;
-findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">â†‘</button><button type="button" aria-label="Next match">â†“</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">Ã—</button>';
+findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">↑</button><button type="button" aria-label="Next match">↓</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">×</button>';
 const wrapLabel=document.createElement('label');wrapLabel.innerHTML='<input type="checkbox" aria-label="Wrap search" checked> Wrap';
 findPanel.insertBefore(wrapLabel,findPanel.querySelector('[aria-label="Previous match"]'));
 $('.editor-wrap').before(findPanel);
@@ -1016,7 +1059,7 @@ function findPositions(): number[] {
 }
 function updateFindStatus() {
   const positions=findPositions(), index=positions.findIndex(position=>position===sourceEditor.selectionStart && sourceEditor.selectionEnd===position+findInput.value.length);
-  findStatus.textContent=positions.length ? `${index<0 ? 'â€“' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
+  findStatus.textContent=positions.length ? `${index<0 ? '–' : index+1} / ${positions.length}` : findInput.value ? 'No matches' : 'Type to search';
 }
 function findNext(backward=false) {
   const positions=findPositions();
@@ -1250,7 +1293,7 @@ function renderToolPanel() {
     const log = document.createElement('pre'); log.className = 'tool-log';
     let errors = 0, warnings = 0; const diagnostics: { text: string; kind: 'error' | 'warning' }[] = [];
     for (const line of compileLog.split('\n')) { const item = document.createElement('span'); item.className = /^!|(?:^|:)\s*error\b/i.test(line) ? 'log-error' : /\bwarning\b/i.test(line) ? 'log-warning' : ''; if(item.className === 'log-error') errors++; if(item.className === 'log-warning') warnings++; if(item.className && diagnostics.length < 20) diagnostics.push({ text: line, kind: item.className === 'log-error' ? 'error' : 'warning' }); item.textContent = line + '\n'; log.append(item); }
-    const summary = document.createElement('p'); summary.className = 'log-summary'; summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} Â· ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
+    const summary = document.createElement('p'); summary.className = 'log-summary'; summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} · ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
     const wrap = document.createElement('button'); wrap.className = 'secondary log-wrap'; wrap.textContent = 'Disable line wrap'; wrap.setAttribute('aria-pressed','true');
     wrap.onclick = () => { const enabled = wrap.getAttribute('aria-pressed') === 'true'; wrap.setAttribute('aria-pressed',String(!enabled)); wrap.textContent = enabled ? 'Enable line wrap' : 'Disable line wrap'; log.classList.toggle('unwrapped', enabled); };
     const diagnosticList = document.createElement('div'); diagnosticList.className = 'log-diagnostics';
@@ -1303,12 +1346,14 @@ function renderToolPanel() {
     engineLabel.className = 'engine-setting'; const engineHint = document.createElement('small'); engineHint.id='engine-hint'; engineHint.textContent='Choose the compiler used to build this project.'; engine.setAttribute('aria-describedby',engineHint.id); engineLabel.append(engine,engineHint); body.append(title, facts, engineLabel, draftLabel);
   }
 }
-$('#tools').onclick = () => {
+const toolsButton = document.querySelector<HTMLButtonElement>('#tools')!;
+toolsButton.append(actionIcon('wrench'));
+toolsButton.onclick = () => {
   showingTools = !showingTools;
   $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
   $('#workspace').classList.remove('tools-expanded');
   expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
-  $('#tools').textContent=showingTools?'Close tools':'Tools \u25be';
+  toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
 };
@@ -1340,7 +1385,7 @@ async function renderVersions() {
     const body = document.getElementById('tool-body')!, heading = document.createElement('div'); body.classList.remove('has-open-comparison'); heading.className = 'tool-heading'; heading.textContent = 'Versions'; body.replaceChildren(heading);
     for (const [index, version] of versions.entries()) {
       const row = document.createElement('div'); row.className = 'version-row';
-      const label = document.createElement('span'); label.textContent = `v${versions.length - index} \u00b7 ${new Date(version.created).toLocaleString()} Â· ${version.files.length} ${version.files.length === 1 ? 'file' : 'files'}`;
+      const label = document.createElement('span'); label.textContent = `v${versions.length - index} \u00b7 ${new Date(version.created).toLocaleString()} · ${version.files.length} ${version.files.length === 1 ? 'file' : 'files'}`;
       const restore = document.createElement('button'); restore.textContent = 'Restore file';
       restore.disabled = !version.files.includes(currentFile) || chatBusy.has(id) || !!restoringProject;
       restore.onclick = async () => {
@@ -1378,7 +1423,7 @@ async function renderVersions() {
         row.classList.toggle('comparison-selected', compare.open); body.classList.toggle('has-open-comparison', compare.open);
         if (!compare.open) return;
         if (window.matchMedia('(min-width: 1201px)').matches) { $('#workspace').classList.add('tools-expanded'); expandTools.textContent='Collapse panel'; expandTools.setAttribute('aria-label','Collapse tools panel'); }
-        changes.textContent = 'Loading changesâ€¦';
+        changes.textContent = 'Loading changes…';
         try {
           const differences = await store.versionCompare(id,version.id);
           if (active?.id !== id || !compare.open) return;
@@ -1581,7 +1626,7 @@ async function renderTrash(id) {
   for(const item of items) {
     const row=document.createElement('div'), label=document.createElement('span'), button=document.createElement('button');
     row.className='trash-row'; label.textContent=item.kind==='folder' ? `${item.name}/` : item.name; button.textContent='Restore';
-    const description = document.createElement('div'), kind = document.createElement('small'); description.className='trash-description'; const deleted = Date.parse(item.deleted); kind.textContent=`${item.kind==='folder' ? 'Folder' : 'File'}${Number.isFinite(deleted) ? ` Â· Deleted ${new Date(deleted).toLocaleString()}` : ''}`; description.append(label,kind);
+    const description = document.createElement('div'), kind = document.createElement('small'); description.className='trash-description'; const deleted = Date.parse(item.deleted); kind.textContent=`${item.kind==='folder' ? 'Folder' : 'File'}${Number.isFinite(deleted) ? ` · Deleted ${new Date(deleted).toLocaleString()}` : ''}`; description.append(label,kind);
     button.onclick=async()=>{button.disabled=true;try {const name=await store.restoreTrash(id,item.id);if(active?.id===id){await refreshFiles();revision++;scheduleCompile();await renderTrash(id);if(item.kind!=='folder') await openFile(name);else if(!currentFile && (active.rootFile || 'main.tex').toLowerCase().startsWith(name.toLowerCase()+'/')) await openFile(active.rootFile);}}catch(error){report('restore file',error);button.disabled=false;}};
     row.append(description,button);list.append(row);
   }
@@ -1669,7 +1714,8 @@ const workspaceBar = document.createElement('header'); workspaceBar.className = 
 const projectTrail = document.createElement('div'); projectTrail.className = 'project-trail';
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
 projectNameControl.title = 'Rename project'; projectTrail.append(projectNameControl);
-const viewControls = document.createElement('div'); viewControls.className = 'workspace-view-controls'; viewControls.setAttribute('role','group'); viewControls.setAttribute('aria-label','Workspace layout');
+const workspaceActions = document.createElement('div');
+workspaceActions.className = 'workspace-actions';
 type PaneName='agent'|'editor'|'preview';
 type PaneLayout=Record<PaneName,boolean>;
 const layoutStorageKey='refract.workspace-panes.v1';
@@ -1693,9 +1739,9 @@ for(const [name,label,controls] of [['agent','Agent','chat'],['editor','Editor',
 }
 workspaceShell.querySelector('.editor-wrap')!.id='editor-content';
 const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.remove();
-viewControls.append(paneToggles,workspaceShell.querySelector<HTMLButtonElement>('#tools')!);
+workspaceActions.append(paneToggles, toolsButton);
 function closeLayoutTools():void {
-  showingTools=false;$('#tools-panel').hidden=true;$('#pdf-content').hidden=false;$('#tools').textContent='Tools \u25be';
+  showingTools=false;$('#tools-panel').hidden=true;$('#pdf-content').hidden=false;toolsButton.setAttribute('aria-expanded', 'false');
   $('#workspace').classList.remove('tools-expanded');
   expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
 }
@@ -1747,7 +1793,7 @@ function syncPaneButtons():void {
 // Tool expansion is transient and must update the indicators without saving it.
 new MutationObserver(syncPaneButtons).observe(workspace,{attributes:true,attributeFilter:['class']});
 window.addEventListener('resize',()=>applyPaneLayout(false));
-workspaceBar.append(projectTrail, viewControls); workspace.append(workspaceBar, workspaceShell);applyPaneLayout(false);
+workspaceBar.append(projectTrail, workspaceActions); workspace.append(workspaceBar, workspaceShell);applyPaneLayout(false);
 const fileSectionLabel = document.createElement('div'); fileSectionLabel.className = 'sidebar-label'; fileSectionLabel.textContent = 'Project'; document.getElementById('project-side')!.prepend(fileSectionLabel);
 // Normalize the remaining static and generated toolbar actions.
 for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#collapse','menu'],['#chat-image-close','close'],['[aria-label="Previous compiled PDF page"]','previous'],['[aria-label="Next compiled PDF page"]','next'],['[aria-label="Zoom out compiled PDF"]','minus'],['[aria-label="Zoom in compiled PDF"]','plus']] as const) {
