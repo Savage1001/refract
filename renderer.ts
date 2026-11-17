@@ -1827,9 +1827,13 @@ const settingsDialog = document.querySelector<HTMLDialogElement>('#settings-dial
 const updateTrack = document.querySelector<HTMLSelectElement>('#update-track')!;
 const updateStatus = document.querySelector<HTMLParagraphElement>('#update-status')!;
 const checkUpdates = document.querySelector<HTMLButtonElement>('#check-updates')!;
+const restartUpdate = document.querySelector<HTMLButtonElement>('#restart-update')!;
+let restartingUpdate = false;
 let manualUpdateCheck = false;
 let settingsPoll: ReturnType<typeof setInterval> | undefined;
-function renderUpdateStatus(status: {track: 'stable' | 'beta'; message: string}): void {
+function renderUpdateStatus(status: {track: 'stable' | 'beta'; phase: string; message: string}): void {
+  restartUpdate.hidden = status.phase !== 'ready' && status.phase !== 'restarting';
+  restartUpdate.disabled = restartingUpdate || status.phase !== 'ready' || updateTrack.disabled;
   updateTrack.value = status.track; updateStatus.textContent = status.message;
 }
 async function refreshUpdateStatus(): Promise<void> {
@@ -1843,17 +1847,32 @@ $('#settings').onclick = () => {
 $('#settings-close').onclick = () => settingsDialog.close();
 settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); $('#settings').focus(); });
 updateTrack.onchange = async () => {
+  restartUpdate.hidden = true;
   updateTrack.disabled = true; checkUpdates.disabled = true;
   updateStatus.textContent = 'Saving track and checking for updates...';
   try { renderUpdateStatus(await store.updateTrack(updateTrack.value)); }
   catch { await refreshUpdateStatus(); updateStatus.textContent = 'Could not save the update track. Please try again.'; }
-  finally { updateTrack.disabled = false; checkUpdates.disabled = false; }
+  finally { updateTrack.disabled = false; checkUpdates.disabled = false; await refreshUpdateStatus(); }
 };
 
 checkUpdates.onclick = async () => {
+  restartUpdate.disabled = true;
   checkUpdates.disabled = true; updateTrack.disabled = true; manualUpdateCheck = true;
   updateStatus.textContent = 'Checking for updates...';
   try { renderUpdateStatus(await store.updateCheck()); }
   catch { updateStatus.textContent = 'Could not check for updates. Please try again.'; }
-  finally { checkUpdates.disabled = false; updateTrack.disabled = false; manualUpdateCheck = false; }
+  finally { checkUpdates.disabled = false; updateTrack.disabled = false; manualUpdateCheck = false; await refreshUpdateStatus(); }
+};
+
+restartUpdate.onclick = async () => {
+  if (restartingUpdate) return;
+  restartingUpdate = true;
+  restartUpdate.disabled = true; checkUpdates.disabled = true; updateTrack.disabled = true;
+  updateStatus.textContent = 'Saving your work and restarting to update...';
+  try { await store.updateRestart(); }
+  catch {
+    restartingUpdate = false; checkUpdates.disabled = false; updateTrack.disabled = false;
+    await refreshUpdateStatus();
+    updateStatus.textContent = 'Could not restart to update. Please try again.';
+  }
 };

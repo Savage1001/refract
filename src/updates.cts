@@ -3,7 +3,7 @@ import path = require('node:path');
 import semver = require('semver');
 
 export type UpdateTrack = 'stable' | 'beta';
-export interface UpdateStatus { track: UpdateTrack; phase: 'idle' | 'checking' | 'downloading' | 'ready' | 'error' | 'disabled'; message: string }
+export interface UpdateStatus { track: UpdateTrack; phase: 'idle' | 'checking' | 'downloading' | 'ready' | 'restarting' | 'error' | 'disabled'; message: string }
 interface Release { tag_name: string; draft: boolean; prerelease: boolean; assets: { name: string }[] }
 const CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const repository = 'Savage1001/refract';
@@ -37,7 +37,7 @@ export interface UpdateClient {
   autoDownload: boolean; autoInstallOnAppQuit: boolean; allowPrerelease: boolean; allowDowngrade: boolean;
   checkForUpdates(): Promise<{updateInfo: {version: string}} | null>;
   downloadUpdate(): Promise<unknown>;
-  armInstallOnQuit(): void;
+  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
   on(event: 'error', listener: (error: Error) => void): unknown;
 }
 function createUpdateClient(release: Release): UpdateClient {
@@ -45,10 +45,9 @@ function createUpdateClient(release: Release): UpdateClient {
   const suffix = process.arch === 'arm64' ? '-arm64' : '';
   if (!release.assets.some(a => a.name === `${channel}${suffix}.yml`)) throw new Error(`Release ${release.tag_name} is missing update metadata. Will retry in 10 minutes.`);
   const { NsisUpdater }: typeof import('electron-updater') = require('electron-updater');
-  class RefractUpdater extends NsisUpdater {
-    armInstallOnQuit(): void { this.autoInstallOnAppQuit = true; this.addQuitHandler(); }
-  }
-  return new RefractUpdater({ provider: 'generic', url: `https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag_name)}/`, channel });
+  const updater = new NsisUpdater({ provider: 'generic', url: `https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag_name)}/`, channel });
+  updater.autoInstallOnAppQuit = false;
+  return updater;
 }
 
 class UpdateService {
@@ -59,6 +58,7 @@ class UpdateService {
   private generation = 0;
   private prepared?: UpdateClient;
   private preparedVersion?: string;
+  private restarting = false;
   private saving: Promise<unknown> = Promise.resolve();
   constructor(private file: string, private version: string, private enabled: boolean,
     private releases = githubReleases, private client = createUpdateClient) {}
@@ -71,6 +71,7 @@ class UpdateService {
     void this.check();
   }
   async setTrack(value: unknown): Promise<UpdateStatus> {
+    if (this.restarting) throw new Error('An update restart is already in progress');
     if (value !== 'stable' && value !== 'beta') throw new Error('Invalid update track');
     const save = this.saving.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), {recursive: true});
@@ -86,7 +87,7 @@ class UpdateService {
     this.saving = save; return save;
   }
   check(): Promise<void> {
-    if (!this.enabled) return Promise.resolve();
+    if (!this.enabled || this.restarting) return Promise.resolve();
     if (this.running) return this.running;
     this.running = this.runCheck().finally(() => { this.running = undefined; }); return this.running;
   }
@@ -104,7 +105,7 @@ class UpdateService {
         this.prepared = undefined;
         this.state = {track, phase: 'idle', message: 'You are up to date. Checking every 10 minutes.'}; return; }
       if (this.prepared && this.preparedVersion === release.tag_name) {
-        this.state = {track, phase: 'ready', message: `${release.tag_name} is ready. It will install when you close Refract.`}; return;
+        this.state = {track, phase: 'ready', message: `${release.tag_name} is ready. Click Restart to update to install it.`}; return;
       }
       // A new download can replace the shared updater cache. Disarm the old installer first.
       if (this.prepared) this.prepared.autoInstallOnAppQuit = false;
@@ -112,7 +113,7 @@ class UpdateService {
       updater = this.client(release);
       updater.autoDownload = false; updater.autoInstallOnAppQuit = false;
       updater.allowPrerelease = track === 'beta'; updater.allowDowngrade = false;
-      updater.on('error', () => {}); // Rejections below provide the user-visible error and retry.
+      updater.on('error', error => console.error('Update error:', error.message)); // Check/download rejections also update Settings.
       const result = await updater.checkForUpdates();
       if (!result || !semver.eq(result.updateInfo.version, release.tag_name)) throw new Error('Release metadata does not match the selected version.');
       if (generation !== this.generation) return;
@@ -120,12 +121,22 @@ class UpdateService {
       await updater.downloadUpdate();
       if (generation !== this.generation) return;
       if (this.prepared) this.prepared.autoInstallOnAppQuit = false;
-      updater.armInstallOnQuit(); this.prepared = updater; this.preparedVersion = release.tag_name;
-      this.state = {track, phase: 'ready', message: `${release.tag_name} is ready. It will install when you close Refract.`};
+      this.prepared = updater; this.preparedVersion = release.tag_name;
+      this.state = {track, phase: 'ready', message: `${release.tag_name} is ready. Click Restart to update to install it.`};
     } catch (error) {
       if (updater) updater.autoInstallOnAppQuit = false;
       if (generation === this.generation) this.state = {track, phase: 'error', message: `${(error as Error).message} Updates will retry in 10 minutes.`};
     }
+  }
+  prepareRestart(): () => void {
+    if (this.restarting || !this.prepared || this.state.phase !== 'ready' || this.running) throw new Error('No downloaded update is ready to install');
+    const updater = this.prepared;
+    this.restarting = true;
+    this.stop();
+    this.state = {track: this.track, phase: 'restarting', message: 'Saving your work and restarting to update...'};
+    let installed = false;
+    // The main process calls this only after its save/compiler/assistant shutdown barrier.
+    return () => { if (!installed) { installed = true; updater.quitAndInstall(true, true); } };
   }
   stop(): void { if (this.timer) clearInterval(this.timer); this.generation++; }
 }

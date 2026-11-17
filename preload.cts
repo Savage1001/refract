@@ -5,6 +5,7 @@ ipcRenderer.on('app:prepare-shutdown', () => {
   ipcRenderer.send('app:shutdown-ready');
 });
 contextBridge.exposeInMainWorld('store', {
+  updateRestart: (): Promise<void> => ipcRenderer.invoke('updates:restart'),
   updateCheck: (): Promise<import('./src/updates.cjs').UpdateStatus> => ipcRenderer.invoke('updates:check'),
   updateStatus: (): Promise<import('./src/updates.cjs').UpdateStatus> => ipcRenderer.invoke('updates:status'),
   updateTrack: (track: import('./src/updates.cjs').UpdateTrack): Promise<import('./src/updates.cjs').UpdateStatus> => ipcRenderer.invoke('updates:track', track),

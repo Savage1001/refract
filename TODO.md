@@ -59,4 +59,4 @@ v0.1.11 is published with all recent merges and its Windows installer. The relea
 
 - [x] **RF-028** Polish action icons and sidebar tools, consolidate workspace layouts, move trust details out of the breadcrumb, and address whole-app visual and keyboard review findings. Before/after evidence and independent review results are recorded in docs/ui-polish/README.md.
 
-- [x] **RF-030** Check GitHub releases every 10 minutes, download and install updates on app exit, and provide a persisted Stable/Beta track setting and manual Check for updates button only on the project home menu.
+- [x] **RF-030** Check GitHub releases every 10 minutes, download updates automatically and install only through Restart to update in Settings, and provide a persisted Stable/Beta track setting and manual Check for updates button only on the project home menu.

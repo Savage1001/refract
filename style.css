@@ -2839,3 +2839,5 @@ dialog .dialog-actions {
 #settings-dialog label { display:block; margin-bottom:8px; font-weight:500; }
 #update-track { width:100%; }
 .settings-description, #update-status { font-size:13px; line-height:1.6; color:var(--muted); }
+
+#settings-dialog .dialog-actions { flex-wrap:wrap; }

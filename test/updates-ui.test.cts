@@ -43,13 +43,20 @@ test('capture available and ready-to-apply update settings', {timeout:30000}, as
   await page.getByText('Downloading v0.3.1...',{exact:true}).waitFor();
   await page.evaluate(()=>document.fonts.ready);
   await fs.mkdir('docs/updates',{recursive:true});
+  assert.equal(await page.getByRole('button',{name:'Restart to update',exact:true}).isVisible(),false);
   await page.screenshot({path:'docs/updates/update-available.png'});
   await page.evaluate(()=>{
    const w=window as unknown as {store:Record<string,unknown>};
-   w.store.updateStatus=async()=>({track:'stable',phase:'ready',message:'v0.3.1 is ready. It will install when you close Refract.'});
+   w.store.updateStatus=async()=>({track:'stable',phase:'ready',message:'v0.3.1 is ready. Click Restart to update to install it.'});
   });
-  await page.getByText('v0.3.1 is ready. It will install when you close Refract.',{exact:true}).waitFor();
+  await page.getByText('v0.3.1 is ready. Click Restart to update to install it.',{exact:true}).waitFor();
+  const restart = page.getByRole('button',{name:'Restart to update',exact:true});
+  assert.equal(await restart.isEnabled(),true);
   await page.screenshot({path:'docs/updates/update-ready.png'});
+  await restart.click();
+  assert.equal(await restart.isDisabled(),true);
+  await page.waitForFunction(()=>(window as unknown as {fixture:{counters:Record<string,number>}}).fixture.counters.updateRestart===1);
+  await page.getByText('Saving your work and restarting to update...',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Check for updates',exact:true}).isVisible(),true);
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
