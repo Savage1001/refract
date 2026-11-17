@@ -661,8 +661,74 @@ main {
   color:var(--muted);
 }
 
+#project-sort,
+#project-sort::picker(select) {
+  appearance:base-select;
+}
+
 #project-sort {
+  align-items:center;
+  gap:8px;
   font-size:12px;
+  cursor:pointer;
+}
+
+#project-sort:hover,
+#project-sort:open {
+  background:var(--hover);
+}
+
+#project-sort::picker-icon {
+  content:"";
+  width:6px;
+  height:6px;
+  margin:0 2px 3px 0;
+  border-right:1px solid var(--muted);
+  border-bottom:1px solid var(--muted);
+  rotate:45deg;
+}
+
+#project-sort:open::picker-icon {
+  margin-block:3px 0;
+  rotate:225deg;
+}
+
+#project-sort::picker(select) {
+  margin-block:4px;
+  padding:4px;
+  background:var(--surface);
+  color:var(--text);
+  border:1px solid var(--input);
+  border-radius:8px;
+  box-shadow:0 8px 24px var(--shadow);
+}
+
+#project-sort option {
+  position:relative;
+  min-height:30px;
+  padding:5px 30px 5px 8px;
+  border-radius:5px;
+  cursor:pointer;
+}
+
+#project-sort option:checked {
+  background:var(--selected);
+}
+
+#project-sort option:hover,
+#project-sort option:focus-visible {
+  background:color-mix(in srgb, var(--hover), var(--text) 8%);
+}
+
+#project-sort option:focus-visible {
+  outline:1px solid var(--accent);
+  outline-offset:-1px;
+}
+
+#project-sort option::checkmark {
+  position:absolute;
+  inset-inline-end:8px;
+  color:var(--link);
 }
 
 .view-switch {
