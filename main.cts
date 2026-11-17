@@ -1,3 +1,4 @@
+const { UpdateService } = require('./src/updates.cjs');
 import projectTrust = require('./src/project-trust.cjs');
 const { texBin } = require('./src/tex-toolchain.cjs');
 const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
@@ -60,6 +61,11 @@ function beginShutdown() {
 }
 if (process.env.REFRACT_DATA_DIR) app.setPath('userData', process.env.REFRACT_DATA_DIR);
 app.whenReady().then(async () => {
+  const updates = new UpdateService(path.join(app.getPath('userData'), 'update-settings.json'), app.getVersion(), app.isPackaged && process.platform === 'win32');
+  await updates.start();
+  app.on('before-quit', () => updates.stop());
+  ipcMain.handle('updates:status', () => updates.status());
+  ipcMain.handle('updates:track', (_, track: unknown) => updates.setTrack(track));
   ipcMain.handle('providers:discover', () => require('./src/providers.cjs').discoverProviders());
   const store = new ProjectStore(path.join(app.getPath('userData'), 'projects'));
   const cleanupDeletedProjects=()=>{

@@ -1821,3 +1821,29 @@ const resizeAccessibilityObserver = new ResizeObserver(updateResizeAccessibility
 for (const pane of [sidebarResize, workspaceResize, editorResize, chatResize]) resizeAccessibilityObserver.observe(pane);
 window.addEventListener('resize', updateResizeAccessibility);
 updateResizeAccessibility();
+
+// The entry point lives inside #projects, so it is absent from the editor workspace.
+const settingsDialog = document.querySelector<HTMLDialogElement>('#settings-dialog')!;
+const updateTrack = document.querySelector<HTMLSelectElement>('#update-track')!;
+const updateStatus = document.querySelector<HTMLParagraphElement>('#update-status')!;
+let settingsPoll: ReturnType<typeof setInterval> | undefined;
+function renderUpdateStatus(status: {track: 'stable' | 'beta'; message: string}): void {
+  updateTrack.value = status.track; updateStatus.textContent = status.message;
+}
+async function refreshUpdateStatus(): Promise<void> {
+  try { renderUpdateStatus(await store.updateStatus()); }
+  catch { updateStatus.textContent = 'Could not read update status. Close settings and try again.'; }
+}
+$('#settings').onclick = () => {
+  settingsDialog.showModal(); void refreshUpdateStatus();
+  settingsPoll = setInterval(() => { if (!updateTrack.disabled) void refreshUpdateStatus(); }, 2000);
+};
+$('#settings-close').onclick = () => settingsDialog.close();
+settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); $('#settings').focus(); });
+updateTrack.onchange = async () => {
+  updateTrack.disabled = true;
+  updateStatus.textContent = 'Saving track and checking for updates...';
+  try { renderUpdateStatus(await store.updateTrack(updateTrack.value)); }
+  catch { await refreshUpdateStatus(); updateStatus.textContent = 'Could not save the update track. Please try again.'; }
+  finally { updateTrack.disabled = false; }
+};

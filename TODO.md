@@ -2,7 +2,7 @@
 
 The goal is a polished Windows Electron alternative inspired by Prism, with similar core workflows where they make sense locally. Exact visual and feature parity is not required. Projects, editing, and compilation must work offline; the Codex CLI may use the internet. Follow the Windows light/dark theme and use Refract branding.
 
-Task IDs: **RF-001** through **RF-028** have been allocated. Next task ID: **RF-029**. Keep IDs stable when tasks move or change status; never reuse an allocated ID, including after a task is removed. Allocate each new ID from this counter and advance it. For parallel work, reserve IDs through a serialized update to the latest main branch before assigning them.
+Task IDs: **RF-001** through **RF-030** have been allocated. Next task ID: **RF-031**. Keep IDs stable when tasks move or change status; never reuse an allocated ID, including after a task is removed. Allocate each new ID from this counter and advance it. For parallel work, reserve IDs through a serialized update to the latest main branch before assigning them.
 
 ## Comparison and acceptance
 
@@ -58,3 +58,5 @@ v0.1.11 is published with all recent merges and its Windows installer. The relea
 - [x] **RF-027** Add a persisted Standard/Fast speed control to the Codex model picker and apply it to new and resumed CLI runs.
 
 - [x] **RF-028** Polish action icons and sidebar tools, consolidate workspace layouts, move trust details out of the breadcrumb, and address whole-app visual and keyboard review findings. Before/after evidence and independent review results are recorded in docs/ui-polish/README.md.
+
+- [x] **RF-030** Check GitHub releases every 10 minutes, download and install updates on app exit, and provide a persisted Stable/Beta track setting only on the project home menu.
