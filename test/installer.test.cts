@@ -3,6 +3,21 @@ const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:
 const {spawn,spawnSync}=require('node:child_process');
 const {_electron:electron}=require('playwright');
 
+test('dependency setup removes Node mode from the installer environment', {timeout:30000}, async t=>{
+ if(process.platform!=='win32')return t.skip('Windows installer behavior');
+ const nsis=path.join(process.env.LOCALAPPDATA || '','electron-builder','Cache','nsis','nsis-3.0.4.1','makensis.exe');
+ try {await fs.access(nsis);}catch{return t.skip('NSIS compiler is not installed');}
+ const root:string=await fs.mkdtemp(path.join(os.tmpdir(),'refract-nsis-env-'));
+ try {
+  // Exercise the actual setup macro with an inert dependency command.
+  const include=(await fs.readFile(path.resolve(__dirname,'../../scripts/installer.nsh'),'utf8')).replace(/  nsExec::ExecToLog .*\r?\n  Pop \$R0/, '  StrCpy $R0 0');
+  const executable=path.join(root,'check.exe'),source=path.join(root,'check.nsi');
+  await fs.writeFile(source,`!include "LogicLib.nsh"\n!define APP_EXECUTABLE_FILENAME "Refract.exe"\n${include}\nName "Environment check"\nOutFile "${executable}"\nRequestExecutionLevel user\nSilentInstall silent\nSection\n!insertmacro customInstall\nSystem::Call 'Kernel32::SetLastError(i 0)'\nSystem::Call 'Kernel32::GetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t .r2, i 1024)i.r3 ?e'\nPop $4\n\u0024{If} $4 != 203\nSetErrorLevel 9\nQuit\n\u0024{EndIf}\nSetErrorLevel 0\nSectionEnd\n`);
+  const build=spawnSync(nsis,[source],{windowsHide:true,encoding:'utf8',timeout:20000});assert.equal(build.status,0,build.stdout+build.stderr);
+  const result=spawnSync(executable,[],{windowsHide:true,timeout:10000});assert.equal(result.status,0,'Node mode must be absent, not empty');
+ } finally {await fs.rm(root,{recursive:true,force:true});}
+});
+
 test('silent installer reports old-uninstall errors without a dialog', {timeout:120000}, async t=>{
  if(process.platform!=='win32')return t.skip('Windows installer behavior');
  const nsis=path.join(process.env.LOCALAPPDATA || '','electron-builder','Cache','nsis','nsis-3.0.4.1','makensis.exe');

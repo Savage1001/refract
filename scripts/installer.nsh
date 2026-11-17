@@ -55,7 +55,9 @@
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i.r0'
   nsExec::ExecToLog '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\app\build\scripts\install-dependencies.cjs"'
   Pop $R0
-  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i.r1'
+  ; Remove the variable entirely before StartApp inherits our environment.
+  ; Electron treats even an empty ELECTRON_RUN_AS_NODE as Node mode.
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", p 0)i.r1'
   ${If} $R0 != 0
     DetailPrint "TeX setup failed. Check %LOCALAPPDATA%\Refract\dependencies\setup-error.log and rerun the installer with internet access."
     IfSilent +2 0

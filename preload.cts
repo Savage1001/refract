@@ -4,6 +4,9 @@ ipcRenderer.on('app:prepare-shutdown', () => {
   if(document.documentElement) document.documentElement.inert = true;
   ipcRenderer.send('app:shutdown-ready');
 });
+ipcRenderer.on('app:shutdown-cancelled', () => {
+  if(document.documentElement) document.documentElement.inert = false;
+});
 contextBridge.exposeInMainWorld('store', {
   updateRestart: (): Promise<void> => ipcRenderer.invoke('updates:restart'),
   updateCheck: (): Promise<import('./src/updates.cjs').UpdateStatus> => ipcRenderer.invoke('updates:check'),

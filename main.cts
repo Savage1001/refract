@@ -19,12 +19,30 @@ const { Versions } = require('./src/versions.cjs');
 const { Comments } = require('./src/comments.cjs');
 const { inspectFile } = require('./src/file-preview.cjs');
 const { AssistantCoordinator } = require('./src/assistant-coordinator.cjs');
+const { UpdateDiagnostics } = require('./src/update-diagnostics.cjs');
+let diagnostics: InstanceType<typeof import('./src/update-diagnostics.cjs').UpdateDiagnostics>;
+function restoreWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show(); mainWindow.focus();
+}
+async function shutdownStage(name: string, operation: () => Promise<unknown>) {
+  await diagnostics.stage(name, operation, () => {
+    restoreWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) void dialog.showMessageBox(mainWindow, {
+      type: 'warning', message: `Refract is waiting for ${name}.`,
+      detail: 'Your work is still being preserved. The update will continue when this operation finishes. You can inspect updates.jsonl in the application data logs folder.',
+      buttons: ['Keep waiting']
+    });
+  });
+}
 let writes = Promise.resolve();
 let flushSnapshots = () => {};
 let hasPendingSnapshots = () => false;
 let shuttingDown = false;
 let allowQuit = false;
 let installUpdateAfterShutdown: (() => void) | undefined;
+let updateShutdownFailed = (error: unknown) => {};
 let mainWindow: any = null;
 let waitForAssistants = async () => {};
 let cancelCompilations = () => {};
@@ -45,29 +63,50 @@ function beginShutdown() {
   if(shuttingDown) return;shuttingDown=true;
   cancelCompilations();
   void (async()=>{
-    if(mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
-    await shutdownBarrier(mainWindow);
-    await waitForCompilations();
+    // Keep the window available while waiting for work to finish.
+    await shutdownStage('renderer saves', () => shutdownBarrier(mainWindow));
+    await shutdownStage('compilations', waitForCompilations);
     acceptingAssistantOperations=false;
-    await waitForAssistants();
-    await closeCodexRuntimes();
+    await shutdownStage('assistant operations', waitForAssistants);
+    await shutdownStage('Codex runtimes', closeCodexRuntimes);
     for(;;) {
       flushSnapshots();const pending=writes;
-      try {await pending;} catch(error) {console.error(error);}
+      await shutdownStage('writes and snapshots', () => pending);
       if(pending===writes && !hasPendingSnapshots()) break;
     }
     allowQuit=true;
     if (installUpdateAfterShutdown) {
       installUpdateAfterShutdown();
-      // Also exit if the installer cannot launch; a later app launch can retry.
-      setImmediate(() => app.quit());
+      // Let quitAndInstall own the exit decision, including startup failures.
+      // An unconditional quit here would also close the app after a failed handoff.
     } else app.quit();
-  })().catch(error=>{console.error(error);allowQuit=true;app.quit();});
+  })().catch(error=>{
+    diagnostics.record('shutdown-failed', {error: String(error)});
+    allowQuit=false; shuttingDown=false; acceptingAssistantOperations=true;
+    installUpdateAfterShutdown=undefined;
+    updateShutdownFailed(error);
+    restoreWindow();
+    void dialog.showMessageBox(mainWindow, {type:'error', message:'Refract could not finish closing safely.', detail:String(error), buttons:['Return to Refract']});
+  });
 }
 if (process.env.REFRACT_DATA_DIR) app.setPath('userData', process.env.REFRACT_DATA_DIR);
+diagnostics = new UpdateDiagnostics(path.join(app.getPath('userData'), 'logs'), app.getVersion());
+const ownsInstance = !app.isPackaged || app.requestSingleInstanceLock();
+if (!ownsInstance) { allowQuit=true; app.quit(); }
+app.on('second-instance', () => { diagnostics.record('second-instance'); restoreWindow(); });
 app.whenReady().then(async () => {
+  if (!ownsInstance) return;
+  diagnostics.record('startup');
   const updates = new UpdateService(path.join(app.getPath('userData'), 'update-settings.json'), app.getVersion(), app.isPackaged && process.platform === 'win32');
   await updates.start();
+  updateShutdownFailed = error => updates.restartFailed(error);
+  updates.onRestartFailed = error => {
+    allowQuit=false; shuttingDown=false; acceptingAssistantOperations=true;
+    installUpdateAfterShutdown=undefined;
+    restoreWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:shutdown-cancelled');
+    diagnostics.record('installer-handoff-failed', {error: String(error)});
+  };
   app.on('before-quit', () => updates.stop());
   ipcMain.handle('updates:status', () => updates.status());
   ipcMain.handle('updates:check', async () => { await updates.check(); return updates.status(); });
