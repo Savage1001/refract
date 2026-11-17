@@ -2953,6 +2953,12 @@ dialog .dialog-actions {
 #settings-dialog label { display:block; margin-bottom:8px; font-weight:500; }
 #update-track { width:100%; }
 .settings-description, #update-status { font-size:13px; line-height:1.6; color:var(--muted); }
+#update-download { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+#update-progress { flex:1; min-width:0; height:12px; accent-color:var(--accent); }
+#update-progress[value] { appearance:none; height:6px; overflow:hidden; border-radius:999px; }
+#update-progress[value]::-webkit-progress-bar { background:var(--input); }
+#update-progress[value]::-webkit-progress-value { background:var(--accent); border-radius:999px; }
+#update-percent { color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; }
 
 #settings-dialog .dialog-actions { flex-wrap:wrap; }
 

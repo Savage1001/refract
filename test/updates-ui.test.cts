@@ -1,6 +1,7 @@
 import test = require('node:test');
 import assert = require('node:assert/strict');
 import fs = require('node:fs/promises');
+import type { UpdateStatus } from '../src/updates.cjs';
 import fixture = require('./fixtures/headless-ui.cjs');
 test('settings gear appears only at home and offers persisted update tracks', {timeout:60000}, async()=>{
  const {browser,page,errors}=await fixture.openHeadlessUi('light',{pdf:'',source:'% Settings UI sample'});
@@ -32,24 +33,36 @@ test('settings gear appears only at home and offers persisted update tracks', {t
  } finally { await browser.close(); }
 });
 
-test('capture available and ready-to-apply update settings', {timeout:30000}, async()=>{
+test('show download progress and expose restart when the update is ready', {timeout:30000}, async()=>{
  const {browser,page,errors}=await fixture.openHeadlessUi('light',{pdf:'',source:'% Update status screenshot sample'});
  try {
-  await page.evaluate(()=>{
+  const downloading: UpdateStatus = {
+   track:'beta',phase:'downloading',message:'Installed: 0.3.1-pre-release-5. Downloading v0.3.1-pre-release-6...'
+  };
+  const setStatus = (status: UpdateStatus) => page.evaluate(value=>{
    const w=window as unknown as {store:Record<string,unknown>};
-   w.store.updateStatus=async()=>({track:'stable',phase:'downloading',message:'Downloading v0.3.1...'});
-  });
+   w.store.updateStatus=async()=>value;
+  },status);
+  await setStatus(downloading);
   await page.getByRole('button',{name:'Settings',exact:true}).click();
-  await page.getByText('Downloading v0.3.1...',{exact:true}).waitFor();
+  const progress = page.getByRole('progressbar',{name:'Update download progress'});
+  await progress.waitFor();
+  assert.equal(await progress.getAttribute('value'),null);
+  await setStatus({...downloading,downloadPercent:64});
+  await page.getByText('64%',{exact:true}).waitFor();
+  assert.equal(await progress.getAttribute('value'),'64');
   await page.evaluate(()=>document.fonts.ready);
   await fs.mkdir('docs/updates',{recursive:true});
   assert.equal(await page.getByRole('button',{name:'Restart to update',exact:true}).isVisible(),false);
-  await page.screenshot({path:'docs/updates/update-available.png'});
+  await page.emulateMedia({colorScheme:'dark'});
+  await page.getByRole('dialog',{name:'Settings'}).screenshot({path:'docs/updates/update-available.png'});
+  await page.emulateMedia({colorScheme:'light'});
   await page.evaluate(()=>{
    const w=window as unknown as {store:Record<string,unknown>};
    w.store.updateStatus=async()=>({track:'stable',phase:'ready',message:'v0.3.1 is ready. Click Restart to update to install it.'});
   });
   await page.getByText('v0.3.1 is ready. Click Restart to update to install it.',{exact:true}).waitFor();
+  assert.equal(await progress.isVisible(),false);
   const restart = page.getByRole('button',{name:'Restart to update',exact:true});
   assert.equal(await restart.isEnabled(),true);
   await page.screenshot({path:'docs/updates/update-ready.png'});
