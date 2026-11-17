@@ -5,7 +5,7 @@ import path = require('node:path');
 // source-audit caches, and arbitrary stale files in build/.
 const applicationFiles = [
   'build/main.cjs', 'build/preload.cjs', 'build/renderer.js', 'build/model-picker.js',
-  'build/src/**/*.cjs', 'build/index.html', 'build/style.css', 'build/logo.png',
+  'build/src/**/*.cjs', 'build/scripts/install-dependencies.cjs', 'build/index.html', 'build/style.css', 'build/logo.png',
   'build/provider-logos/**/*', 'build/fonts/**/*', 'node_modules/**/*',
   '!node_modules/@napi-rs/canvas/**', '!node_modules/@napi-rs/canvas-*/**',
   'LICENSE', 'package.json',
