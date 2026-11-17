@@ -1793,22 +1793,23 @@ main {
   min-height:0;
 }
 
-.pdf-pane header {
+#pdf-content > header {
   display:flex;
   align-items:center;
-  flex-wrap:wrap;
   gap:6px;
+  overflow-x:auto;
   flex:none;
   padding:12px 16px;
   background:var(--canvas);
   border-bottom:1px solid var(--border);
 }
 
-.pdf-pane header>span {
-  flex:1;
+#pdf-content > header > #download {
+  margin-inline-start:auto;
 }
 
-.pdf-pane header>button {
+#pdf-content > header > button {
+  flex:none;
   font-size:12px;
   width:auto;
   height:30px;
@@ -1851,12 +1852,9 @@ main {
 .pdf-controls {
   display:flex;
   align-items:center;
-  justify-content:center;
+  flex:none;
   gap:3px;
-  flex-basis:100%;
-  order:2;
-  border-top:1px solid var(--border);
-  padding-top:7px;
+  margin-inline:8px;
 }
 
 .pdf-controls button {
@@ -1905,7 +1903,33 @@ main {
 .pdf-fit-controls {
   display:flex;
   gap:3px;
-  margin-left:auto;
+  margin-inline-start:12px;
+}
+
+@container (max-width: 650px) {
+  #pdf-content > header {
+    padding-inline:8px;
+    gap:4px;
+  }
+
+  .pdf-controls {
+    margin-inline:2px;
+  }
+
+  .pdf-zoom-label,
+  .pdf-fit-controls {
+    margin-inline-start:6px;
+  }
+}
+
+@container (max-width: 575px) {
+  .pdf-control-label {
+    display:none;
+  }
+
+  .pdf-zoom-label + button {
+    margin-inline-start:6px;
+  }
 }
 
 .pdf-fit-controls button {
