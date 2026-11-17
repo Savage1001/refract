@@ -43,13 +43,19 @@ export interface UpdateClient {
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
   on(event: 'error', listener: (error: Error) => void): unknown;
-  on(event: 'download-progress', listener: (progress: {percent: number}) => void): unknown;
+  on(event: 'download-progress', listener: (progress: {percent: number; total: number}) => void): unknown;
 }
 function createUpdateClient(release: Release): UpdateClient {
   const channel = semver.prerelease(release.tag_name) ? 'beta' : 'latest';
   if (!release.assets.some(a => a.name === `${channel}.yml`)) throw new Error(`Release ${release.tag_name} is missing update metadata. Will retry in 10 minutes.`);
   const { NsisUpdater }: typeof import('electron-updater') = require('electron-updater');
-  const updater = new NsisUpdater({ provider: 'generic', url: `https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag_name)}/`, channel });
+  const updater = new NsisUpdater({
+    provider: 'generic',
+    url: `https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag_name)}/`,
+    channel,
+    // GitHub release assets serve single byte ranges but can reject multipart ranges with HTTP 501.
+    useMultipleRangeRequest: false
+  });
   const {app}: typeof import('electron') = require('electron');
   const diagnostics = new UpdateDiagnostics(path.join(app.getPath('userData'), 'logs'), app.getVersion());
   updater.logger = {
@@ -147,8 +153,14 @@ class UpdateService {
       if (generation !== this.generation) return;
       const download: UpdateStatus = {track, phase: 'downloading', message: `Downloading ${release.tag_name}...`};
       this.state = download;
-      updater.on('download-progress', ({percent}) => {
+      updater.on('download-progress', ({percent, total}) => {
         if (generation !== this.generation || this.state !== download || !Number.isFinite(percent)) return;
+        if (Number.isFinite(total) && total > 0) {
+          const size = total >= 1024 ** 2
+            ? `${(total / 1024 ** 2).toFixed(1)} MiB`
+            : `${(total / 1024).toFixed(1)} KiB`;
+          download.message = `Downloading ${release.tag_name} (${size})...`;
+        }
         download.downloadPercent = Math.max(0, Math.min(100, Math.floor(percent)));
       });
       await updater.downloadUpdate();
