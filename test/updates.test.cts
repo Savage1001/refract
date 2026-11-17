@@ -61,7 +61,7 @@ test('downloaded updates never install on ordinary quit and require explicit res
  let installs=0;
  const clients:UpdateClient[]=[];
  const makeService=()=>new UpdateService(path.join(dir,'settings.json'),'1.0.0',true,async()=>[release('v1.1.0')],()=>{
-  const client:UpdateClient={autoDownload:true,autoInstallOnAppQuit:true,allowPrerelease:false,allowDowngrade:false,on:()=>{},checkForUpdates:async()=>({updateInfo:{version:'1.1.0'}}),downloadUpdate:async()=>{},quitAndInstall:(silent,relaunch)=>{assert.equal(silent,true);assert.equal(relaunch,true);installs++;}};
+  const client:UpdateClient={autoDownload:true,autoInstallOnAppQuit:true,allowPrerelease:false,allowDowngrade:false,on:()=>{},checkForUpdates:async()=>({updateInfo:{version:'1.1.0'}}),downloadUpdate:async()=>{},quitAndInstall:(silent,relaunch)=>{assert.equal(silent,false);assert.equal(relaunch,true);installs++;}};
   clients.push(client);return client;
  });
  const closing=makeService();const explicit=makeService();

@@ -67,7 +67,7 @@
       "installerHeaderIcon": "resources/logo.ico",
       "oneClick": true,
       "perMachine": false,
-      "runAfterFinish": false,
+      "runAfterFinish": true,
       "deleteAppDataOnUninstall": false
     },
     "beforePack": "build/scripts/distribution-boundary.cjs",

@@ -140,7 +140,9 @@ class UpdateService {
     this.state = {track: this.track, phase: 'restarting', message: 'Saving your work and restarting to update...'};
     let installed = false;
     // The main process calls this only after its save/compiler/assistant shutdown barrier.
-    return () => { if (!installed) { installed = true; updater.quitAndInstall(true, true); } };
+    // Show installer failures (locked files, permissions, or dependency setup)
+    // instead of letting a silent installer disappear without an explanation.
+    return () => { if (!installed) { installed = true; updater.quitAndInstall(false, true); } };
   }
   stop(): void { if (this.timer) clearInterval(this.timer); this.generation++; }
 }

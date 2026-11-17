@@ -59,8 +59,8 @@ function beginShutdown() {
     allowQuit=true;
     if (installUpdateAfterShutdown) {
       installUpdateAfterShutdown();
-      // Also exit if the installer cannot launch; a later app launch can retry.
-      setImmediate(() => app.quit());
+      // Let quitAndInstall own the exit decision, including startup failures.
+      // An unconditional quit here would also close the app after a failed handoff.
     } else app.quit();
   })().catch(error=>{console.error(error);allowQuit=true;app.quit();});
 }
