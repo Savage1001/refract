@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="resources/logo.png" width="128" height="128" alt="Refract app logo">
+</p>
+
 # Refract
 
 Refract is a Windows Electron workspace for local LaTeX writing, inspired by OpenAI Prism. Projects, editing, compilation, and displayed chat history are local. The assistant uses an installed Codex or OpenCode CLI, which may require network access and authentication.
