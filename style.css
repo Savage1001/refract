@@ -1838,11 +1838,18 @@ main {
   padding:3px 5px;
 }
 
-.pdf-controls input {
-  width:40px;
+.pdf-controls .pdf-page-count input {
+  width:4ch;
+  min-width:28px;
+  box-sizing:content-box;
   text-align:center;
   font-size:12px;
-  padding:4px;
+  padding:3px 5px;
+}
+
+.pdf-controls .pdf-current-page {
+  min-width:28px;
+  font-size:12px;
 }
 
 .pdf-page-count,.pdf-zoom-value {

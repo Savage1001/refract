@@ -427,7 +427,7 @@ let pdfDocument:PdfDocument | null = null, pdfRenderRevision=0;
 let lastPdfSync:{page:number;x:number;y:number}|null=null;
 let pdfSharpTimer: ReturnType<typeof setTimeout> | null = null;
 const pdfControls=document.createElement('div');pdfControls.className='pdf-controls';
-pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count">0 / 0</span><button type="button" aria-label="Next compiled PDF page">›</button><input type="text" inputmode="numeric" aria-label="Go to compiled PDF page" placeholder="Page"><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
+pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">›</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
 $('#zoom-fit').textContent='Fit width'; $('#zoom-fit').setAttribute('aria-label','Fit PDF to width');
 $('#download').textContent='Download'; $('#download').setAttribute('aria-label','Download PDF');
 $('#export-project').textContent='Export'; $('#export-project').setAttribute('aria-label','Export project');
@@ -444,6 +444,8 @@ const pdfArea=$('#pdf-area') as HTMLElement;
 // Zoom restores its own page anchor after layout changes.
 pdfArea.style.overflowAnchor='none';
 const pdfPageInput=pdfControls.querySelector<HTMLInputElement>('[aria-label="Go to compiled PDF page"]')!;
+const pdfCurrentPage=pdfControls.querySelector<HTMLButtonElement>('.pdf-current-page')!;
+const pdfPageTotal=pdfControls.querySelector<HTMLElement>('.pdf-page-total')!;
 const showInPdf=document.createElement('button');showInPdf.type='button';showInPdf.className='plain';showInPdf.textContent='Show in PDF';showInPdf.title='Show the current source line in the compiled PDF';
 $('.editor-header').insertBefore(showInPdf,$('#tools'));
 const compactPreview = document.createElement('button'); compactPreview.type='button'; compactPreview.className='plain compact-preview'; compactPreview.textContent='Preview'; compactPreview.setAttribute('aria-label','Show PDF preview');
@@ -473,12 +475,13 @@ $('.editor-header').append(compactPreview); $('.pdf-pane header').prepend(compac
 function updatePdfControls() {
   pdfControls.hidden = pdfPageCount === 0;
   $('#zoom-fit').hidden = pdfPageCount === 0; fitPage.hidden = pdfPageCount === 0;
-  pdfControls.querySelector<HTMLElement>('.pdf-page-count')!.textContent=`${pdfPageCount ? pdfPage : 0} / ${pdfPageCount}`;
+  pdfCurrentPage.textContent=String(pdfPageCount ? pdfPage : 0);
+  pdfPageTotal.textContent=` / ${pdfPageCount}`;
   pdfControls.querySelector<HTMLElement>('.pdf-zoom-value')!.textContent=pdfFitMode==='width' ? 'Fit' : `${pdfZoom}%`;
   $('#zoom-fit').setAttribute('aria-pressed',String(pdfFitMode==='width')); fitPage.setAttribute('aria-pressed',String(pdfFitMode==='page'));
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Previous compiled PDF page"]')!.disabled=pdfPageCount===0 || pdfPage<=1;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Next compiled PDF page"]')!.disabled=pdfPageCount===0 || pdfPage>=pdfPageCount;
-  pdfPageInput.disabled=pdfPageCount===0; pdfPageInput.hidden=pdfPageCount<=1; if(!pdfPageCount)pdfPageInput.value='';
+  pdfCurrentPage.disabled=pdfPageCount===0; pdfPageInput.disabled=pdfPageCount===0; if(!pdfPageCount) finishPdfPageEdit(false);
   showInPdf.disabled=pdfPageCount===0 || $('.source-container').hidden;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Zoom out compiled PDF"]')!.disabled=pdfPageCount===0 || pdfZoom<=25;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Zoom in compiled PDF"]')!.disabled=pdfPageCount===0 || pdfZoom>=250;
@@ -541,13 +544,28 @@ function goToPdfPage(page:number) {
 }
 pdfControls.querySelector<HTMLButtonElement>('[aria-label="Previous compiled PDF page"]')!.onclick=()=>goToPdfPage(pdfPage-1);
 pdfControls.querySelector<HTMLButtonElement>('[aria-label="Next compiled PDF page"]')!.onclick=()=>goToPdfPage(pdfPage+1);
-function submitPdfPage() {
-  const value=pdfPageInput.value.trim(), page=Number(value);
-  if (/^[0-9]+$/.test(value) && Number.isSafeInteger(page) && page>=1 && page<=pdfPageCount) goToPdfPage(page);
-  pdfPageInput.value='';
+function finishPdfPageEdit(restoreFocus:boolean):void {
+  pdfPageInput.hidden=true; pdfCurrentPage.hidden=false;
+  pdfPageInput.value=''; pdfPageInput.removeAttribute('aria-invalid');
+  if(restoreFocus) pdfCurrentPage.focus();
 }
-pdfPageInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();submitPdfPage();}else if(event.key==='Escape'){pdfPageInput.value='';pdfPageInput.blur();}});
-pdfPageInput.addEventListener('change',submitPdfPage);
+pdfCurrentPage.onclick=()=>{
+  pdfCurrentPage.hidden=true; pdfPageInput.hidden=false;
+  pdfPageInput.value=String(pdfPage); pdfPageInput.focus(); pdfPageInput.select();
+};
+function submitPdfPage():void {
+  const value=pdfPageInput.value.trim(), page=Number(value);
+  if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(page) || page<1 || page>pdfPageCount) {
+    pdfPageInput.setAttribute('aria-invalid','true'); pdfPageInput.select(); return;
+  }
+  goToPdfPage(page); finishPdfPageEdit(true);
+}
+pdfPageInput.addEventListener('keydown',event=>{
+  if(event.key==='Enter'){event.preventDefault();submitPdfPage();}
+  else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();finishPdfPageEdit(true);}
+});
+pdfPageInput.addEventListener('input',()=>pdfPageInput.removeAttribute('aria-invalid'));
+pdfPageInput.addEventListener('blur',()=>finishPdfPageEdit(false));
 showInPdf.onclick=async()=>{
   if(!active || !compiledProject || compiledProject!==active.id || !currentFile || $('.source-container').hidden)return;
   if ($('#workspace').classList.contains('editor-focus')) setEditorFocus(false);
