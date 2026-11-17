@@ -5,7 +5,7 @@ import path = require('node:path');
 import os = require('node:os');
 import childProcess = require('node:child_process');
 
-test('NSIS dependency hook runs the packaged helper hidden and propagates setup failure', {timeout:60000}, async t => {
+test('NSIS dependency hook runs the packaged helper hidden and propagates setup failure', {timeout:600000}, async t => {
   if (process.platform !== 'win32') return t.skip('Windows installer hook');
   const app=path.resolve(__dirname,'../../dist/win-unpacked');
   try { await fs.access(path.join(app,'resources/app/build/scripts/install-dependencies.cjs')); }
@@ -40,10 +40,18 @@ SectionEnd
   const compiled=childProcess.spawnSync(compiler,[source],{windowsHide:true,encoding:'utf8',timeout:20000});
   assert.equal(compiled.status,0,compiled.stderr || compiled.stdout);
   const data=path.join(root,'data'),bin=path.join(data,'Refract/dependencies/TinyTeX/bin/windows');
-  await fs.mkdir(bin,{recursive:true});
-  for (const tool of ['pdflatex','xelatex','lualatex','kpsewhich','synctex','bibtex','biber']) await fs.writeFile(path.join(bin,`${tool}.exe`),'reuse fixture');
-  const run=(localAppData:string)=>childProcess.spawnSync(installer,['/S'],{windowsHide:true,encoding:'utf8',timeout:15000,env:{...process.env,LOCALAPPDATA:localAppData}});
+  const live=process.env.REFRACT_TEST_DEPENDENCY_DOWNLOAD==='1';
+  if (!live) {
+    await fs.mkdir(bin,{recursive:true});
+    for (const tool of ['pdflatex','xelatex','lualatex','kpsewhich','synctex','bibtex','biber']) await fs.writeFile(path.join(bin,`${tool}.exe`),'reuse fixture');
+  }
+  const run=(localAppData:string)=>childProcess.spawnSync(installer,['/S'],{windowsHide:true,encoding:'utf8',timeout:live?300000:15000,env:{...process.env,LOCALAPPDATA:localAppData}});
   const reused=run(data);assert.equal(reused.status,0,String(reused.error ?? reused.stderr));
+  if (live) {
+    for (const tool of ['pdflatex','xelatex','lualatex','kpsewhich','synctex','bibtex','biber']) assert.ok((await fs.stat(path.join(bin,`${tool}.exe`))).size>1000,tool);
+    assert.equal(run(data).status,0,'freshly downloaded toolchain must be reusable');
+    t.diagnostic('Fresh upstream download, checksum verification, extraction and reuse passed through the NSIS hook');
+  }
   assert.deepEqual(await fs.readdir(path.join(data,'Refract/dependencies')),['TinyTeX']);
   const blocked=path.join(root,'blocked');await fs.writeFile(blocked,'not a directory');
   const failed=run(blocked);assert.equal(failed.status,3,String(failed.error ?? failed.stderr));

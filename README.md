@@ -59,6 +59,8 @@ After building the installer, its opt-in test can be run with `$env:REFRACT_TEST
 
 Before publishing a stable Windows release, build its installer and run the full lifecycle suite against that release's installer. Prereleases require targeted verification of their changed functionality, including automatic dependency setup when it changes; the full lifecycle suite is not required. Record verification results and investigate failures before publishing.
 
+After packaging, `node --test build/test/installer-dependencies.test.cjs` checks the real NSIS dependency hook with the packaged helper, including reuse and failure exit codes, without registering an installation. Set `REFRACT_TEST_DEPENDENCY_DOWNLOAD=1` for the same targeted check to download and verify fresh upstream dependencies in disposable data before checking reuse (internet access required).
+
 To exercise the signed-in Codex CLI and hidden desktop app in disposable projects, run `$env:REFRACT_REAL_CODEX_TEST='1'; npm run build; node --test build/test/real-codex.test.cjs build/test/real-codex-ui.test.cjs`, then clear the environment variable. These tests send prompts to Codex and require an existing login and network access.
 
 On the development machine, real attachment requests timed out while Codex was starting a shell tool; plain chat and cancellation passed. If tool calls stall, inspect the configured Codex environment and consult the [Windows sandbox documentation](https://developers.openai.com/codex/windows/). Refract does not change the user's Codex sandbox settings.
