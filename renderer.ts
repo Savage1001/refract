@@ -1670,10 +1670,8 @@ const workspaceShell = document.createElement('div'); workspaceShell.className =
 workspaceShell.append(...Array.from(workspace.children));
 const workspaceBar = document.createElement('header'); workspaceBar.className = 'workspace-topbar';
 const projectTrail = document.createElement('div'); projectTrail.className = 'project-trail';
-const libraryButton = document.createElement('button'); libraryButton.type = 'button'; libraryButton.textContent = 'Projects'; libraryButton.onclick = () => document.getElementById('home')!.click();
-const trailDivider = document.createElement('span'); trailDivider.textContent = '/'; trailDivider.setAttribute('aria-hidden','true');
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
-projectNameControl.title = 'Rename project'; projectTrail.append(libraryButton, trailDivider, projectNameControl);
+projectNameControl.title = 'Rename project'; projectTrail.append(projectNameControl);
 const viewControls = document.createElement('div'); viewControls.className = 'workspace-view-controls'; viewControls.setAttribute('role','group'); viewControls.setAttribute('aria-label','Workspace layout');
 type PaneName='agent'|'editor'|'preview';
 type PaneLayout=Record<PaneName,boolean>;
