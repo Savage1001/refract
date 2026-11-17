@@ -6,7 +6,7 @@ Observed 2026-10-30 at https://prism.openai.com/ in a hidden browser tab. This i
 
 | Prism observation | Refract implementation |
 | --- | --- |
-| Your Projects navigation | The home sidebar and brand button return to the project list. |
+| Your Projects navigation | The brand button in the project sidebar returns to the project list. |
 | Search and list/grid controls | The project list offers search and list/grid views. |
 | Import, New, and Start from Scratch | The project list offers ZIP import and project creation, including an empty-state action. |
 | Name and Created column controls | The list displays name and creation date and offers name and date sorting, plus recently edited sorting. |

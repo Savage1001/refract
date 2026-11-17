@@ -46,7 +46,8 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
   for (const mode of ['light', 'dark'] as const) {
    await app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, mode);
    await page.emulateMedia({ colorScheme: mode });
-   await page.locator('#home').click();
+   if (await page.locator('#workspace').isVisible()) await page.locator('#home').click();
+   assert.equal(await page.locator('#project-navigation').isHidden(), true);
    const background = (selector: string) => page.locator(selector).evaluate(el => getComputedStyle(el).backgroundColor);
    assert.equal(await background('body'), mode === 'dark' ? 'rgb(10, 10, 10)' : 'rgb(252, 252, 252)');
    assert.equal(await background('.sidebar'), mode === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(250, 250, 250)');
@@ -95,6 +96,7 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
    await page.setViewportSize({ width: 1440, height: 900 });
    await chooseView(page,'split');
    await page.locator('#home').click();
+   assert.equal(await page.locator('#project-navigation').isHidden(), true);
    await capture(`${mode}-populated`);
    await page.locator('#grid-view').click();
    await capture(`${mode}-grid`);
