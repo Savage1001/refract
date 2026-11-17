@@ -2,6 +2,7 @@
 
 /* Standard T3 Code desktop palette, stable v0.1.9. See docs/ui-theme.md. */
 :root {
+  --action-gap:6px;
   --window-controls-height:28px;
   --font-sans:-apple-system,BlinkMacSystemFont,"Inter Variable","Segoe UI",system-ui,sans-serif;
   --font-mono:"SF Mono","SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
@@ -445,7 +446,7 @@ h2 {
 
 .sidebar-footer {
   display:flex;
-  gap:6px;
+  gap:var(--action-gap);
   padding:14px 0;
   flex:none;
   flex-wrap:wrap;
@@ -601,7 +602,7 @@ main {
 
 .project-header-actions {
   display:flex;
-  gap:8px;
+  gap:var(--action-gap);
   flex:none;
 }
 
@@ -613,7 +614,7 @@ main {
 .project-controls {
   display:flex;
   align-items:center;
-  gap:10px;
+  gap:var(--action-gap);
   padding:16px 0;
   border-block:1px solid var(--border);
   flex-wrap:wrap;
@@ -976,7 +977,7 @@ main {
 .workspace-actions {
   display:flex;
   align-items:center;
-  gap:8px;
+  gap:var(--action-gap);
   flex:none;
 }
 
@@ -1057,7 +1058,7 @@ main {
 .editor-actions {
   display:flex;
   align-items:center;
-  gap:2px;
+  gap:var(--action-gap);
   flex-wrap:wrap;
   width:100%;
   padding:5px 0;
@@ -1175,7 +1176,7 @@ main {
 .editor-find {
   align-self:stretch;
   display:flex;
-  gap:6px;
+  gap:var(--action-gap);
   align-items:center;
   flex-wrap:wrap;
   padding:8px 16px;
@@ -1254,7 +1255,7 @@ main {
   z-index:1;
   display:flex;
   align-items:center;
-  gap:6px;
+  gap:var(--action-gap);
   flex:none;
   min-height:30px;
   margin-bottom:8px;
@@ -1352,7 +1353,7 @@ main {
 .composer>div:last-child {
   display:flex;
   align-items:center;
-  gap:4px;
+  gap:var(--action-gap);
 }
 
 .composer>div>span:not(.draft-attachment) {
@@ -1847,7 +1848,7 @@ main {
 #pdf-content > header {
   display:flex;
   align-items:center;
-  gap:6px;
+  gap:var(--action-gap);
   overflow-x:auto;
   flex:none;
   padding:12px 16px;
@@ -1904,7 +1905,7 @@ main {
   display:flex;
   align-items:center;
   flex:none;
-  gap:3px;
+  gap:var(--action-gap);
   margin-inline:8px;
 }
 
@@ -1953,14 +1954,13 @@ main {
 
 .pdf-fit-controls {
   display:flex;
-  gap:3px;
+  gap:var(--action-gap);
   margin-inline-start:12px;
 }
 
 @container (max-width: 650px) {
   #pdf-content > header {
     padding-inline:8px;
-    gap:4px;
   }
 
   .pdf-controls {
@@ -2288,7 +2288,7 @@ main {
 
 .comment-actions {
   display:flex;
-  gap:6px;
+  gap:var(--action-gap);
 }
 
 .comment-actions button {
@@ -2320,7 +2320,7 @@ main {
 .version-actions {
   display:flex;
   flex-wrap:wrap;
-  gap:6px;
+  gap:var(--action-gap);
 }
 
 .version-actions button,.comparison-filter {
@@ -2384,7 +2384,7 @@ main {
 .comparison-controls {
   display:flex;
   flex-wrap:wrap;
-  gap:8px;
+  gap:var(--action-gap);
   grid-column:1/-1;
   margin:10px 0;
 }
@@ -2427,7 +2427,7 @@ main {
 .log-controls {
   display:flex;
   align-items:center;
-  gap:8px;
+  gap:var(--action-gap);
   flex-wrap:wrap;
   margin-bottom:12px;
   font-size:12px;
@@ -2500,7 +2500,7 @@ dialog input,dialog select {
 dialog .dialog-actions {
   display:flex;
   justify-content:flex-end;
-  gap:8px;
+  gap:var(--action-gap);
   margin-top:24px;
   padding-top:16px;
   border-top:1px solid var(--border);
@@ -2530,7 +2530,7 @@ dialog .dialog-actions {
 
 .file-alternative-actions {
   display:flex;
-  gap:6px;
+  gap:var(--action-gap);
   flex-wrap:wrap;
   margin-top:10px;
 }
@@ -2623,7 +2623,7 @@ dialog .dialog-actions {
 .file-pdf-controls {
   display:flex;
   justify-content:center;
-  gap:12px;
+  gap:var(--action-gap);
   align-items:center;
   font-size:12px;
 }
@@ -2817,10 +2817,6 @@ dialog .dialog-actions {
     flex-direction:row;
   }
 
-  .project-controls {
-    gap:8px;
-  }
-
   .project-search {
     width:100%;
   }
@@ -2912,7 +2908,7 @@ dialog .dialog-actions {
 .pdf-controls button { display:inline-grid; place-items:center; min-width:28px; min-height:28px; }
 
 
-.sidebar-actions { display:flex; align-items:center; gap:0; margin-left:auto; flex:none; }
+.sidebar-actions { display:flex; align-items:center; gap:var(--action-gap); margin-left:auto; flex:none; }
 .sidebar-actions>button { display:inline-grid; place-items:center; width:28px; height:32px; padding:5px; color:var(--sidebar-muted); flex:none; }
 .sidebar-actions>button:hover { color:var(--text); }
 
