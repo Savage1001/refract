@@ -2783,12 +2783,6 @@ dialog .dialog-actions {
 
 }
 
-.editor-keyboard-hint {
-  margin-left:auto;
-  padding:4px 6px;
-  color:var(--muted);
-  font-size:11px;
-}
 #project-trust {margin:8px 0;flex:none;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;line-height:1.45;}
 #project-trust p {margin:8px 0;color:var(--text);}
 #project-trust button {white-space:normal;width:100%;}

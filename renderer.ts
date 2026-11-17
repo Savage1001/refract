@@ -1164,9 +1164,6 @@ sourceEditor.addEventListener('keydown',event=>{
   else if(['ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'].includes(event.key))closeCompletions();
 });
 let releaseEditorTab = false;
-const editorKeyboardHint = document.createElement('span'); editorKeyboardHint.id = 'editor-keyboard-help'; editorKeyboardHint.className = 'editor-keyboard-hint';
-editorKeyboardHint.textContent = 'Tab indents. Esc then Tab moves focus.';
-sourceEditor.setAttribute('aria-describedby', editorKeyboardHint.id);
 sourceEditor.addEventListener('input', () => { releaseEditorTab = false; });
 sourceEditor.addEventListener('blur', () => { releaseEditorTab = false; });
 $('#source').addEventListener('keydown', (event: KeyboardEvent) => {
@@ -1682,7 +1679,7 @@ async function runProjectSearch() {
 $('#file-search-input').oninput = () => { clearFileSearch.hidden = !$('#file-search-input').value; clearTimeout(searchTimer); searchTimer = setTimeout(runProjectSearch,200); };
 // Keep file tabs and editor actions in distinct, independently scrollable rows.
 const editorHeader = $('.editor-header'), editorActions = document.createElement('div'); editorActions.className='editor-actions'; editorActions.setAttribute('role','group'); editorActions.setAttribute('aria-label','Editor actions');
-editorHeader.querySelectorAll(':scope > button').forEach(button => editorActions.append(button)); editorHeader.append(editorActions); editorActions.append(editorKeyboardHint);
+editorHeader.querySelectorAll(':scope > button').forEach(button => editorActions.append(button)); editorHeader.append(editorActions);
 // Project-level controls live above both panes; file commands stay with the editor.
 const workspace = document.getElementById('workspace')!;
 const workspaceShell = document.createElement('div'); workspaceShell.className = 'workspace-shell';
