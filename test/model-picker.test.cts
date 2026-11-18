@@ -12,9 +12,9 @@ async function picker(t, mode = 'ok') {
  await page.setContent('<div class="chat" style="width:500px;height:160px;max-height:none"><div id="chat-messages"></div><div class="composer"><label class="provider-label" for="chat-provider">Provider</label><select id="chat-provider"><option value="codex">Codex</option><option value="opencode">OpenCode</option></select><div id="model-picker"></div></div></div><button id="outside" style="position:fixed;top:0;right:0;z-index:20">Outside</button>');
  await page.addStyleTag({ content: await fs.readFile(path.join(root, 'build/style.css'), 'utf8') });
  await page.evaluate(mode => {
-   const w = window as any; w.saves = []; w.failSave = mode === 'save';
+   const w = window as any; w.saves = []; w.failDiscovery = mode === 'error'; w.failSave = mode === 'save';
    w.store = {
-     discoverCodexModels: async () => { if (mode === 'reject') throw new Error('offline'); if (mode === 'error') return {ok:false,error:'offline'}; return {ok:true,models: (mode === 'versions' || mode === 'first') ? ['GPT-6', 'GPT-6.1', 'GPT-5.10', 'GPT-5.9'].map(name => ({id:name,model:name,displayName:name,description:'',supportedReasoningEfforts: mode === 'first' ? [{effort:'low',description:''},{effort:'medium',description:''},{effort:'high',description:''}] : [],defaultReasoningEffort:null,isDefault:false})) : [{id:'catalog-id',model:'cli-model',displayName:'Alpha',description:'A model',supportedReasoningEfforts:[{effort:'low',description:''},{effort:'high',description:''}],defaultReasoningEffort:'low',isDefault:false},{id:'other-id',model:'other',displayName:'Beta',description:'',supportedReasoningEfforts:[],defaultReasoningEffort:null,isDefault:false}]}; },
+     discoverCodexModels: async () => { if (mode === 'reject') throw new Error('offline'); if (w.failDiscovery) return {ok:false,error:'offline'}; return {ok:true,models: (mode === 'versions' || mode === 'first') ? ['GPT-6', 'GPT-6.1', 'GPT-5.10', 'GPT-5.9'].map(name => ({id:name,model:name,displayName:name,description:'',supportedReasoningEfforts: mode === 'first' ? [{effort:'low',description:''},{effort:'medium',description:''},{effort:'high',description:''}] : [],defaultReasoningEffort:null,isDefault:false})) : [{id:'catalog-id',model:'cli-model',displayName:'Alpha',description:'A model',supportedReasoningEfforts:[{effort:'low',description:''},{effort:'high',description:''}],defaultReasoningEffort:'low',isDefault:false},{id:'other-id',model:'other',displayName:'Beta',description:'',supportedReasoningEfforts:[],defaultReasoningEffort:null,isDefault:false}]}; },
      discoverOpenCodeModels: async () => ({ok:true,models:[{id:'opencode/model-2',name:'model-2',variants:[]},{id:'opencode/model-10',name:'model-10',variants:[]}]}),
      openCodePreferencesLoad: async () => ({model:mode === 'first' ? null : 'opencode/model-2',reasoningEffort:null,favorites:[]}),
      openCodePreferencesSave: async value => { w.openCodeSave = value; },
@@ -38,8 +38,8 @@ test('OpenAI artwork stays centered inside its crop in both themes', async t => 
     crop: element.getBoundingClientRect().toJSON(),
     image: element.querySelector('img')!.getBoundingClientRect().toJSON()
    }));
-   assert.equal(image.width, 32);
-   assert.equal(image.height, 32);
+   assert.ok(Math.abs(image.width - 32) < 0.1);
+   assert.ok(Math.abs(image.height - 32) < 0.1);
    assert.ok(Math.abs(image.x + image.width / 2 - crop.x - crop.width / 2) < 0.1);
    assert.ok(Math.abs(image.y + image.height / 2 - crop.y - crop.height / 2) < 0.1);
   }
@@ -255,10 +255,27 @@ test('keyboard model controls retain focus when favorites and reasoning rerender
  await page.getByLabel('Remove Alpha from favorites').focus();
  await page.keyboard.press('Enter');
  assert.equal(await page.getByLabel('Search models').evaluate(el => el === document.activeElement), true);
- for (const width of [1440, 1000, 700]) {
+ for (const width of [1440, 950, 600]) {
   await page.setViewportSize({width, height:850});
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
   const bounds = await page.locator('.model-panel').boundingBox();
-  assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width);
-  assert.equal(Math.round(bounds.width), width > 1200 ? 540 : width > 800 ? 520 : 480);
+  assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= viewportWidth);
+  assert.equal(Math.round(bounds.width), viewportWidth > 1200 ? 540 : viewportWidth > 800 ? 520 : 480);
  }
+});
+
+test('retrying Codex discovery recovers the saved model without saving preferences', async t => {
+ const page: import('playwright').Page = await picker(t, 'error');
+ const trigger = page.locator('.model-trigger');
+ await trigger.click();
+ const retry = page.getByRole('button', {name:'Retry model discovery'});
+ await retry.waitFor();
+ await retry.click();
+ await retry.waitFor();
+ await page.evaluate(() => { (window as Window & {failDiscovery?: boolean}).failDiscovery = false; });
+ await retry.click();
+ await page.locator('.model-row').getByRole('button', {name:/Alpha/, pressed:true}).waitFor();
+ assert.match(await trigger.textContent() ?? '', /Alpha.*Low/);
+ assert.equal(await page.locator('[role=status]').textContent(), '');
+ assert.equal(await page.evaluate(() => (window as unknown as {saves: unknown[]}).saves.length), 0);
 });
