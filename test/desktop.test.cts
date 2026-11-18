@@ -1146,7 +1146,7 @@ test('failed send reload cannot replace a newly selected conversation', {timeout
  });
  await page.locator('#chat-input').fill('Retry me');await page.locator('#send').click();
  await app.evaluate(async()=>await (globalThis as any).__reloadStarted);
- if (await page.locator('#app-dialog').isVisible()) await page.locator('#app-dialog-action').click();
+ await page.getByRole('dialog', {name:'Could not send message'}).getByRole('button', {name:'Close'}).click();
  await page.getByRole('button',{name:'Other conversation',exact:true}).click();await page.getByText('Other reply',{exact:true}).waitFor();
  await app.evaluate(()=>(globalThis as any).__reloadRelease());await page.waitForFunction(()=>!(document.querySelector('#send') as HTMLButtonElement).disabled);
  assert.equal(await page.getByText('Other reply',{exact:true}).count(),1);

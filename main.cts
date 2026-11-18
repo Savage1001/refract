@@ -22,7 +22,7 @@ const { AssistantCoordinator } = require('./src/assistant-coordinator.cjs');
 const { UpdateDiagnostics } = require('./src/update-diagnostics.cjs');
 let diagnostics: InstanceType<typeof import('./src/update-diagnostics.cjs').UpdateDiagnostics>;
 function restoreWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (process.env.REFRACT_TEST_HIDDEN || !mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show(); mainWindow.focus();
 }
@@ -84,6 +84,7 @@ function beginShutdown() {
     diagnostics.record('shutdown-failed', {error: String(error)});
     allowQuit=false; shuttingDown=false; acceptingAssistantOperations=true;
     installUpdateAfterShutdown=undefined;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:shutdown-cancelled');
     updateShutdownFailed(error);
     restoreWindow();
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(
