@@ -20,6 +20,6 @@ The review started from `b42f6de` on `main` and followed the project lifecycle f
 
 Run `npm run build`, set `REFRACT_THEME_ARTIFACTS` to an output directory, and run `node build/scripts/capture-ui.cjs`. The script uses headless Chromium, isolated IPC data, and a sample PDF. It checks 19 matching light and dark state pairs. The targeted tests exercise keyboard navigation, loading and errors, compact width, and asynchronous focus.
 
-The original background verification passed the TypeScript build, 31 renderer and geometry checks, 18 model picker checks, 78 project, archive, comment, and version checks, and three compiler process checks. A version recovery check passed on retry. The archive test that requires installed TeX skipped.
+Rebase verification passed the TypeScript build and 33 headless Chromium tests. The capture run verified 19 matching light and dark pairs, and the pull request gallery contains 20 screenshots of the workflows changed here.
 
 Native ZIP and save pickers, native title-bar interaction, installed TeX and SyncTeX, authenticated CLI providers, updater and installer execution, and Windows screen reader output were outside the headless evidence.
