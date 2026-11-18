@@ -28,6 +28,21 @@ contextBridge.exposeInMainWorld('store', {
   rename: (id, name) => ipcRenderer.invoke('projects:rename', id, name),
   setDraftMode: (id: string, enabled: boolean) => ipcRenderer.invoke('projects:draft', id, enabled),
   setEngine: (id, engine) => ipcRenderer.invoke('projects:engine', id, engine),
+  onShutdownNotice: (callback: (title: string, message: string, action: string) => void) => {
+    ipcRenderer.on('app:shutdown-notice', (_event, title, message, action) => callback(title, message, action));
+  },
+  onImportRoot: (select: (choices: string[]) => Promise<string | string[] | null>) => {
+    ipcRenderer.on('projects:import-root', async (event: Electron.IpcRendererEvent, choices: string[]) => {
+      const [port] = event.ports;
+      try {
+        port.postMessage(await select(choices));
+      } catch {
+        port.postMessage(null);
+      } finally {
+        port.close();
+      }
+    });
+  },
   importProject: () => ipcRenderer.invoke('projects:import'),
   exportProject: id => ipcRenderer.invoke('projects:export', id),
   read: (id, name) => ipcRenderer.invoke('files:read', id, name),

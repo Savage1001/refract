@@ -1,6 +1,6 @@
 const { UpdateService } = require('./src/updates.cjs');
 const { texBin } = require('./src/tex-toolchain.cjs');
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, MessageChannelMain, dialog, shell, nativeTheme } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { ProjectStore } = require('./src/project-store.cjs');
@@ -22,18 +22,18 @@ const { AssistantCoordinator } = require('./src/assistant-coordinator.cjs');
 const { UpdateDiagnostics } = require('./src/update-diagnostics.cjs');
 let diagnostics: InstanceType<typeof import('./src/update-diagnostics.cjs').UpdateDiagnostics>;
 function restoreWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (process.env.REFRACT_TEST_HIDDEN || !mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show(); mainWindow.focus();
 }
 async function shutdownStage(name: string, operation: () => Promise<unknown>) {
   await diagnostics.stage(name, operation, () => {
     restoreWindow();
-    if (mainWindow && !mainWindow.isDestroyed()) void dialog.showMessageBox(mainWindow, {
-      type: 'warning', message: `Refract is waiting for ${name}.`,
-      detail: 'Your work is still being preserved. The update will continue when this operation finishes. You can inspect updates.jsonl in the application data logs folder.',
-      buttons: ['Keep waiting']
-    });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(
+      'app:shutdown-notice', `Refract is waiting for ${name}.`,
+      'Your work is still being preserved. The update will continue when this operation finishes. You can inspect updates.jsonl in the application data logs folder.',
+      'Keep waiting'
+    );
   });
 }
 let writes = Promise.resolve();
@@ -84,9 +84,12 @@ function beginShutdown() {
     diagnostics.record('shutdown-failed', {error: String(error)});
     allowQuit=false; shuttingDown=false; acceptingAssistantOperations=true;
     installUpdateAfterShutdown=undefined;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:shutdown-cancelled');
     updateShutdownFailed(error);
     restoreWindow();
-    void dialog.showMessageBox(mainWindow, {type:'error', message:'Refract could not finish closing safely.', detail:String(error), buttons:['Return to Refract']});
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(
+      'app:shutdown-notice', 'Refract could not finish closing safely.', String(error), 'Return to Refract'
+    );
   });
 }
 if (process.env.REFRACT_DATA_DIR) app.setPath('userData', process.env.REFRACT_DATA_DIR);
@@ -263,14 +266,24 @@ app.whenReady().then(async () => {
     const selected = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { properties: ['openFile'], filters: [{ name: 'ZIP archive', extensions: ['zip'] }] });
     if (selected.canceled || !selected.filePaths[0]) return null;
     const archive = selected.filePaths[0];
-    return importProject(store, archive, path.basename(archive, path.extname(archive)), async candidates => {
-      const result = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
-        type: 'question', message: 'Select the main LaTeX document',
-        detail: 'This document will be used when compiling the imported project.',
-        buttons: [...candidates, 'Import all', 'Cancel'], cancelId: candidates.length + 1, noLink: true
-      });
-      return result.response === candidates.length + 1 ? null : result.response === candidates.length ? candidates : candidates[result.response];
-    });
+    return importProject(store, archive, path.basename(archive, path.extname(archive)), (candidates: string[]) =>
+      new Promise<string | string[] | null>((resolve, reject) => {
+        const {port1, port2} = new MessageChannelMain();
+        port1.once('close', () => resolve(null));
+        port1.once('message', ({data}: Electron.MessageEvent) => {
+          resolve(data);
+          port1.close();
+        });
+        try {
+          event.sender.postMessage('projects:import-root', candidates, [port2]);
+          port1.start();
+        } catch (error) {
+          reject(error);
+          port1.close();
+          port2.close();
+        }
+      })
+    );
   });
   ipcMain.handle('projects:export', async (event, id) => {
     assertAssistantIdle(id);
