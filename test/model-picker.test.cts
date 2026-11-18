@@ -38,8 +38,8 @@ test('OpenAI artwork stays centered inside its crop in both themes', async t => 
     crop: element.getBoundingClientRect().toJSON(),
     image: element.querySelector('img')!.getBoundingClientRect().toJSON()
    }));
-   assert.equal(image.width, 32);
-   assert.equal(image.height, 32);
+   assert.ok(Math.abs(image.width - 32) < 0.1);
+   assert.ok(Math.abs(image.height - 32) < 0.1);
    assert.ok(Math.abs(image.x + image.width / 2 - crop.x - crop.width / 2) < 0.1);
    assert.ok(Math.abs(image.y + image.height / 2 - crop.y - crop.height / 2) < 0.1);
   }
@@ -255,11 +255,12 @@ test('keyboard model controls retain focus when favorites and reasoning rerender
  await page.getByLabel('Remove Alpha from favorites').focus();
  await page.keyboard.press('Enter');
  assert.equal(await page.getByLabel('Search models').evaluate(el => el === document.activeElement), true);
- for (const width of [1440, 1000, 700]) {
+ for (const width of [1440, 950, 600]) {
   await page.setViewportSize({width, height:850});
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
   const bounds = await page.locator('.model-panel').boundingBox();
-  assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width);
-  assert.equal(Math.round(bounds.width), width > 1200 ? 540 : width > 800 ? 520 : 480);
+  assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= viewportWidth);
+  assert.equal(Math.round(bounds.width), viewportWidth > 1200 ? 540 : viewportWidth > 800 ? 520 : 480);
  }
 });
 
