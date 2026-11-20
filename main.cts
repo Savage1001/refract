@@ -154,7 +154,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('providers:discover', async () => {
     const status = await codexAccount.status();
     const available = await require('./src/providers.cjs').discoverProviders(status.mode === 'account' ? status.installed && status.signedIn : undefined);
-    return { ...available, codexMode: status.mode, codexSetupRequired: status.mode === 'account' && !available.codex };
+    return { ...available, codexMode: status.mode, codexSetupRequired: status.mode === 'account' && !available.codex, codexSignInRequired: status.mode === 'account' && !status.signedIn };
   });
   const store = new ProjectStore(path.join(app.getPath('userData'), 'projects'));
   const cleanupDeletedProjects=()=>{

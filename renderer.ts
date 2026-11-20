@@ -1030,10 +1030,11 @@ function discoverChatProviders(preferred: string | null, handoff: string | null)
   providerAvailable = false;
   provider.disabled = true;
   publishProviderStatus(provider, 'loading');
-  void store.discoverProviders().then((available: {codex: boolean; opencode: boolean; codexMode?: import('./src/codex-account.cjs').CodexMode; codexSetupRequired?: boolean}) => {
+  void store.discoverProviders().then((available: {codex: boolean; opencode: boolean; codexMode?: import('./src/codex-account.cjs').CodexMode; codexSetupRequired?: boolean; codexSignInRequired?: boolean}) => {
     if (request !== providerDiscovery) return;
     provider.dataset.codexMode = available.codexMode ?? '';
     provider.dataset.codexSetupRequired = String(Boolean(available.codexSetupRequired));
+    provider.dataset.codexSignInRequired = String(Boolean(available.codexSignInRequired));
     provider.replaceChildren();
     for (const [id, label] of [['codex', 'Codex'], ['opencode', 'OpenCode']]) {
       if (!available[id] && handoff !== id && preferred !== id) continue;
@@ -1059,6 +1060,34 @@ function retryChatProviders(): void {
   discoverChatProviders(staged ?? (value || dataset.handoff || null), dataset.handoff || null);
 }
 $('#chat-provider').addEventListener('picker-retry-providers', retryChatProviders);
+$('#chat-provider').addEventListener('picker-sign-in', () => void signInFromPicker());
+
+async function signInFromPicker(): Promise<void> {
+  const provider = $('#chat-provider') as HTMLSelectElement;
+  if (provider.dataset.codexSigningIn === 'true' || provider.dataset.codexSignInRequired !== 'true') return;
+  provider.dataset.codexSigningIn = 'true';
+  delete provider.dataset.codexSignInError;
+  provider.dispatchEvent(new Event('providerstate'));
+  try {
+    let status = await store.codexAccountStatus();
+    if (status.mode !== 'account' || status.signedIn || status.phase !== 'idle') return;
+    if (!status.installed) {
+      await store.codexAccountSelect('account');
+      status = await store.codexAccountStatus();
+      if (!status.installed) throw new Error(status.message || 'Could not install the Codex runtime.');
+    }
+    await store.codexAccountSignIn(false);
+    status = await store.codexAccountStatus();
+    if (!status.signedIn && status.message) throw new Error(status.message);
+  } catch (error) {
+    provider.dataset.codexSignInError = error instanceof Error
+      ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+      : 'Could not sign in to ChatGPT. Try again.';
+  } finally {
+    delete provider.dataset.codexSigningIn;
+    if (active) retryChatProviders();
+  }
+}
 window.addEventListener('codex-connection-changed', () => { if (active) retryChatProviders(); });
 function renderChat(chat) {
   chatAnnouncement.textContent = '';

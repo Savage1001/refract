@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('store', {
   updateCheck: (): Promise<import('./src/updates.cjs').UpdateStatus> => ipcRenderer.invoke('updates:check'),
   updateStatus: (): Promise<import('./src/updates.cjs').UpdateStatus> => ipcRenderer.invoke('updates:status'),
   updateTrack: (track: import('./src/updates.cjs').UpdateTrack): Promise<import('./src/updates.cjs').UpdateStatus> => ipcRenderer.invoke('updates:track', track),
-  discoverProviders: (): Promise<{codex:boolean;opencode:boolean;codexSetupRequired?:boolean}> => ipcRenderer.invoke('providers:discover'),
+  discoverProviders: (): Promise<{codex:boolean;opencode:boolean;codexSetupRequired?:boolean;codexSignInRequired?:boolean}> => ipcRenderer.invoke('providers:discover'),
   discoverOpenCodeModels: (projectId?: string): Promise<{ok:true;models:import('./src/opencode.cjs').OpenCodeModel[]}|{ok:false;error:string}> => ipcRenderer.invoke('opencode:discover-models', projectId),
   openCodePreferencesLoad: (): Promise<import('./src/codex-preferences.cjs').CodexPreferences> => ipcRenderer.invoke('opencode-preferences:load'),
   openCodePreferencesSave: (value: import('./src/codex-preferences.cjs').CodexPreferences): Promise<void> => ipcRenderer.invoke('opencode-preferences:save', value),

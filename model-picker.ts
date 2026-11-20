@@ -381,8 +381,20 @@ function retryButton(label: string, key: string, action: () => void): HTMLButton
   return control;
 }
 function retryProviders(): void { provider.dispatchEvent(new Event('picker-retry-providers')); }
+function codexSignInStatus(): HTMLElement {
+  const busy = provider.dataset.codexSigningIn === 'true';
+  const control = retryButton(busy ? 'Connecting…' : 'Sign in with ChatGPT', 'codex:sign-in',
+    () => provider.dispatchEvent(new Event('picker-sign-in')));
+  control.classList.add('model-sign-in');
+  control.prepend(providerLogo('codex'));
+  control.disabled = busy;
+  return statusBlock('Codex requires sign-in', provider.dataset.codexSignInError ||
+    (busy ? 'Preparing ChatGPT sign-in. Follow the prompts in your browser.' : 'Connect your ChatGPT account to use Codex.'), control);
+}
 function providerStatus(id: Provider): HTMLElement | undefined {
   const state = states[id];
+  if (id === 'codex' && provider.dataset.pickerStatus !== 'error' &&
+      provider.dataset.codexSignInRequired === 'true') return codexSignInStatus();
   if (state.loadFailed) return statusBlock('Preferences couldn’t be loaded', 'Your saved choices are kept.',
     retryButton('Retry preferences', `${id}:preferences`, () => {
       if (installed(id)) startDiscovery(id);
@@ -488,9 +500,12 @@ function renderResults(): void {
   const detectionFailed = provider.dataset.pickerStatus === 'error';
   const allMissing = resultScope === 'all' && !providers.some(installed);
   if (detectionFailed || allMissing) {
-    const needsCodexSetup = !detectionFailed && provider.dataset.codexSetupRequired === 'true';
-    const title = needsCodexSetup ? 'Connect Codex in Settings' : detectionFailed ? 'Provider check failed' : 'No providers found';
-    list.append(statusBlock(title, detectionFailed ? 'Refract couldn’t check for Codex or OpenCode.' : needsCodexSetup ? 'Open Settings on the home screen to connect your ChatGPT account or choose the Codex CLI.' : 'Install and authenticate Codex or OpenCode to use the assistant.',
+    const needsCodexSetup = !detectionFailed && provider.dataset.codexSignInRequired === 'true';
+    const needsRuntime = !detectionFailed && provider.dataset.codexSetupRequired === 'true';
+    const title = needsCodexSetup ? 'Codex requires sign-in' : detectionFailed ? 'Provider check failed'
+      : needsRuntime ? 'Connect Codex in Settings' : 'No providers found';
+    list.append(needsCodexSetup ? codexSignInStatus() : statusBlock(title, detectionFailed ? 'Refract couldn’t check for Codex or OpenCode.' : needsRuntime ? 'Open Settings on the home screen to finish setting up Codex.'
+      : 'Install and authenticate Codex or OpenCode to use the assistant.',
       retryButton('Check providers', 'providers:retry', retryProviders)));
     if (resultScope !== 'favorites') {
       if (terms.length) list.append(emptySearch());
@@ -500,7 +515,7 @@ function renderResults(): void {
   }
   const ordered = firstProvider === 'opencode' ? ['opencode', 'codex'] as const : providers;
   const visibleProviders = resultScope === 'all' || resultScope === 'favorites'
-    ? ordered.filter(id => installed(id) || (resultScope === 'favorites' && (states[id].preferences?.favorites.length || states[id].saveError || states[id].loadFailed || states[id].loadingPreferences)))
+    ? ordered.filter(id => installed(id) || (resultScope === 'all' && id === 'codex' && provider.dataset.codexSignInRequired === 'true') || (resultScope === 'favorites' && (states[id].preferences?.favorites.length || states[id].saveError || states[id].loadFailed || states[id].loadingPreferences)))
     : [resultScope];
 
   let count = 0;
