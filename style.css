@@ -3384,6 +3384,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   /* Resizing the live editor and PDF once keeps sidebar motion cheap. */
   .sidebar:not(.collapsed) .brand-home {
     animation:motion-surface var(--motion-layout) var(--motion-ease);
+    &:focus-visible { opacity:1!important; }
   }
   .sidebar:not(.collapsed) .brand-home span {
     animation:motion-sidebar-label var(--motion-layout) var(--motion-ease);
@@ -3517,8 +3518,9 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 
   /* Native disclosure semantics settle before paint so Enter then Tab can
      always reach the first disclosed control. */
-  :is(.file-alternatives, .version-comparison, .comment-reply-form, .raw-output, .compile-error details)[open]::details-content {
-    animation:motion-surface var(--motion-overlay) var(--motion-ease);
+  :is(.file-alternatives, .version-comparison, .comment-reply-form, .raw-output, .compile-error details)[open] {
+    &::details-content { animation:motion-surface var(--motion-overlay) var(--motion-ease); }
+    &:has(:focus-visible):not(:has(> summary:focus-visible))::details-content { opacity:1!important; }
   }
 
   #file-list { isolation:isolate; }
@@ -3557,12 +3559,12 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     translate:0;
   }
 
-  /* Keep the editor, PDF pages and picker anchors at their true coordinates. */
+  /* Override keyframe values while a keyboard target is focused. Keeping the
+     timeline alive prevents the entrance from restarting on blur. */
   :is(#projects, #workspace, .workspace-topbar, .model-catalog, .model-settings-group) {
     animation:motion-surface var(--motion-overlay) var(--motion-ease);
+    &:has(:focus-visible) { opacity:1!important; }
   }
-
-  :is(#projects, #workspace, .workspace-topbar):has(:focus-visible) { animation:none; }
 
   @keyframes motion-surface {
     from { opacity:.8; }
@@ -3572,6 +3574,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     .settings-download, #restart-update, .preview-status, .chat-progress, .field-error, .draft-attachment,
     .compile-error, .project-page-thumbnail, .recovery-success) {
     animation:motion-appear var(--motion-overlay) var(--motion-ease);
+    &:is(:focus-visible, :has(:focus-visible)) { opacity:1!important; }
   }
 
   @keyframes motion-appear {
@@ -3579,8 +3582,11 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   }
 
   .message-arriving {
-    animation:motion-message var(--motion-layout) var(--motion-ease);
+    animation:motion-appear var(--motion-layout) var(--motion-ease);
+    &:has(:focus-visible) { opacity:1!important; }
   }
+
+  .message-arriving.user { animation-name:motion-message; }
 
   @keyframes motion-message {
     from { opacity:0; translate:0 5px; }

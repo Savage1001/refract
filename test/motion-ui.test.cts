@@ -257,12 +257,14 @@ test('Find and the composer show keyboard focus immediately and motion can be di
   }
 });
 
-test('folder keyboard order and sidebar exit hit testing match the live layout', async () => {
+test('folder keyboard order and sidebar exit hit testing match the live layout', {timeout:20000}, async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
     await page.evaluate(() => {
       const state = (window as unknown as {fixture:{files:Record<string,string>}}).fixture;
       state.files['z-last.tex'] = '% A file after the folder';
+      state.files['z-next.tex'] = '% The next moving sibling';
+      for (let index = 0; index < 4; index++) state.files[`sections/notes-${index}.tex`] = '% Nested notes';
     });
     await openProject(page);
     const folder = page.locator('#file-list summary').first();
@@ -286,9 +288,12 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
       siblingMoving:true, liveFileOwnsPointer:true, liveFileHasBacking:true});
     const movingFile = page.locator('#file-list button[title="z-last.tex"]');
     const press = await movingFile.evaluate(file => {
-      const fade = file.parentElement!.getAnimations().find(animation => animation.id === 'refract-motion')!;
-      fade.currentTime = 0;
-      fade.playbackRate = .1;
+      const next = document.querySelector('#file-list button[title="z-next.tex"]')!;
+      for (const sibling of [file, next]) {
+        const animation = sibling.parentElement!.getAnimations().find(motion => motion.id === 'refract-motion')!;
+        animation.currentTime = 0;
+        animation.playbackRate = .1;
+      }
       const {left,top,width,height} = file.getBoundingClientRect();
       return {x:left + width / 2,y:top + height / 2};
     });
@@ -296,7 +301,12 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     await page.mouse.down();
     await page.waitForFunction(() => document.querySelector('#file-list button[title="z-last.tex"]')!.parentElement!
       .getAnimations().some(animation => animation.playState === 'paused'));
+    assert.deepEqual(await page.evaluate(() => ['z-last.tex','z-next.tex'].map(path => {
+      const row = document.querySelector(`#file-list button[title="${path}"]`)!.parentElement!;
+      return row.getAnimations().find(animation => animation.id === 'refract-motion')?.playState;
+    })), ['paused','paused']);
     await page.waitForTimeout(155);
+    assert.equal(await movingFile.evaluate((file, {x,y}) => file.contains(document.elementFromPoint(x, y)), press), true);
     await page.mouse.up();
     await page.waitForFunction(() => (document.getElementById('source') as HTMLTextAreaElement).value === '% A file after the folder');
     await folder.press('Enter');
@@ -348,6 +358,72 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     assert.equal(reversal.after, reversal.before);
     assert.ok(reversal.before > .8 && reversal.before < 1);
     assert.equal(await page.locator('#file-list').isVisible(), true);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('keyboard focus stays fully visible as assistant replies and build disclosures appear', {timeout:20000}, async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    await page.evaluate(() => {
+      const {store} = window as unknown as {store:{chatSend:()=>Promise<unknown>}};
+      store.chatSend = async () => ({sessionId:null, messages:[
+        {role:'user', text:'Where is the reference?'},
+        {role:'assistant', text:'Read the [method reference](https://example.com/method).'}
+      ]});
+    });
+    await openProject(page);
+    // Keep the entrances observable while sending real keyboard events.
+    await page.evaluate(() => {
+      const history = document.getElementById('chat-messages')!;
+      const observer = new MutationObserver(() => {
+        const animation = history.querySelector('.assistant.message-arriving')?.getAnimations()[0];
+        if (!animation) return;
+        animation.pause();
+        animation.currentTime = 0;
+        observer.disconnect();
+      });
+      observer.observe(history, {childList:true});
+    });
+    const composer = page.locator('#chat-input');
+    await composer.fill('Where is the reference?');
+    await page.locator('#send').click();
+    const message = page.locator('.message.assistant.message-arriving');
+    const link = message.getByRole('link', {name:'method reference'});
+    await link.waitFor({state:'attached'});
+    assert.deepEqual(await message.evaluate(reply => {
+      const {opacity,translate} = getComputedStyle(reply);
+      return {opacity,translate};
+    }), {opacity:'0', translate:'none'});
+    await composer.press('Shift+Tab');
+    assert.deepEqual(await link.evaluate(anchor => {
+      const style = getComputedStyle(anchor.closest('.message')!);
+      return {focused:anchor === document.activeElement && anchor.matches(':focus-visible'), opacity:style.opacity, translate:style.translate};
+    }), {focused:true, opacity:'1', translate:'none'});
+
+    await page.locator('#tools').click();
+    const disclosure = page.locator('.raw-output summary');
+    await disclosure.evaluate(summary => {
+      const details = summary.closest('details')!;
+      const observer = new MutationObserver(() => {
+        const animation = details.getAnimations({subtree:true}).find(animation =>
+          animation instanceof CSSAnimation && animation.animationName === 'motion-surface');
+        if (!animation) return;
+        animation.pause();
+        animation.currentTime = 0;
+        observer.disconnect();
+      });
+      observer.observe(details, {attributes:true,attributeFilter:['open']});
+    });
+    await disclosure.press('Enter');
+    assert.ok(Number(await disclosure.evaluate(summary => getComputedStyle(summary.parentElement!, '::details-content').opacity)) < 1);
+    await page.keyboard.press('Tab');
+    assert.deepEqual(await page.getByRole('searchbox', {name:'Filter build output'}).evaluate(input => ({
+      focused:input === document.activeElement && input.matches(':focus-visible'),
+      disclosureOpacity:getComputedStyle(input.closest('details')!, '::details-content').opacity
+    })), {focused:true, disclosureOpacity:'1'});
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

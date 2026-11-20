@@ -93,11 +93,30 @@ const scenes: Scene[] = [
   }, 'dark'],
   ['08-file-tree-outline-and-disclosures', async page => {
     await page.evaluate(() => {
-      (window as unknown as {fixture:{files:Record<string,string>}}).fixture.files['z-results.tex'] = '% Results';
+      const {files} = (window as unknown as {fixture:{files:Record<string,string>}}).fixture;
+      files['z-results.tex'] = '% Results';
+      files['z-review.tex'] = '% Review notes';
+      for (let index = 0; index < 4; index++) files[`sections/notes-${index}.tex`] = '% Nested notes';
     });
     await open(page);
     const folder = page.locator('#file-list summary').first();
-    await folder.press('Enter');
+    const point = await folder.evaluate((summary:HTMLElement) => {
+      const first = document.querySelector('#file-list button[title="z-results.tex"]')!;
+      const second = document.querySelector('#file-list button[title="z-review.tex"]')!;
+      summary.click();
+      for (const file of [first, second]) {
+        const animation = file.parentElement!.getAnimations().find(motion => motion.id === 'refract-motion')!;
+        animation.currentTime = 0;
+        animation.playbackRate = .3;
+      }
+      const {left,top,width,height} = first.getBoundingClientRect();
+      return {x:left+width/2,y:top+height/2};
+    });
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    await pause(page, 170);
+    await page.mouse.up();
+    await page.waitForFunction(() => (document.getElementById('source') as HTMLTextAreaElement).value === '% Results');
     await pause(page);
     await folder.press('Enter');
     await pause(page);
@@ -108,6 +127,8 @@ const scenes: Scene[] = [
     await pause(page);
     await page.keyboard.press('Tab');
     await pause(page, 400);
+    await click(page, '#file-list button[title="main.tex"]');
+    await page.locator('#outline-list button').first().waitFor();
     await click(page, '#outline-toggle');
     await click(page, '#outline-toggle');
     await click(page, '#add-file');
@@ -178,10 +199,23 @@ const scenes: Scene[] = [
     await open(page);
     await page.locator('#new-chat').hover();
     await pause(page);
-    await page.evaluate(() => { (window as unknown as {fixture:{delay:number}}).fixture.delay = 900; });
-    await page.locator('#chat-input').fill('How should I structure the introduction?');
+    await page.evaluate(() => {
+      const {fixture, store} = window as unknown as {fixture:{delay:number};
+        store:{chatSend:()=>Promise<{messages:{text:string}[]}>}};
+      fixture.delay = 900;
+      const send = store.chatSend;
+      store.chatSend = async () => {
+        const reply = await send();
+        reply.messages.at(-1)!.text += '\n\nRead the [method reference](https://example.com/method).';
+        return reply;
+      };
+    });
+    const composer = page.locator('#chat-input');
+    await composer.fill('How should I structure the introduction?');
     await click(page, '#send');
-    await page.locator('.message.assistant').last().waitFor();
+    await page.getByRole('link', {name:'method reference'}).waitFor({state:'attached'});
+    await composer.press('Shift+Tab');
+    assert.equal(await page.getByRole('link', {name:'method reference'}).evaluate(link => link === document.activeElement), true);
     await pause(page, 950);
   }, 'dark'],
   ['14-pdf-compile-and-preview', async page => {
@@ -221,7 +255,10 @@ const scenes: Scene[] = [
     await click(page, '.version-comparison summary');
     await click(page, '#tool-info');
     await click(page, '#tool-logs');
-    await click(page, '.raw-output summary');
+    await page.locator('.raw-output summary').press('Enter');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.getByRole('searchbox', {name:'Filter build output'}).evaluate(input => input === document.activeElement), true);
+    await pause(page);
     await click(page, '.raw-output summary');
     await click(page, '#tools');
   }],

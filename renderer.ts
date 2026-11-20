@@ -82,32 +82,6 @@ document.addEventListener('focusin', event => {
   }
 });
 
-// A real row may be moving when the pointer goes down. Keep it under the
-// pointer through the native click, then resume its compositor animation.
-const pressedRows = new Map<number, Animation[]>();
-document.addEventListener('pointerdown', event => {
-  if (!(event.target instanceof Element)) return;
-  const paused: Animation[] = [];
-  for (let row = event.target.closest('.file-tree-row'); row; row = row.parentElement?.closest('.file-tree-row') ?? null) {
-    const animation = activeMotion.get(row);
-    if (!animation || !isMoving(animation)) continue;
-    animation.pause();
-    paused.push(animation);
-  }
-  if (paused.length) pressedRows.set(event.pointerId, paused);
-}, {capture:true});
-function releaseRows(pointerId: number): void {
-  const paused = pressedRows.get(pointerId);
-  if (!paused) return;
-  pressedRows.delete(pointerId);
-  requestAnimationFrame(() => {
-    for (const animation of paused) if (animation.playState === 'paused') animation.play();
-  });
-}
-for (const type of ['pointerup', 'pointercancel'] as const)
-  window.addEventListener(type, event => releaseRows(event.pointerId), {capture:true});
-window.addEventListener('blur', () => { for (const pointerId of pressedRows.keys()) releaseRows(pointerId); });
-
 let workspaceMotion: Animation | undefined;
 
 function playWorkspaceMotion(surface: Element, interrupt = true, focusSafeSurface?: Element): void {
@@ -420,15 +394,52 @@ document.addEventListener('focusin', event => {
 });
 let fileTreeRequest = 0, renderedTree = '', renderedTreeProject = '';
 const folderRowMotions = new Set<Animation>();
+const fileTreePresses = new Set<number>();
 // Bound the retained disclosure and the number of rows sampled per toggle.
 const maxFolderExitRows = 64;
 const maxMeasuredFollowingRows = 48;
 
+function settleFolderRows(): void {
+  for (const animation of folderRowMotions) animation.cancel();
+  folderRowMotions.clear();
+}
+
+// Pause the whole row group through the native click so a neighboring row
+// cannot move across the pressed control between pointerdown and pointerup.
+document.addEventListener('pointerdown', event => {
+  if (!(event.target instanceof Element) || !event.target.closest('#file-list .file-tree-row')) return;
+  if (!fileTreePresses.size) {
+    for (const animation of folderRowMotions) if (isMoving(animation)) animation.pause();
+  }
+  fileTreePresses.add(event.pointerId);
+}, {capture:true});
+
+function resumeFolderRows(): void {
+  if (fileTreePresses.size || !folderRowMotions.size) return;
+  requestAnimationFrame(() => {
+    if (fileTreePresses.size) return;
+    for (const animation of folderRowMotions) if (animation.playState === 'paused') animation.play();
+  });
+}
+
+for (const type of ['pointerup', 'pointercancel'] as const) {
+  window.addEventListener(type, event => {
+    if (fileTreePresses.delete(event.pointerId)) resumeFolderRows();
+  }, {capture:true});
+}
+window.addEventListener('blur', () => {
+  fileTreePresses.clear();
+  resumeFolderRows();
+});
+document.addEventListener('focusin', event => {
+  if (folderRowMotions.size && !fileTreePresses.size && event.target instanceof Element &&
+      event.target.matches('#file-list :focus-visible')) settleFolderRows();
+});
+
 function toggleFolderWithMotion(folder: HTMLDetailsElement, children: HTMLElement, event: MouseEvent): void {
   if (!folder.open) {
     // Following rows must clear the space before children become interactive.
-    for (const animation of folderRowMotions) animation.cancel();
-    folderRowMotions.clear();
+    settleFolderRows();
     return;
   }
   if (!motionEnabled() || !folder.classList.contains('folder-motion')) return;
@@ -462,6 +473,7 @@ function toggleFolderWithMotion(folder: HTMLDetailsElement, children: HTMLElemen
   for (const {row, offset} of moves) {
     if (Math.abs(offset) <= .5) continue;
     const animation = playMotion(row, [{translate:`0 ${offset}px`}, {translate:'0'}]);
+    if (fileTreePresses.size) animation.pause();
     folderRowMotions.add(animation);
     const clear = () => { folderRowMotions.delete(animation); };
     void animation.finished.then(clear, clear);
