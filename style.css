@@ -4,6 +4,7 @@
 :root {
   --action-gap:6px;
   --window-controls-height:42px;
+  --dashboard-gradient-height:48px;
   --font-sans:-apple-system,BlinkMacSystemFont,"Inter Variable","Segoe UI",system-ui,sans-serif;
   --font-mono:"SF Mono","SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
   color-scheme:light;
@@ -215,9 +216,18 @@ body:has(#projects:not([hidden])) .app-titlebar::before {
   content:"";
   position:absolute;
   inset:100% 0 auto;
-  height:48px;
+  height:var(--dashboard-gradient-height);
   background:linear-gradient(to bottom, var(--sidebar), transparent);
   pointer-events:none;
+}
+
+@media(prefers-color-scheme:dark) {
+  body:has(#projects:not([hidden])) .app-titlebar::before {
+    /* Alternate adjacent luminance levels within each row to break up dark gradient bands. */
+    background:var(--sidebar);
+    mask:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAQAAAALQrSUAAACr0lEQVR42sVQgZWrMAzLGsyRObJG5sgaWSNzMAdr8O9oAEtWUq7v3r+6BEeWZZkQ9j+OsB2xH4+NbdBw8nc4NZPzTdSv4Zuh2RGIe4wlsYarbZC/7kTfBlIcCtuMSavEHPwmUmjUPI99YM2uw/Z3bWB9iH3Ksmy4rE5mBVyPWft9nRhfjTZqmtErSNyyLODNrRC4iFdHBXLmA0fwFvOeDTp83/EFEPBSM3O/EaEdr0Zwo7evrEPGz7hiYOunttN6/US0xWaqTWA3VxIbGWmDmrXWoNZgDT/6zp3XkZiPlQzx8FX2MH8g3f5bSLCKvA5ZdVD3aIXnVbsAP6pCXi9WvW7ItNxGDG/oVCPRCmbYgj2rQ0ZbWusN+r5DCDaSr+Kuepitwq/w9S8PGnUUen8SXaBIodJrBSqeW4StMtDjvIsXN9Qau20UkPbV4r5LITOcmy2r2bUQdtuyVgtkRfb5QNOCXCc3batMFcqUY6BMlNyR/EBuHnlwy6eBLEj5Qu9qvkyhxZE4V7j63S9G2WH2K6AR7shk3Y/KrmoMYBSRYZVtMIOtZZGTgSKtPLf1aYT0dSQDJHrPIr3BtdaNJvsFEmSpRwayl0uGbbEESsrSiRoJlktiRBKboVm0n0g5EzeFi+wbsJIdMr8nZ4dHJ29AR3zA+TyOAfHtqDgxFPsZjVKSGd7j8ZgrZ1Yi0gjLjdIw2zpP7IkBaNFtEkEqiVqUHazFX+euOJEopKMcFkXvvFvZezDMxwLvZVB9pjJsXo6I/Yxy5MmIguN1F1A4kT5oIVFLRMYC9rDHClslPf6VmSFqd98aTe1dRJmjypu2n9TG3FnXVCL0hzFdOethwF9kzyUVxADEg3kHKRqEhTCwZKaMSPdvgVsAE8FZuhFvBccLSW4OtLtnLQMNrzBm/eXvHzLr+uKAsePZAAAAAElFTkSuQmCC") repeat-x;
+    mask-size:64px 100%;
+  }
 }
 
 /* Project navigation. */
@@ -582,7 +592,7 @@ main {
 #projects {
   height:100%;
   overflow:auto;
-  padding:44px clamp(24px,5vw,80px);
+  padding:calc(var(--dashboard-gradient-height) + 28px) clamp(24px,5vw,80px) 44px;
 }
 
 .project-header {
