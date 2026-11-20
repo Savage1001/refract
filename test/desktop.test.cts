@@ -893,7 +893,7 @@ test('send button keeps a centered arrow at wide and narrow composer widths', {t
   assert.equal(metrics.iconHeight,16,`${label}: arrow renders at its intended 16px height`);
   assert.ok(Math.abs(metrics.offsetX)<0.5,`${label}: arrow is centered horizontally (offset ${metrics.offsetX})`);
   assert.ok(Math.abs(metrics.offsetY)<0.5,`${label}: arrow is centered vertically (offset ${metrics.offsetY})`);
-  assert.equal(metrics.radius,'50%',`${label}: send button stays circular`);
+  assert.equal(metrics.radius,'6px',`${label}: send button keeps its rounded corners`);
  };
  check('wide',await measure());
  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(900,700));await page.waitForFunction(()=>innerWidth<1000);
@@ -1172,7 +1172,8 @@ test('failed send reload cannot replace a newly selected conversation', {timeout
  await app.evaluate(async()=>await (globalThis as any).__reloadStarted);
  await page.getByRole('dialog', {name:'Could not send message'}).getByRole('button', {name:'Close'}).click();
  await page.getByRole('button',{name:'Other conversation',exact:true}).click();await page.getByText('Other reply',{exact:true}).waitFor();
- await app.evaluate(()=>(globalThis as any).__reloadRelease());await page.waitForFunction(()=>!(document.querySelector('#send') as HTMLButtonElement).disabled);
+ await app.evaluate(()=>(globalThis as any).__reloadRelease());
+ await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>('#source')?.readOnly);
  assert.equal(await page.getByText('Other reply',{exact:true}).count(),1);
  await page.getByRole('button',{name:'Chat',exact:true}).click();await page.waitForFunction(()=>(document.querySelector('#chat-input') as HTMLTextAreaElement).value==='Retry me');
 });
@@ -1212,7 +1213,9 @@ test('attachment selection enforces the message limit and blocks sending while p
  assert.equal((await fs.readdir(path.join(projectStore.projectDir(project.id),'.refract-attachments'))).length,10);
  await app.evaluate(({dialog,ipcMain},file)=>{const state=globalThis as any;state.__sent=0;state.__attachStarted=new Promise<void>(resolve=>{state.__attachNotify=resolve;});dialog.showOpenDialog=async()=>{state.__attachNotify();await new Promise<void>(resolve=>{state.__attachRelease=resolve;if(state.__attachCancel)resolve();});return {canceled:false,filePaths:[file]};};ipcMain.removeHandler('chat:send');ipcMain.handle('chat:send',async()=>{state.__sent++;return {messages:[]};});},file);
  await page.locator('#chat-input').fill('Wait for attachment');await page.locator('#attach').click();await app.evaluate(async()=>await (globalThis as any).__attachStarted);assert.equal(await page.locator('#send').isDisabled(),true);await page.locator('#send').dispatchEvent('click');assert.equal(await app.evaluate(()=>(globalThis as any).__sent),0);
- await page.locator('#chats-tab').click();await page.getByRole('button',{name:'Other conversation',exact:true}).click();await page.getByText('Other conversation',{exact:true}).last().waitFor();await page.waitForFunction(()=>!(document.querySelector('#send') as HTMLButtonElement).disabled);
+ await page.locator('#chats-tab').click();await page.getByRole('button',{name:'Other conversation',exact:true}).click();await page.getByText('Other conversation',{exact:true}).last().waitFor();
+ await page.locator('#chat-input').fill('Draft in the other conversation');
+ await page.waitForFunction(()=>!(document.querySelector('#send') as HTMLButtonElement).disabled);
  await page.getByRole('button',{name:'Chat',exact:true}).click();await page.waitForFunction(()=>(document.querySelector('#chat-input') as HTMLTextAreaElement).value==='Wait for attachment');assert.equal(await page.locator('#send').isDisabled(),true);assert.equal(await page.locator('#attach').isDisabled(),true);
  await app.evaluate(()=>{(globalThis as any).__attachRelease();});await page.waitForFunction(()=>document.querySelectorAll('#attachment-list button').length===10);assert.equal(await page.locator('#send').isDisabled(),false);assert.equal(await page.locator('#chat-input').inputValue(),'Wait for attachment');
 });

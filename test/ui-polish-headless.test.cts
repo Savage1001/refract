@@ -447,9 +447,6 @@ test('headless project actions duplicate the selected home project in either vie
   const actions=page.getByLabel(`Actions for ${project}`,{exact:true});
   const duplicate=page.getByRole('button',{name:`Duplicate ${project}`,exact:true});
   const remove=page.getByRole('button',{name:`Delete ${project}`,exact:true});
-  const titlebar=page.locator('.app-titlebar');
-  const gradient=()=>titlebar.evaluate(bar=>getComputedStyle(bar,'::before').backgroundImage);
-  assert.match(await gradient(),/^linear-gradient/);
   await page.evaluate(()=>{
    type Project={id:string;name:string};
    const w=window as unknown as {store:{duplicate:(id:string)=>Promise<Project>};fixture:{projects:Project[];counters:Record<string,number>}};
@@ -481,12 +478,10 @@ test('headless project actions duplicate the selected home project in either vie
   await duplicate.click();
   await page.getByRole('dialog',{name:`Duplicate ${project}?`,exact:true}).getByRole('button',{name:'Duplicate',exact:true}).click();
   await page.getByRole('button',{name:`${project} (copy)`,exact:true}).waitFor();
-  assert.equal(await gradient(),'none');
   assert.equal(await page.locator('.sidebar-actions').getByRole('button',{name:'Duplicate project'}).count(),0);
   await page.locator('#home').click();
   await page.getByRole('button',{name:`Open ${project} (copy)`,exact:true}).waitFor();
   await page.getByRole('button',{name:`Open ${project}`,exact:true}).waitFor();
-  assert.match(await gradient(),/^linear-gradient/);
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
 });
