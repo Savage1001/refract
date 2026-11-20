@@ -1197,7 +1197,14 @@ test('saved Codex preferences and explicit snapshots reach chat turns', {timeout
  const env: NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const app=await launchDesktop(env);
  t.after(async()=>{await app.close().catch(()=>{});await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
- await app.evaluate(({app})=>{
+ await app.evaluate(({app,ipcMain})=>{
+  ipcMain.removeHandler('providers:discover');
+  ipcMain.handle('providers:discover',()=>({codex:true,opencode:false}));
+  ipcMain.removeHandler('codex:discover-models');
+  ipcMain.handle('codex:discover-models',()=>({ok:true,models:[{
+   id:'available-model',model:'available-model',displayName:'Available model',description:'',
+   supportedReasoningEfforts:[{effort:'low',description:''}],defaultReasoningEffort:'low',isDefault:true
+  }]}));
   const req=(process.getBuiltinModule('module') as any).createRequire(app.getAppPath()+'\\package.json');
   const {ChatService,codexArguments}=req('./build/src/chat.cjs'), original=ChatService.prototype.send;
   (globalThis as any).__codexRuns=[];
@@ -1209,13 +1216,15 @@ test('saved Codex preferences and explicit snapshots reach chat turns', {timeout
    return original.apply(this,args);
   };
  });
- const page=await app.firstWindow();await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
- // Let picker discovery finish its initial preference save before writing test preferences.
- await page.evaluate(async()=>{await (window as any).codexPickerReady().catch(()=>{});});
+ const page=await app.firstWindow();await page.waitForLoadState('load');await page.reload();
+ await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
+ await page.waitForFunction(()=>!(document.querySelector('#chat-provider') as HTMLSelectElement).disabled);
  await page.evaluate(async()=>{
-  const api=(window as any).store, [project]=await api.list();
-  await api.codexPreferencesSave({model:null,reasoningEffort:null,favorites:[]});
-  await api.chatSend(project.id,'default','default',[]);
+  const pickerWindow=window as Window & {codexPickerReady?: (provider: 'codex') => Promise<Omit<import('../src/codex-preferences.cjs').CodexPreferences, 'favorites'>>};
+  if (!pickerWindow.codexPickerReady) throw new Error('Model picker is unavailable');
+  const api=store, [project]=await api.list();
+  const selection=await pickerWindow.codexPickerReady('codex');
+  await api.chatSend(project.id,'default','default',[],'codex',selection);
   await api.codexPreferencesSave({model:'--vendor/model with space',reasoningEffort:'high',favorites:[]});
   const chat=await api.chatCreate(project.id);
   await api.chatSend(project.id,'new',chat,[]);
@@ -1225,7 +1234,9 @@ test('saved Codex preferences and explicit snapshots reach chat turns', {timeout
  });
  const runs=await app.evaluate(()=>(globalThis as any).__codexRuns);
  assert.equal(runs.length,4);
- assert.equal(runs[0].session,null);assert.ok(!runs[0].args.some((arg:string)=>arg.startsWith('--model') || arg.startsWith('model_reasoning_effort=')));
+ assert.equal(runs[0].session,null);assert.ok(!runs[0].args.some((arg:string)=>arg.startsWith('--model')));
+ assert.ok(runs[0].args.includes('model_reasoning_effort="low"'));
+ assert.ok(runs[0].args.includes('service_tier="default"'));
  assert.equal(runs[1].session,null);assert.equal(runs[2].session,'thread');
  for(const run of runs.slice(1,3)){assert.ok(run.args.includes('--model=--vendor/model with space'));assert.ok(run.args.includes('model_reasoning_effort="high"'));}
  assert.equal(runs[3].session,'thread');

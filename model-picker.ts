@@ -11,6 +11,7 @@ interface Model {
   description?: string;
   efforts: string[];
   defaultEffort?: string;
+  isDefault?: boolean;
   disambiguator?: string;
 }
 interface State {
@@ -58,17 +59,17 @@ function openCodeSource(id: string): string {
 }
 const effortOrder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const numeric = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
-const cliDefault: Model = {id: null, label: 'CLI default', description: 'Use the model and reasoning configured in Codex.', efforts: []};
+const cliDefault: Model = {id: null, label: 'CLI default', description: 'Use the model configured in Codex.', efforts: []};
 const newState = (): State => ({models: [], status: 'loading', revision: 0, savedRevision: 0, selectionRevision: 0});
 const states = {codex: newState(), opencode: newState()};
 let scope: Scope = 'all';
+let openingScopePending = false;
 let firstProvider: Provider = 'codex';
 let project: string | undefined;
 let generation = 0;
 let detected = new Set<Provider>();
 let resultKey: string | undefined;
 let detailsOpen = false;
-let searchAllOnInput = true;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', content?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -97,11 +98,10 @@ function providerLogo(id: Provider): HTMLPictureElement {
 function effortLabel(value: string): string {
   return value === 'xhigh' ? 'Extra high' : value.replace(/[-_]/g, ' ').replace(/^\p{L}/u, letter => letter.toUpperCase());
 }
-function preferredEffort(model: Model): string | null {
-  const known = model.efforts.filter(value => effortOrder.includes(value));
-  if (!known.length) return model.efforts[Math.floor((model.efforts.length - 1) / 2)] ?? null;
-  const distance = (value: string) => Math.abs(effortOrder.indexOf(value) - 3);
-  return known.reduce((best, value) => distance(value) < distance(best) ? value : best);
+function defaultEffort(model: Model): string | null {
+  if (model.efforts.includes('low')) return 'low';
+  if (model.defaultEffort && model.efforts.includes(model.defaultEffort)) return model.defaultEffort;
+  return effortOrder.find(effort => model.efforts.includes(effort)) ?? model.efforts[0] ?? null;
 }
 function activeId(): Provider | undefined {
   return provider.value === 'codex' || provider.value === 'opencode' ? provider.value : undefined;
@@ -114,10 +114,15 @@ function busy(): boolean { return provider.dataset.pickerStatus === 'busy'; }
 function canSelect(id: Provider): boolean {
   return installed(id) && !pending() && !busy() && (!provider.disabled || activeId() === id);
 }
+function cliDefaultModel(): Model {
+  const {status, models} = states.codex;
+  const advertised = status === 'ready' ? models.find(model => model.isDefault) : undefined;
+  return advertised ? {...cliDefault, efforts: advertised.efforts, defaultEffort: advertised.defaultEffort} : cliDefault;
+}
 function selectedModel(id: Provider): Model | undefined {
   const {preferences, models} = states[id];
   if (!preferences) return;
-  return preferences.model === null && id === 'codex' ? cliDefault : models.find(model => model.id === preferences.model);
+  return preferences.model === null && id === 'codex' ? cliDefaultModel() : models.find(model => model.id === preferences.model);
 }
 function modelKey(id: Provider, model: string | null): string { return JSON.stringify([id, model]); }
 
@@ -136,18 +141,19 @@ done.title = 'Close model picker (Esc)';
 const searchBar = element('div', 'model-search');
 const search = element('input');
 search.type = 'search';
-search.placeholder = 'Search models';
+search.placeholder = 'Search models…';
 search.setAttribute('aria-label', 'Search models');
 search.setAttribute('aria-controls', 'model-picker-results');
 searchBar.append(element('span', 'model-search-icon'), search);
 const filters = element('div', 'model-filters');
 filters.setAttribute('role', 'group');
 filters.setAttribute('aria-label', 'Filter models');
-const filterButtons = (['favorites', ...providers, 'all'] as const).map(id => {
-  const control = button('model-filter', id === 'favorites' ? '★' : id === 'all' ? '▦' : '', event => {
+const filterButtons = (['favorites', ...providers] as const).map(id => {
+  const control = button('model-filter', '', () => {
+    openingScopePending = false;
     scope = id;
-    searchAllOnInput = false;
     detailsOpen = false;
+    search.value = '';
     resetResults();
     if (id === 'favorites') {
       for (const provider of providers) {
@@ -156,19 +162,27 @@ const filterButtons = (['favorites', ...providers, 'all'] as const).map(id => {
       }
     }
     render();
-    if (event.detail > 0) search.focus({preventScroll: true});
+    if (!matchMedia('(pointer: coarse)').matches) search.focus({preventScroll: true});
   });
   control.dataset.scope = id;
   control.title = labels[id];
   control.setAttribute('aria-label', labels[id]);
   if (id === 'codex' || id === 'opencode') control.append(providerLogo(id));
-  if (id === 'favorites') control.setAttribute('aria-label', 'Favorite models');
+  if (id === 'favorites') {
+    control.setAttribute('aria-label', 'Favorite models');
+    control.append(element('span', 'model-filter-star'));
+  }
   if (id === 'codex' || id === 'opencode') control.setAttribute('aria-label', `${labels[id]} models`);
   filters.append(control);
   return {id, control};
 });
 
 filters.addEventListener('keydown', event => {
+  if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    search.focus({preventScroll: true});
+    return;
+  }
   if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
   const index = filterButtons.findIndex(({control}) => control === document.activeElement);
   if (index < 0) return;
@@ -218,8 +232,8 @@ function openRecovery(): void {
     updateDetailsVisibility();
     (settings.querySelector<HTMLElement>('.model-retry:enabled,[role=radio]:enabled') ?? settingsToggle).focus();
   } else {
+    openingScopePending = false;
     scope = !issue && !installed(id) ? 'favorites' : id;
-    searchAllOnInput = false;
     resetResults();
     render();
     const retry = Array.from(list.querySelectorAll<HTMLElement>('.model-retry:enabled'));
@@ -267,12 +281,9 @@ function changed(id: Provider, affectsSelection = true): void {
 function choose(id: Provider, model: Model): void {
   const {preferences} = states[id];
   if (!preferences || !canSelect(id)) return;
-  if (preferences.model !== model.id || (model.id === null && preferences.reasoningEffort !== null)) {
+  if (preferences.model !== model.id) {
     preferences.model = model.id;
-    if (model.id === null) preferences.reasoningEffort = null;
-    else if (!model.efforts.includes(preferences.reasoningEffort ?? '')) {
-      preferences.reasoningEffort = id === 'codex' ? null : preferredEffort(model);
-    }
+    preferences.reasoningEffort = defaultEffort(model);
     changed(id);
   }
   if (activeId() !== id) {
@@ -334,7 +345,8 @@ function updateTrigger(): void {
   else if (preferences?.model) label = `${preferences.model.split('/').at(-1)} (unavailable)`;
   else if (state.status === 'error') label = 'Models unavailable';
 
-  const effort = preferences?.reasoningEffort && effortLabel(preferences.reasoningEffort);
+  const configuredEffort = preferences?.reasoningEffort;
+  const effort = configuredEffort && model?.efforts.includes(configuredEffort) && effortLabel(configuredEffort);
   const speed = id === 'codex' && preferences?.fastMode ? 'Fast' : '';
   const options = [effort, speed].filter(Boolean).join(' · ');
   const identity = model?.disambiguator ?? model?.source ?? '';
@@ -344,9 +356,6 @@ function updateTrigger(): void {
   trigger.append(element('span', 'model-trigger-label', label));
   if (model?.disambiguator) trigger.append(element('span', 'model-trigger-options', identity));
   if (options && model && installed(id)) trigger.append(element('span', 'model-trigger-options', options));
-  const arrow = element('span', 'model-chevron', '⌄');
-  arrow.setAttribute('aria-hidden', 'true');
-  trigger.append(arrow);
   trigger.setAttribute('aria-label', `Choose provider and model. ${fullLabel}`);
   trigger.title = fullLabel;
   publishReadiness();
@@ -459,27 +468,28 @@ function emptySearch(): HTMLElement {
 function renderResults(): void {
   list.replaceChildren();
   const terms = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const resultScope = terms.length ? 'all' : scope;
   if (pending()) {
     list.append(statusBlock('Checking providers…', 'Looking for Codex and OpenCode.'));
     announce('Checking providers.');
-    if (scope !== 'favorites') return;
+    if (resultScope !== 'favorites') return;
   }
   const detectionFailed = provider.dataset.pickerStatus === 'error';
-  const allMissing = scope === 'all' && !providers.some(installed);
+  const allMissing = resultScope === 'all' && !providers.some(installed);
   if (detectionFailed || allMissing) {
     const title = detectionFailed ? 'Provider check failed' : 'No providers found';
     list.append(statusBlock(title, detectionFailed ? 'Refract couldn’t check for Codex or OpenCode.' : 'Install and authenticate Codex or OpenCode to use the assistant.',
       retryButton('Check providers', 'providers:retry', retryProviders)));
-    if (scope !== 'favorites') {
+    if (resultScope !== 'favorites') {
       if (terms.length) list.append(emptySearch());
       announce(terms.length ? `No matching models. ${title}.` : title);
       return;
     }
   }
   const ordered = firstProvider === 'opencode' ? ['opencode', 'codex'] as const : providers;
-  const visibleProviders = scope === 'all' || scope === 'favorites'
-    ? ordered.filter(id => installed(id) || (scope === 'favorites' && (states[id].preferences?.favorites.length || states[id].saveError || states[id].loadFailed || states[id].loadingPreferences)))
-    : [scope];
+  const visibleProviders = resultScope === 'all' || resultScope === 'favorites'
+    ? ordered.filter(id => installed(id) || (resultScope === 'favorites' && (states[id].preferences?.favorites.length || states[id].saveError || states[id].loadFailed || states[id].loadingPreferences)))
+    : [resultScope];
 
   let count = 0;
   let hasStatus = false;
@@ -491,7 +501,7 @@ function renderResults(): void {
     const availableIds = new Set(catalog.map(model => model.id));
     let models = [...catalog];
     if (id === 'opencode') models.sort((a, b) => numeric.compare(a.label, b.label) || numeric.compare(a.id, b.id));
-    if (scope === 'favorites') {
+    if (resultScope === 'favorites') {
       const byId = new Map(models.map(model => [model.id, model]));
       models = distinguishNames((preferences?.favorites ?? []).map(key => {
         const known = byId.get(key);
@@ -499,7 +509,7 @@ function renderResults(): void {
         return {id: key, label: key.split('/').at(-1)!, source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []};
       }));
     } else if (id === 'codex' && preferences && installed(id) && !state.loadFailed) {
-      models.push(cliDefault);
+      models.push(cliDefaultModel());
     }
     models = models.filter(model => matchesQuery(model, id, terms));
     const status = state.saveError && (id !== activeId() || !installed(id))
@@ -524,13 +534,13 @@ function renderResults(): void {
   }
   if (!count) {
     if (terms.length) list.append(emptySearch());
-    else if (scope === 'favorites' && !hasStatus) list.append(statusBlock('No favorites yet', 'Use the star beside a model to find it here.'));
+    else if (resultScope === 'favorites' && !hasStatus) list.append(statusBlock('No favorites yet', 'Use the star beside a model to find it here.'));
   }
   bindResultShortcuts();
   syncResultTabStop();
   const loading = visibleProviders.some(id => installed(id) && states[id].status === 'loading');
-  const resultText = count ? `${count} ${count === 1 ? 'model' : 'models'} in ${labels[scope]}` :
-    loading ? 'Loading models' : terms.length ? 'No matching models' : scope === 'favorites' ? 'No favorites yet' : 'No models available';
+  const resultText = count ? `${count} ${count === 1 ? 'model' : 'models'} in ${labels[resultScope]}` :
+    loading ? 'Loading models' : terms.length ? 'No matching models' : resultScope === 'favorites' ? 'No favorites yet' : 'No models available';
   announce(`${resultText}.${hasStatus && !loading ? ' Check provider status in the results.' : ''}`);
 }
 
@@ -574,25 +584,21 @@ function renderSettings(): void {
     const group = element('div', 'model-efforts');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', id === 'codex' ? 'Reasoning effort' : 'Model variant');
-    const options = id === 'codex' ? [...model.efforts, ''] : [...model.efforts];
-    if (preferences.reasoningEffort && !options.includes(preferences.reasoningEffort)) options.push(preferences.reasoningEffort);
-    for (const value of options) {
-      const supported = !value || model.efforts.includes(value);
-      const label = value ? effortLabel(value) : 'Use model default';
-      const control = button('model-effort', supported ? label : `${label} (unavailable)`, () => {
-        if ((preferences.reasoningEffort ?? '') === value) return;
-        preferences.reasoningEffort = value || null;
+    for (const value of model.efforts) {
+      const control = button('model-effort', effortLabel(value), () => {
+        if (preferences.reasoningEffort === value) return;
+        preferences.reasoningEffort = value;
         changed(id);
         render();
       });
-      const checked = (preferences.reasoningEffort ?? '') === value;
+      const checked = preferences.reasoningEffort === value;
       control.dataset.focusKey = `settings:effort:${value}`;
       control.setAttribute('role', 'radio');
       control.setAttribute('aria-checked', String(checked));
-      control.disabled = !supported || !canSelect(id) || state.status !== 'ready';
+      control.disabled = !canSelect(id) || state.status !== 'ready';
       control.tabIndex = -1;
-      if (value && value === model.defaultEffort) {
-        control.setAttribute('aria-description', 'Model default');
+      if (value === defaultEffort(model)) {
+        control.setAttribute('aria-description', id === 'codex' ? 'Default reasoning effort' : 'Default model variant');
         const tag = element('span', 'model-effort-default', 'Default');
         tag.setAttribute('aria-hidden', 'true');
         control.append(tag);
@@ -619,41 +625,32 @@ function renderSettings(): void {
       controls[next].click();
     };
     settings.append(group);
-  } else if (model && model.id !== null && preferences.reasoningEffort) {
-    const reset = retryButton('Use default reasoning', 'settings:reset-effort', () => {
-      preferences.reasoningEffort = null;
-      changed(id);
-      render();
-    });
-    reset.disabled = !canSelect(id);
-    settings.append(statusBlock('Reasoning effort unavailable', 'This model uses its default reasoning.', reset));
   } else if (model) {
-    const message = model.id === null ? model.description :
-      id === 'codex' ? 'This model uses its default reasoning.' : 'This model offers no variants.';
+    const message = model.id === null ? 'Codex uses its configured reasoning.' :
+      id === 'codex' ? 'Reasoning is configured by this model.' : 'This model offers no variants.';
     settings.append(element('p', 'model-setting-description', message));
   }
   if (id === 'codex') {
     const speed = element('div', 'model-speed');
     speed.setAttribute('role', 'group');
     speed.setAttribute('aria-label', 'Codex speed');
-    speed.setAttribute('aria-description', 'Inherit uses the CLI setting. Fast may use more of your limit.');
-    for (const [enabled, label] of [[undefined, 'Inherit'], [false, 'Standard'], [true, 'Fast']] as const) {
+    speed.setAttribute('aria-description', 'Fast may use more of your limit.');
+    for (const [enabled, label] of [[false, 'Standard'], [true, 'Fast']] as const) {
       const control = button('', label, () => {
-        if (preferences.fastMode === enabled) return;
-        if (enabled === undefined) delete preferences.fastMode;
-        else preferences.fastMode = enabled;
+        if ((preferences.fastMode ?? false) === enabled) return;
+        preferences.fastMode = enabled;
         changed(id);
         render();
       });
       control.dataset.focusKey = `settings:speed:${label}`;
       control.disabled = !canSelect(id);
-      control.setAttribute('aria-pressed', String(preferences.fastMode === enabled));
+      control.setAttribute('aria-pressed', String((preferences.fastMode ?? false) === enabled));
       if (label === 'Fast') {
         control.title = 'Fast may use more of your limit.';
         const bolt = element('span', 'model-speed-bolt', '⚡︎');
         bolt.setAttribute('aria-hidden', 'true');
         control.prepend(bolt);
-      } else if (label === 'Inherit') control.title = 'Use the Codex CLI speed setting.';
+      }
       speed.append(control);
     }
     speedSlot.append(speed);
@@ -672,17 +669,23 @@ function updateDetailsVisibility(): void {
 function render(): void {
   updateTrigger();
   if (panel.hidden) return;
+  if (openingScopePending) {
+    const id = activeId();
+    const selected = id && states[id].preferences;
+    scope = selected?.model && selected.favorites.includes(selected.model) ? 'favorites' : id ?? 'all';
+    firstProvider = id ?? 'codex';
+    openingScopePending = pending() || !selected;
+  }
   const focused = document.activeElement as HTMLElement;
   const focusKey = panel.contains(focused) ? focused.dataset.focusKey : undefined;
   const oldStars = Array.from(list.querySelectorAll<HTMLButtonElement>('.model-favorite:enabled'));
   const favoriteIndex = oldStars.findIndex(star => star === focused);
   const listTop = list.scrollTop;
   const settingsTop = settingsGroup.scrollTop;
-  panel.dataset.scope = scope;
-  const searchLabel = searchAllOnInput || scope === 'all' ? 'Search all models' :
-    scope === 'favorites' ? 'Search favorites' : `Search ${labels[scope]} models`;
-  search.placeholder = searchLabel;
-  search.setAttribute('aria-label', searchLabel);
+  const searching = Boolean(search.value.trim());
+  panel.dataset.scope = searching ? 'all' : scope;
+  panel.toggleAttribute('data-searching', searching);
+  filters.hidden = searching;
   for (const {id, control} of filterButtons) control.setAttribute('aria-pressed', String(id === scope));
   renderResults();
   renderSettings();
@@ -779,9 +782,7 @@ function toggle(): void {
   if (!panel.hidden) return close();
   panel.hidden = false;
   trigger.setAttribute('aria-expanded', 'true');
-  scope = activeId() ?? 'all';
-  searchAllOnInput = true;
-  firstProvider = activeId() ?? 'codex';
+  openingScopePending = true;
   detailsOpen = false;
   search.value = '';
   selectionAnnouncement.textContent = '';
@@ -791,7 +792,6 @@ function toggle(): void {
   search.focus({preventScroll: true});
 }
 search.oninput = () => {
-  if (searchAllOnInput) scope = search.value.trim() ? 'all' : activeId() ?? 'all';
   resetResults();
   render();
 };
@@ -858,7 +858,7 @@ async function discover(id: Provider): Promise<Model[]> {
     return result.models.map(model => ({
       id: model.model, label: model.displayName, description: model.description,
       efforts: model.supportedReasoningEfforts.map(option => option.effort).filter(value => effortOrder.includes(value) && value !== 'none'),
-      defaultEffort: model.defaultReasoningEffort
+      defaultEffort: model.defaultReasoningEffort ?? undefined, isDefault: model.isDefault
     }));
   }
   const result = await api.discoverOpenCodeModels(project);
@@ -906,17 +906,17 @@ async function initialize(id: Provider, request: number): Promise<void> {
   state.models = catalog.status === 'fulfilled' ? distinguishNames(catalog.value) : [];
   state.error = catalog.status === 'rejected' && catalog.reason instanceof Error ? catalog.reason.message : undefined;
 
-  if (id === 'opencode' && state.preferences && state.status === 'ready') {
+  if (state.preferences && state.status === 'ready') {
     const {preferences} = state;
     let modified = false;
-    if (!preferences.model && state.models.length) {
+    if (id === 'opencode' && !preferences.model && state.models.length) {
       const version = (model: Model) => (model.label.match(/\d+(?:\.\d+)*/)?.[0] ?? model.id.match(/\d+(?:\.\d+)*/)?.[0] ?? '0');
       preferences.model = [...state.models].sort((a, b) => numeric.compare(version(b), version(a)) || numeric.compare(a.label, b.label))[0].id;
       modified = true;
     }
     const model = selectedModel(id);
-    if (model && !model.efforts.includes(preferences.reasoningEffort ?? '')) {
-      const fallback = preferredEffort(model);
+    if (model && model !== cliDefault && !model.efforts.includes(preferences.reasoningEffort ?? '')) {
+      const fallback = defaultEffort(model);
       if (preferences.reasoningEffort !== fallback) {
         preferences.reasoningEffort = fallback;
         modified = true;
@@ -975,11 +975,12 @@ pickerWindow.codexPickerReady = async (id = activeId()) => {
   if (issue) throw new Error(`Open the model picker and ${issue.message[0].toLowerCase()}${issue.message.slice(1)} before sending.`);
   if (!state.preferences) throw new Error('Open the model picker and retry loading preferences.');
   const {model: modelId, reasoningEffort, fastMode} = state.preferences;
+  const effort = id === 'codex' && modelId === null && !cliDefaultModel().efforts.length ? null : reasoningEffort;
   const revision = state.selectionRevision;
   while (state.savedRevision < revision && state.write) {
     if (!await state.write) break;
   }
   if (state.savedRevision < revision) throw new Error('Open the model picker and retry saving before sending.');
-  return {model: modelId, reasoningEffort, ...(id === 'codex' && fastMode !== undefined ? {fastMode} : {})};
+  return {model: modelId, reasoningEffort: effort, ...(id === 'codex' ? {fastMode: fastMode ?? false} : {})};
 };
 })();

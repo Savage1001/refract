@@ -22,9 +22,9 @@ async function openPicker(page: Page): Promise<void> {
       model('gpt-6.1-terra', 'GPT-6.1 Terra', '', efforts),
       model('gpt-6-luna', 'GPT-6 Luna', '', efforts)
     ]});
-    w.store.codexPreferencesLoad = async () => ({model: 'gpt-6.2-sol', reasoningEffort: 'high', favorites: [], fastMode: false});
+    w.store.codexPreferencesLoad = async () => ({model: 'gpt-6.2-sol', reasoningEffort: null, favorites: [], fastMode: false});
     w.store.discoverOpenCodeModels = async () => ({ok: true, models: [
-      {id: 'lmstudio/qwen-3.5-9b', name: 'Qwen 3.5 9B', variants: ['high', 'max']},
+      {id: 'lmstudio/qwen-3.5-9b', name: 'Qwen 3.5 9B', variants: ['low', 'high', 'max']},
       {id: 'opencode/deepseek-v4-flash', name: 'DeepSeek V4 Flash Free', variants: ['low', 'high']},
       {id: 'opencode/beam-free', name: 'Beam Free', variants: []},
       {id: 'opencode/big-pickle', name: 'Big Pickle', variants: []},
@@ -32,14 +32,14 @@ async function openPicker(page: Page): Promise<void> {
       {id: 'opencode/longcat-free', name: 'LongCat Free', variants: []},
       {id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', variants: ['low', 'medium', 'high']}
     ]});
-    w.store.openCodePreferencesLoad = async () => ({model: 'lmstudio/qwen-3.5-9b', reasoningEffort: 'high', favorites: ['lmstudio/qwen-3.5-9b']});
+    w.store.openCodePreferencesLoad = async () => ({model: 'lmstudio/qwen-3.5-9b', reasoningEffort: null, favorites: ['lmstudio/qwen-3.5-9b']});
   });
   await page.getByRole('button', {name: 'Open Spectral methods for fluid dynamics', exact: true}).click();
   await page.locator('#source').waitFor({state: 'visible'});
   await page.getByText('Compiled', {exact: true}).waitFor();
   await page.waitForFunction(() => document.querySelector('.model-trigger-label')?.textContent === 'GPT-6.2 Sol');
   await page.locator('.model-trigger').click();
-  await page.getByRole('radio', {name: 'High', exact: true}).waitFor();
+  await page.getByRole('radio', {name: 'Low', exact: true, checked: true}).waitFor();
   await page.evaluate(() => document.fonts.ready);
 }
 
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
         await page.keyboard.press('Escape');
         await page.setViewportSize({width: 445, height: 650});
         await page.locator('.model-trigger').click();
-        await page.getByRole('searchbox', {name: /^Search (?:.+ models|favorites)$/}).fill('qwen');
+        await page.getByRole('searchbox', {name: 'Search models'}).fill('qwen');
         await page.locator('.model-panel').screenshot({path: path.join(output, 'search-compact.png')});
       }
       if (errors.length) throw new Error(errors.join('\n'));

@@ -54,7 +54,7 @@ test('headless composition confirmation cannot send or select, and ordinary Ente
   await openProject(page); const input=page.locator('#chat-input');await input.fill('Research question');
   await input.dispatchEvent('keydown',{key:'Enter',isComposing:true});await input.dispatchEvent('keydown',{key:'Enter',keyCode:229});
   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.chatSend ?? 0),0);
-  await page.locator('.model-trigger').click();const search=page.getByRole('searchbox',{name:/^Search .*models$/});await search.fill('Codex Research');
+  await page.locator('.model-trigger').click();const search=page.getByRole('searchbox',{name:'Search models'});await search.fill('Codex Research');
   await search.dispatchEvent('keydown',{key:'Enter',isComposing:true});assert.equal(await page.locator('.model-panel').isVisible(),true);
   assert.equal(await page.locator('.model-trigger-label').textContent(),'CLI default');
   await search.press('Enter');assert.equal(await page.locator('.model-trigger-label').textContent(),'Research model');await page.keyboard.press('Escape');
@@ -104,7 +104,7 @@ test('headless selected states, picker dismissal, and default-choice styling agr
   assert.equal(await page.locator('#file-list button[title="sections/abstract.tex"]').getAttribute('aria-current'),'page');await page.getByRole('button',{name:'main.tex',exact:true}).click();
   await page.locator('#tools').click();await page.locator('#tool-versions').click();assert.equal(await page.locator('#tool-versions').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('#tool-info').getAttribute('aria-pressed'),'false');await page.locator('#tools').click();
   for(const mode of ['light','dark'] as const) {
-   await page.emulateMedia({colorScheme:mode});await page.locator('.model-trigger').click();
+   await page.emulateMedia({colorScheme:mode});await page.locator('.model-trigger').click();await page.getByRole('button',{name:'Codex models'}).click();
    const catalog=page.getByRole('region',{name:'Codex',exact:true});
    const choice=catalog.getByRole('button',{name:'Research model',exact:true}), fallback=catalog.getByRole('button',{name:'CLI default',exact:true});
    assert.equal(await fallback.evaluate(el=>getComputedStyle(el).fontSize),await choice.evaluate(el=>getComputedStyle(el).fontSize));
