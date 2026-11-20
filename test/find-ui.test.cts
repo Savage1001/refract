@@ -28,7 +28,7 @@ test('live find retains focus, reveals distant matches, wraps and handles shortc
  assert.equal(await status.textContent(),'1 / 2');
  await query.fill('missing');assert.equal(await status.textContent(),'No matches');
  await query.fill('');assert.equal(await status.textContent(),'Type to search');
- await query.fill('needle');await query.press('Escape');assert.equal(await page.locator('.editor-find').isHidden(),true);
+ await query.fill('needle');await query.press('Escape');await page.locator('.editor-find').waitFor({state:'hidden'});
  await source.press('Control+f');assert.equal(await query.inputValue(),'needle');
  await query.press('F3');assert.equal(await status.textContent(),'2 / 2');
  await page.getByLabel('Replace with').fill('$1');await page.getByLabel('Replace with').press('Enter');

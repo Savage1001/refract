@@ -20,7 +20,8 @@ async function open(page: Page, waitForPdf = true): Promise<void> {
   await pause(page);
 }
 
-type Scene = [name: string, run: (page: Page) => Promise<void>, theme?: 'dark', reduced?: 'reduce'];
+type Scene = [name: string, run: (page: Page) => Promise<void>, theme?: 'dark', reduced?: 'reduce',
+  viewport?: {width:number;height:number}];
 const scenes: Scene[] = [
   ['01-control-feedback', async page => {
     const settings = page.locator('#settings');
@@ -185,11 +186,49 @@ const scenes: Scene[] = [
     await click(page, '#pane-agent');
     await click(page, '#collapse');
   }, 'dark', 'reduce'],
+  ['18-compact-workspace', async page => {
+    await open(page, false);
+    await click(page, '#pane-preview');
+    await page.locator('#pdf-area canvas').first().waitFor();
+    await click(page, '#pane-editor');
+    await click(page, '#tools');
+    await click(page, '#pane-editor');
+  }, 'dark', undefined, {width:1000,height:680}],
+  ['19-rapid-reversal', async page => {
+    await page.locator('#grid-view').click();
+    await page.locator('#list-view').click();
+    await pause(page);
+    await open(page);
+    const collapse = page.locator('#collapse');
+    await collapse.click();
+    await collapse.click();
+    await pause(page);
+    await page.locator('#pane-preview').click();
+    await page.locator('#pane-preview').click();
+    await pause(page);
+  }],
+  ['20-content-search-results', async page => {
+    await page.evaluate(() => {
+      const w = window as unknown as {store:{search:(id:string,query:string)=>Promise<unknown[]>}};
+      w.store.search = async (_, query) => query === 'stable'
+        ? [{file:'sections/abstract.tex',line:2,column:2,text:'A stable spectral approximation.'}]
+        : [];
+    });
+    await open(page);
+    const input = page.locator('#file-search-input');
+    await input.pressSequentially('stable', {delay:55});
+    await page.locator('#file-search-results').getByText('1 result', {exact:true}).waitFor();
+    await pause(page);
+    await input.fill('no match');
+    await page.getByText('No matches. Try another search.', {exact:true}).waitFor();
+    await pause(page);
+  }],
 ];
 
-async function record([name, run, theme, reducedMotion]: Scene): Promise<void> {
+async function record([name, run, theme, reducedMotion, viewport]: Scene): Promise<void> {
+  const size = viewport ?? {width:1152,height:720};
   const {browser, page, errors} = await fixture.openHeadlessUi(theme, undefined, {
-    reducedMotion, recordVideo:{dir:output, size:{width:1152,height:720}}
+    reducedMotion, recordVideo:{dir:output, size}, ...(viewport ? {viewport} : {})
   });
   const video = page.video()!;
   try {
@@ -226,6 +265,7 @@ async function main(): Promise<void> {
   await fs.mkdir(output, {recursive:true});
   const filter = process.argv[2];
   const selected = scenes.filter(([name]) => !filter || new RegExp(filter).test(name));
+  assert.ok(selected.length, 'No recording matches the scene filter');
   for (const scene of selected) await record(scene);
 }
 

@@ -15,17 +15,11 @@ async function resizeDesktop(app: import('playwright').ElectronApplication, page
 async function chooseView(page: import('playwright').Page, view:'split'|'editor'|'pdf'):Promise<void> {
  // Hidden Electron windows do not reliably deliver animation frames after viewport emulation.
  await page.evaluate(()=>window.dispatchEvent(new Event('resize')));
- if(await page.locator('#tools-panel').isVisible()) {
-  await page.locator('#tools').click();
-  await page.locator('#tools-panel').waitFor({state:'hidden'});
- }
+ if(await page.locator('#tools-panel').isVisible()) await page.locator('#tools').click();
  const target={agent:view!=='pdf',editor:view!=='pdf',preview:view!=='editor'};
  for(const enabled of [true,false]) for(const name of ['agent','editor','preview'] as const) {
   const button=page.locator(`#pane-${name}`);
-  if(target[name]===enabled && (await button.getAttribute('aria-pressed')==='true')!==enabled) {
-   await button.click();
-   await page.locator(`#pane-${name}[aria-pressed=${enabled}]`).waitFor();
-  }
+  if(target[name]===enabled && (await button.getAttribute('aria-pressed')==='true')!==enabled) await button.click();
  }
  await page.locator('#pane-editor').focus();
 }
@@ -162,7 +156,7 @@ test('workspace layout transitions always reveal and focus the requested editor'
   await page.locator('#source').waitFor({state:'visible'});
   const focusEditor = () => chooseView(page,'editor');
   const verifyEditor = async (): Promise<void> => {
-   await page.locator('#source').waitFor();
+   assert.equal(await page.locator('#source').isVisible(), true);
    assert.equal(await page.locator('#pane-editor').evaluate(el => el === document.activeElement), true);
    assert.equal(await page.locator('#workspace').evaluate(el => el.classList.contains('show-compact-preview') || el.classList.contains('tools-expanded')), false);
   };
@@ -172,18 +166,17 @@ test('workspace layout transitions always reveal and focus the requested editor'
     await resizeDesktop(app, page, width, 900);
     const split = () => chooseView(page, width <= 1200 ? 'editor' : 'split');
     await chooseView(page,'pdf');
-    await page.locator('#source').waitFor({state:'hidden'});
+    assert.equal(await page.locator('#source').isVisible(), false);
     await focusEditor(); await verifyEditor();
-    await page.locator('.pdf-pane').waitFor({state:'hidden'});
+    assert.equal(await page.locator('.pdf-pane').isVisible(), false);
     await split();
     await page.locator('#tools').click();
     await page.getByRole('button', {name:'Expand tools panel', exact:true}).click();
-    await page.locator('#source').waitFor({state:'hidden'});
+    assert.equal(await page.locator('#source').isVisible(), false);
     await focusEditor(); await verifyEditor();
     assert.equal(await page.locator('.expand-tools').getAttribute('aria-label'), 'Expand tools panel');
     await split();
     await page.getByRole('button', {name:'Expand chat', exact:true}).click();
-    await page.locator('#pane-editor[aria-pressed=false]').waitFor();
     await focusEditor(); await verifyEditor();
     assert.equal(await page.getByRole('button', {name:'Expand chat', exact:true}).getAttribute('aria-pressed'), 'false');
     await split();

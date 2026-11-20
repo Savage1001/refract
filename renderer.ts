@@ -8,41 +8,28 @@ function actionIcon(name:ActionIcon):SVGSVGElement {
 }
 declare const store: any;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-let layoutTransition: ViewTransition | undefined;
-let applyPendingLayout: (() => void) | undefined;
-let sidebarAnimation: Animation | undefined;
+const layoutMotionId = 'layout-fade';
 
-// Scoped transitions are available in Chromium before the TypeScript DOM types.
-type MotionSurface = Element & {startViewTransition?: (update: () => void) => ViewTransition};
-
-function animateLayout(surface: MotionSurface, update: () => void): void {
-  // A new input wins over the outgoing snapshot, but both changes must apply in order.
-  applyPendingLayout?.();
-  layoutTransition?.skipTransition();
-  if (reducedMotion.matches || document.visibilityState !== 'visible' || !surface.startViewTransition) {
-    update();
-    return;
-  }
-  const apply = () => {
-    if (applyPendingLayout !== apply) return;
-    applyPendingLayout = undefined;
-    update();
-  };
-  applyPendingLayout = apply;
-  const transition = surface.startViewTransition(apply);
-  layoutTransition = transition;
-  void transition.ready.catch(() => {}); // An interrupted snapshot is expected.
-  const clear = () => {
-    if (layoutTransition === transition) layoutTransition = undefined;
-  };
-  void transition.finished.then(clear, error => { clear(); console.error('Layout update failed', error); });
+// Commit geometry before fading the live content so pointer and keyboard input
+// always reach the current layout. Only opacity changes on animation frames.
+function playLayoutMotion(surface: Element, from = .82): void {
+  if (reducedMotion.matches || document.visibilityState !== 'visible') return;
+  const style = getComputedStyle(surface);
+  const opacity = Math.min(Number(style.opacity), from);
+  surface.getAnimations().find(animation => animation.id === layoutMotionId)?.cancel();
+  surface.animate([{opacity}, {opacity:1}], {
+    id: layoutMotionId,
+    duration: Number(style.getPropertyValue('--motion-layout-ms')),
+    easing: style.getPropertyValue('--motion-ease').trim()
+  });
 }
 
 reducedMotion.addEventListener('change', () => {
-  if (!reducedMotion.matches) return;
-  applyPendingLayout?.();
-  layoutTransition?.skipTransition();
-  sidebarAnimation?.cancel();
+  if (reducedMotion.matches) {
+    for (const animation of document.getAnimations()) {
+      if (animation.id === layoutMotionId) animation.cancel();
+    }
+  }
 });
 
 let projects = [], active = null, currentFile = 'main.tex', opening = 0, projectOpening = 0, currentChat = 'default';
@@ -1673,28 +1660,19 @@ $('#source').addEventListener('keydown', (event: KeyboardEvent) => {
   editor.setSelectionRange(first,last);document.execCommand('insertText',false,replacement);
   editor.setSelectionRange(first+mapOffset(start-first),first+mapOffset(end-first),direction);
 });
-const sidebarElement = document.querySelector<HTMLElement>('.sidebar')!;
 const expandChat = document.createElement('button'); expandChat.type = 'button'; expandChat.className = 'expand-chat'; expandChat.textContent = 'Expand chat'; expandChat.setAttribute('aria-pressed','false');
-expandChat.onclick = () => animateLayout(workspaceShell, () => {
+expandChat.onclick = () => {
   const expanded=!$('.editor-pane').classList.contains('chat-expanded');
   closeLayoutTools();paneLayout={...paneLayout,agent:true,editor:!expanded};applyPaneLayout();
-});
+  playLayoutMotion(workspaceShell);
+};
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
 $('#toggle-agent').onclick = () => togglePane('agent');
 $('#collapse').onclick = () => {
-  const width = sidebarElement.getBoundingClientRect().width;
-  sidebarAnimation?.cancel();
-  const collapsed = sidebarElement.classList.toggle('collapsed');
+  const collapsed = $('.sidebar').classList.toggle('collapsed');
   $('#collapse').setAttribute('aria-expanded', String(!collapsed));
   $('#collapse').title = $('#collapse').ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
-  if (!reducedMotion.matches) {
-    const motion = getComputedStyle(sidebarElement);
-    sidebarAnimation = sidebarElement.animate([{width:`${width}px`}, {width:`${sidebarElement.offsetWidth}px`}], {
-      duration: parseFloat(motion.getPropertyValue('--motion-layout')),
-      easing: motion.getPropertyValue('--motion-ease').trim()
-    });
-  }
 };
 $('#outline-toggle').onclick = () => { const list = $('#outline-list'); list.hidden = !list.hidden; $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden)); };
 function setProjectView(view: 'grid' | 'list', persist = true): void {
@@ -1710,8 +1688,9 @@ function setProjectView(view: 'grid' | 'list', persist = true): void {
 for (const view of ['grid', 'list'] as const) {
   const button = document.getElementById(`${view}-view`)!;
   button.onclick = () => {
-    if (button.getAttribute('aria-pressed') !== 'true')
-      animateLayout(document.getElementById('list')!, () => setProjectView(view));
+    if (button.getAttribute('aria-pressed') === 'true') return;
+    setProjectView(view);
+    playLayoutMotion($('#list'), .72);
   };
 }
 try { if (localStorage.getItem('refract-project-view') === 'grid') setProjectView('grid', false); } catch {}
@@ -1889,14 +1868,15 @@ function renderToolPanel() {
 }
 const toolsButton = document.querySelector<HTMLButtonElement>('#tools')!;
 toolsButton.append(actionIcon('wrench'));
-toolsButton.onclick = () => animateLayout(workspaceShell, () => {
+toolsButton.onclick = () => {
   showingTools = !showingTools;
   $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
   setToolsExpansion(null);
   toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
-});
+  if (compactWorkspace.matches) playLayoutMotion(workspaceShell);
+};
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 let toolsExpansion: 'manual' | 'comparison' | 'logs' | null = null;
 function setToolsExpansion(value: typeof toolsExpansion): void {
@@ -1905,7 +1885,10 @@ function setToolsExpansion(value: typeof toolsExpansion): void {
   expandTools.textContent = value ? 'Collapse panel' : 'Expand panel';
   expandTools.setAttribute('aria-label', value ? 'Collapse tools panel' : 'Expand tools panel');
 }
-expandTools.onclick = () => animateLayout(workspaceShell, () => setToolsExpansion(toolsExpansion ? null : 'manual'));
+expandTools.onclick = () => {
+  setToolsExpansion(toolsExpansion ? null : 'manual');
+  playLayoutMotion(workspaceShell);
+};
 $('.tool-tabs').append(expandTools);
 $('#tool-info').onclick = () => { selectedTool = 'info'; renderToolPanel(); };
 $('#tool-logs').onclick = () => { selectedTool = 'logs'; renderToolPanel(); };
@@ -2403,6 +2386,7 @@ async function runProjectSearch() {
       return button;
     }));
     if (query.trim() && !results.length) { const empty = document.createElement('p'); empty.className='search-empty'; empty.textContent='No matches. Try another search.'; $('#file-search-results').append(empty); }
+    playLayoutMotion($('#file-search-results'), .72);
   } catch (error) { if (active?.id === id) report('search project',error); }
 }
 $('#file-search-input').oninput = () => { clearFileSearch.hidden = !$('#file-search-input').value; clearTimeout(searchTimer); ++searchRequest; if ($('#file-search-input').value.trim()) searchTimer = setTimeout(runProjectSearch,200); else void runProjectSearch(); };
@@ -2451,7 +2435,7 @@ for(const [name,label,controls] of [['agent','Agent','chat'],['editor','Editor',
   button.className='pane-toggle';button.setAttribute('aria-label',label);button.setAttribute('aria-controls',name==='editor'?'editor-content':controls);
   const text = document.createElement('span'); text.textContent = label; text.setAttribute('aria-hidden', 'true');
   button.append(actionIcon(name), text);
-  button.onclick=()=>animateLayout(workspaceShell, () => togglePane(name));
+  button.onclick=()=>togglePane(name);
   paneButtons.set(name,button);paneToggles.append(button);
 }
 workspaceShell.querySelector('.editor-wrap')!.id='editor-content';
@@ -2472,6 +2456,7 @@ function togglePane(name:PaneName):void {
     if (!paneLayout.agent && !paneLayout.editor && !paneLayout.preview) paneLayout.editor = true;
   }
   applyPaneLayout();
+  playLayoutMotion(workspaceShell);
 }
 function revealSource(): void {
   if (!displayedPaneLayout().editor) {
@@ -2581,12 +2566,11 @@ function resizeHandle(id: string, axis: "x" | "y", apply: (delta: number) => voi
     }
   });
 }
-const sidebarResize = sidebarElement;
+const sidebarResize = document.querySelector<HTMLElement>(".sidebar")!;
 const workspaceResize = document.getElementById("workspace")!;
 const editorResize = document.querySelector<HTMLElement>(".editor-pane")!;
 const chatResize = document.getElementById("chat")!;
 resizeHandle("sidebar-resize", "x", delta => {
-  sidebarAnimation?.cancel();
   sidebarResize.style.setProperty("--sidebar-width", `${Math.max(150, Math.min(Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth + delta))}px`);
 });
 resizeHandle("workspace-resize", "x", delta => {

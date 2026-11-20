@@ -3305,12 +3305,13 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   :root {
     --motion-control:120ms;
     --motion-overlay:150ms;
-    --motion-layout:200ms;
+    --motion-layout-ms:200;
+    --motion-layout:calc(var(--motion-layout-ms) * 1ms);
     --motion-ease:cubic-bezier(.2,.7,.2,1);
   }
 
   /* Keep keyboard outlines immediate. Only transition painted control states. */
-  :is(button, summary, input, select, textarea:not(#source), .composer, .project-search, .model-search, #list article, .pdf-annotation-link),
+  :is(button, summary, input, select, textarea:not(#source), .project-search, .model-search, #list article, .pdf-annotation-link),
   :is(button, summary)>:is(.ui-icon, .folder-icon, .fast-icon) {
     transition:background-color var(--motion-control) ease-out,
       border-color var(--motion-control) ease-out, color var(--motion-control) ease-out,
@@ -3320,6 +3321,25 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   button:enabled:active:not([aria-disabled=true], [aria-haspopup], .project-open, .project-name) {
     scale:.97;
   }
+
+  .composer {
+    transition:border-color var(--motion-control) ease-out;
+  }
+
+  /* Resizing the live editor and PDF once keeps sidebar motion cheap. */
+  .sidebar:not(.collapsed) :is(#project-side, .brand-home) {
+    animation:motion-surface var(--motion-layout) var(--motion-ease);
+  }
+  .sidebar:not(.collapsed) .brand-home span {
+    animation:motion-sidebar-label var(--motion-layout) var(--motion-ease);
+  }
+  @keyframes motion-sidebar-label {
+    from { translate:-4px 0; }
+  }
+  #collapse .ui-icon {
+    transition:scale var(--motion-layout) var(--motion-ease), color var(--motion-control) ease-out;
+  }
+  .sidebar.collapsed #collapse .ui-icon { scale:.86; }
 
   :is(#outline-toggle .ui-icon, .file-tree .folder-chevron) {
     transition:transform var(--motion-overlay) var(--motion-ease), color var(--motion-control) ease-out;
@@ -3398,6 +3418,35 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     dialog[open]::backdrop { opacity:0; }
   }
 
+  /* Find receives focus on open. Animate its border while leaving the field
+     and its focus indicator at full opacity from the first frame. */
+  .editor-find {
+    opacity:1;
+    transition:border-color var(--motion-overlay) var(--motion-ease);
+  }
+
+  .latex-completions {
+    opacity:1;
+    translate:0;
+    transition:opacity var(--motion-control) var(--motion-ease),
+      translate var(--motion-control) var(--motion-ease);
+  }
+
+  :is(.editor-find, .latex-completions)[hidden] {
+    opacity:0;
+    pointer-events:none;
+    interactivity:inert;
+    transition:opacity var(--motion-control) var(--motion-ease),
+      translate var(--motion-control) var(--motion-ease), display var(--motion-control) allow-discrete;
+  }
+
+  .latex-completions[hidden] { translate:0 -3px; }
+
+  @starting-style {
+    .editor-find:not([hidden]) { border-bottom-color:color-mix(in srgb, var(--accent) 55%, var(--border)); }
+    .latex-completions:not([hidden]) { opacity:.65; translate:0 -3px; }
+  }
+
   /* Disclosure rows can grow in place without a measured height or a timer. */
   :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .compile-error details) {
     interpolate-size:allow-keywords;
@@ -3435,9 +3484,16 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   }
 
   /* Keep the editor, PDF pages and picker anchors at their true coordinates. */
-  :is(#projects, #workspace, .workspace-topbar, .sidebar, #project-side, #file-search, #file-list,
-    #outline-list, #chat-list, #tools-panel, #pdf-content, #image-preview, #file-preview,
-    .model-catalog, .model-settings-group, .editor-find, .latex-completions, .project-empty,
+  :is(#projects, #workspace, .workspace-topbar, .sidebar, #file-search, #file-list, #outline-list,
+    #chat-list, #tools-panel, #pdf-content, .model-catalog, .model-settings-group) {
+    animation:motion-surface var(--motion-overlay) var(--motion-ease);
+  }
+
+  @keyframes motion-surface {
+    from { opacity:.8; }
+  }
+
+  :is(#image-preview, #file-preview, .project-empty,
     .settings-download, #restart-update, .preview-status, .chat-progress, .field-error, .draft-attachment,
     .tool-heading, .pdf-pages, .compile-error, .project-page-thumbnail, .recovery-success) {
     animation:motion-appear var(--motion-overlay) var(--motion-ease);
@@ -3455,15 +3511,5 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     from { opacity:0; translate:0 5px; }
   }
 
-  :is(.workspace-shell, #list)::view-transition { pointer-events:none; }
-
-  :is(.workspace-shell :is(#editor-content, .chat, .pdf-pane), #list > article) {
-    view-transition-name:match-element;
-  }
-
-  :is(.workspace-shell, #list)::view-transition-group(*) {
-    animation-duration:var(--motion-layout);
-    animation-timing-function:var(--motion-ease);
-  }
 }
 .codex-account-actions { display:flex; flex-wrap:wrap; gap:8px; }

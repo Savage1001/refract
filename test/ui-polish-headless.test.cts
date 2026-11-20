@@ -202,17 +202,17 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   assert.ok(boxes.every(box=>box.y===boxes[0].y && box.width===28 && box.height===32));
   assert.equal(await page.getByRole('button',{name:'Deleted files',exact:true}).getAttribute('title'),'Deleted files');
   assert.equal(await page.getByRole('button',{name:'Add file or folder',exact:true}).locator('svg').count(),1);
-  await page.locator('#pane-preview').click();await page.locator('.pdf-pane').waitFor({state:'hidden'});
-  await page.locator('#pane-agent').click();await page.locator('#chat').waitFor({state:'hidden'});
-  await page.locator('#pane-editor').click();await page.locator('#source').waitFor();
+  await page.locator('#pane-preview').click();assert.equal(await page.locator('.pdf-pane').isVisible(),false);
+  await page.locator('#pane-agent').click();assert.equal(await page.locator('#chat').isVisible(),false);
+  await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);
   await page.locator('#pane-preview').click();await page.locator('#pane-editor').click();
-  await page.locator('.editor-pane').waitFor({state:'hidden'});
-  await page.locator('#pane-preview').click();await page.locator('#source').waitFor();
+  assert.equal(await page.locator('.editor-pane').isVisible(),false);
+  await page.locator('#pane-preview').click();assert.equal(await page.locator('#source').isVisible(),true);
   await page.locator('#tools').click();await page.getByRole('button',{name:'Expand tools panel',exact:true}).click();
-  await page.locator('#pane-agent').click();await page.locator('#tools-panel').waitFor({state:'hidden'});await page.locator('#chat').waitFor();
+  await page.locator('#pane-agent').click();assert.equal(await page.locator('#tools-panel').isVisible(),false);assert.equal(await page.locator('#chat').isVisible(),true);
   await page.setViewportSize({width:900,height:650});await page.locator('#pane-preview').click();
-  await page.locator('.pdf-pane').waitFor();assert.equal(await page.locator('#source').isVisible(),false);assert.equal(await page.locator('#chat').isVisible(),false);
-  await page.locator('#pane-editor').click();await page.locator('#source').waitFor();assert.equal(await page.locator('.pdf-pane').isVisible(),false);
+  assert.equal(await page.locator('#source').isVisible(),false);assert.equal(await page.locator('#chat').isVisible(),false);assert.equal(await page.locator('.pdf-pane').isVisible(),true);
+  await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);assert.equal(await page.locator('.pdf-pane').isVisible(),false);
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
 });
@@ -460,7 +460,6 @@ test('headless project actions duplicate the selected home project in either vie
   });
   for(const view of ['list','grid']) {
    await page.locator(`#${view}-view`).click();
-   await page.locator(`#${view}-view[aria-pressed=true]`).waitFor();
    await actions.press('Enter');
    await duplicate.waitFor();
    assert.equal(await duplicate.locator('svg[aria-hidden="true"]').count(),1);
