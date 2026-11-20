@@ -10,6 +10,8 @@ declare const store: any;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const uiMotionId = 'refract-motion';
 const activeMotion = new Map<Element, Animation>();
+type MotionDuration = '--motion-layout-ms' | '--motion-control-ms';
+const motionTimings = new Map<MotionDuration, KeyframeAnimationOptions>();
 
 function motionEnabled(): boolean {
   return !reducedMotion.matches && document.visibilityState === 'visible';
@@ -19,13 +21,21 @@ function stopMotion(surface: Element): void {
   activeMotion.get(surface)?.cancel();
 }
 
-function motionTiming(duration = '--motion-layout-ms'): KeyframeAnimationOptions {
+function isMoving(animation?: Animation): boolean {
+  return !!animation && (animation.pending || animation.playState === 'running');
+}
+
+function motionTiming(duration: MotionDuration = '--motion-layout-ms'): KeyframeAnimationOptions {
+  const cached = motionTimings.get(duration);
+  if (cached) return cached;
   const style = getComputedStyle(document.documentElement);
-  return {
+  const timing = {
     id: uiMotionId,
     duration: Number(style.getPropertyValue(duration)),
     easing: style.getPropertyValue('--motion-ease').trim()
   };
+  motionTimings.set(duration, timing);
+  return timing;
 }
 
 function playMotion(surface: Element, keyframes: Keyframe[], timing = motionTiming(), onFinish?: () => void): Animation {
@@ -45,7 +55,8 @@ function playMotion(surface: Element, keyframes: Keyframe[], timing = motionTimi
 // always reach the current layout. Only opacity changes on animation frames.
 function playLayoutMotion(surface: Element, from = .82, previous?: Animation): Animation | undefined {
   if (!motionEnabled() || !surface.checkVisibility()) return;
-  const opacity = Math.min(Number(getComputedStyle(surface).opacity), from);
+  const currentOpacity = Number(getComputedStyle(surface).opacity);
+  const opacity = isMoving(activeMotion.get(surface)) ? currentOpacity : Math.min(currentOpacity, from);
   previous?.cancel();
   return playMotion(surface, [{opacity}, {opacity:1}]);
 }
@@ -58,11 +69,16 @@ reducedMotion.addEventListener('change', () => {
   if (reducedMotion.matches) stopUiMotion();
 });
 
+document.addEventListener('focusin', event => {
+  if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) return;
+  for (let surface: Element | null = event.target; surface; surface = surface.parentElement) stopMotion(surface);
+});
+
 const exitProperties = ['--exit-left', '--exit-top', '--exit-width', '--exit-height', '--exit-display'] as const;
 let workspaceMotion: Animation | undefined;
 
 function playWorkspaceMotion(surface: Element, interrupt = true): void {
-  if (!interrupt && workspaceMotion && (workspaceMotion.pending || workspaceMotion.playState === 'running')) return;
+  if (!interrupt && isMoving(workspaceMotion)) return;
   const next = playLayoutMotion(surface, .82, workspaceMotion);
   if (!next) return;
   workspaceMotion = next;
@@ -583,7 +599,7 @@ async function openProject(p) {
   const request = ++projectOpening;
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
-  ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = !$('#files-tab').classList.contains('active'); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
+  ++searchRequest; clearTimeout(searchTimer); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
   attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p;
   suspendPickerForProject(p.id);
   restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
@@ -745,13 +761,13 @@ $('#source').addEventListener('keyup', updateActiveLine);
 $('#search').oninput = renderProjects;
 $('#clear-search').onclick = () => { $('#search').value = ''; renderProjects(); $('#search').focus(); };
 $('#files-tab').onclick = () => {
-  swapSurfaces([$('#file-search'), $('#file-list'), $('#outline')], [$('#chat-list')]);
+  swapSurfaces([$('#files-surface')], [$('#chat-list')]);
   void runProjectSearch();
   $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true');
   $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false');
 };
 $('#chats-tab').onclick = () => {
-  swapSurfaces([$('#chat-list')], [$('#file-search'), $('#file-list'), $('#outline')]);
+  swapSurfaces([$('#chat-list')], [$('#files-surface')]);
   ++searchRequest; clearTimeout(searchTimer);
   $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true');
   $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false');
@@ -1977,7 +1993,7 @@ function renderToolPanel(animateContent = false) {
 
     engineLabel.className = 'engine-setting'; const engineHint = document.createElement('small'); engineHint.id='engine-hint'; engineHint.textContent='Choose the compiler used to build this project.'; engine.setAttribute('aria-describedby',engineHint.id); engineLabel.append(engine,engineHint); body.append(title, facts, engineLabel, draftLabel);
   }
-  if (animateContent) playWorkspaceMotion(body);
+  if (animateContent) playWorkspaceMotion(body, false);
 }
 const toolsButton = document.querySelector<HTMLButtonElement>('#tools')!;
 toolsButton.append(actionIcon('wrench'));
@@ -1993,15 +2009,14 @@ toolsButton.onclick = () => {
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 let toolsExpansion: 'manual' | 'comparison' | 'logs' | null = null;
 function setToolsExpansion(value: typeof toolsExpansion): void {
+  const changed = !!toolsExpansion !== !!value;
   toolsExpansion = value;
   $('#workspace').classList.toggle('tools-expanded', !!value);
   expandTools.textContent = value ? 'Collapse panel' : 'Expand panel';
   expandTools.setAttribute('aria-label', value ? 'Collapse tools panel' : 'Expand tools panel');
+  if (changed && showingTools) playWorkspaceMotion(workspaceShell);
 }
-expandTools.onclick = () => {
-  setToolsExpansion(toolsExpansion ? null : 'manual');
-  playWorkspaceMotion(workspaceShell);
-};
+expandTools.onclick = () => setToolsExpansion(toolsExpansion ? null : 'manual');
 $('.tool-tabs').append(expandTools);
 for (const tab of ['info','logs','versions','comments'] as const) {
   $(`#tool-${tab}`).onclick = () => {
@@ -2133,7 +2148,7 @@ async function renderVersions(animateContent = false) {
       const replacement = Array.from(body.querySelectorAll<HTMLButtonElement>('button[data-version-focus]')).find(button => button.dataset.versionFocus === focused && !button.disabled);
       (replacement ?? $('#tool-versions')).focus();
     }
-    if (animateContent) playWorkspaceMotion(body);
+    if (animateContent) playWorkspaceMotion(body, false);
   } catch (error) { report('load versions', error); }
 }
 interface CommentRecord { id:string; file:string; quote:string; text:string; resolved:boolean; created?:string; anchor?:{status:string}; replies?:{text:string}[] }
@@ -2241,7 +2256,7 @@ async function renderComments(restoreFocus?:CommentFocusRestore, animateContent 
     };
     body.replaceChildren(heading,search,text,add,list); display();
     if (focusedKey) Array.from(body.querySelectorAll<HTMLElement>('[data-comment-focus]')).find(control => control.dataset.commentFocus === focusedKey)?.focus({preventScroll:true});
-    if (animateContent) playWorkspaceMotion(body);
+    if (animateContent) playWorkspaceMotion(body, false);
   } catch (error) { report('load comments',error); }
 }
 
@@ -2477,7 +2492,7 @@ $('#file-search').addEventListener('keydown', event => {
   clearFileSearch.click();
 });
 async function runProjectSearch() {
-  if (!active || $('#file-search').hidden) return;
+  if (!active || $('#files-surface').hidden) return;
   const request = ++searchRequest, id = active.id, query = $('#file-search-input').value;
   if (!query.trim()) {
     fileSearchStatus.textContent = '';
@@ -2486,7 +2501,7 @@ async function runProjectSearch() {
   }
   try {
     const results = await store.search(id,query);
-    if (request !== searchRequest || active?.id !== id || $('#file-search').hidden) return;
+    if (request !== searchRequest || active?.id !== id || $('#files-surface').hidden) return;
     const count = document.createElement('p'); count.className = 'search-count'; count.textContent = `${results.length} ${results.length === 1 ? 'result' : 'results'}`;
     fileSearchStatus.textContent = results.length ? count.textContent : 'No matching files or lines.';
     $('#file-search-results').replaceChildren(count, ...results.map(result => {

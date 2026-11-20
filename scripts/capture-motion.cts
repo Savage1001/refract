@@ -81,6 +81,8 @@ const scenes: Scene[] = [
     await folder.press('Enter');
     await page.keyboard.press('Tab');
     await pause(page);
+    await page.keyboard.press('Tab');
+    await pause(page, 400);
     await click(page, '#outline-toggle');
     await click(page, '#outline-toggle');
     await click(page, '#add-file');
@@ -173,13 +175,26 @@ const scenes: Scene[] = [
   ['15-project-tools-and-replies', async page => {
     await open(page);
     await click(page, '#tools');
-    await click(page, '#tool-comments');
+    await page.evaluate(() => {
+      const w = window as unknown as {store:{commentList:(id:string)=>Promise<unknown[]>}; finishComments?:()=>void};
+      const load = w.store.commentList;
+      w.store.commentList = id => new Promise(resolve => { w.finishComments = () => { void load(id).then(resolve); }; });
+    });
+    await page.locator('#tool-comments').click();
+    await page.waitForFunction(() => typeof (window as unknown as {finishComments?:()=>void}).finishComments === 'function');
+    await pause(page, 320);
+    await page.locator('.expand-tools').click();
+    await pause(page, 90);
+    await page.evaluate(() => (window as unknown as {finishComments:()=>void}).finishComments());
+    await page.locator('.comment-card').first().waitFor();
+    await pause(page);
     await click(page, '.comment-reply-form summary');
-    await click(page, '.expand-tools');
     await click(page, '.expand-tools');
     await click(page, '#tool-versions');
     await click(page, '.version-comparison summary');
     await click(page, '#tool-info');
+    await click(page, '#tool-logs');
+    await click(page, '.raw-output summary');
     await click(page, '#tools');
   }],
   ['16-update-progress', async page => {
@@ -226,9 +241,16 @@ const scenes: Scene[] = [
         const started = pdf.getAnimations().some(animation => animation.id === 'refract-motion');
         requestAnimationFrame(() => {
           const {left,top,width,height} = preview.getBoundingClientRect();
-          preview.dispatchEvent(new PointerEvent('pointermove', {bubbles:true,clientX:left + width / 2,clientY:top + height / 2}));
-          preview.click();
-          window.setTimeout(() => { preview.click(); resolve(started); }, 45);
+          const clickPreview = () => {
+            preview.dispatchEvent(new PointerEvent('refract-recorded-click', {bubbles:true,clientX:left + width / 2,clientY:top + height / 2}));
+            preview.click();
+          };
+          clickPreview();
+          window.setTimeout(() => {
+            clickPreview();
+            document.dispatchEvent(new CustomEvent('refract-recorded-caption', {detail:'Preview toggled twice during first render'}));
+            resolve(started);
+          }, 45);
         });
       });
       observer.observe(document.getElementById('pdf-area')!, {childList:true});
@@ -275,20 +297,32 @@ async function record([name, run, theme, reducedMotion, viewport]: Scene): Promi
       keyCue.setAttribute('aria-hidden', 'true');
       keyCue.style.cssText = 'position:fixed;inset:auto 16px 16px auto;margin:0;pointer-events:none;color:white;background:#182236;border:1px solid #647da6;border-radius:6px;padding:7px 12px;font:bold 18px system-ui;';
       document.body.append(dot, keyCue);
-      document.addEventListener('pointermove', event => {
+      const movePointer = (event: PointerEvent) => {
         dot.style.display = 'block';
         dot.style.left = `${event.clientX}px`;
         dot.style.top = `${event.clientY}px`;
-      });
+      };
+      const clickPointer = (event: PointerEvent) => {
+        movePointer(event);
+        if (!matchMedia('(prefers-reduced-motion: reduce)').matches)
+          dot.animate([{scale:1.8},{scale:1}], {duration:230,easing:'ease-out'});
+      };
+      document.addEventListener('pointermove', movePointer);
+      document.addEventListener('pointerdown', clickPointer);
+      document.addEventListener('refract-recorded-click', event => clickPointer(event as PointerEvent));
       let cueTimer: number | undefined;
+      const showCue = (label: string, duration = 650) => {
+        keyCue.textContent = label;
+        if (!keyCue.matches(':popover-open')) keyCue.showPopover();
+        clearTimeout(cueTimer);
+        cueTimer = window.setTimeout(() => keyCue.hidePopover(), duration);
+      };
+      document.addEventListener('refract-recorded-caption', event => showCue((event as CustomEvent<string>).detail, 1200));
       document.addEventListener('keydown', event => {
         if (!event.ctrlKey && !['Escape','Enter','Tab','F3'].includes(event.key)) return;
         if (['Control','Shift','Alt','Meta'].includes(event.key)) return;
         const key = event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
-        keyCue.textContent = [event.ctrlKey && 'Ctrl', event.shiftKey && 'Shift', key].filter(Boolean).join(' + ');
-        if (!keyCue.matches(':popover-open')) keyCue.showPopover();
-        clearTimeout(cueTimer);
-        cueTimer = window.setTimeout(() => keyCue.hidePopover(), 650);
+        showCue([event.ctrlKey && 'Ctrl', event.shiftKey && 'Shift', key].filter(Boolean).join(' + '));
       }, true);
     });
     await page.locator(project).first().waitFor();

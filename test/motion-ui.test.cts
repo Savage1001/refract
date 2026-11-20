@@ -28,7 +28,7 @@ test('overlay fades leave the app immediately interactive and preserve focus on 
         fading: dialog.getAnimations().some(animation => animation instanceof CSSTransition && animation.transitionProperty === 'opacity')};
     });
     const {opacityOnOpen, ...dialogState} = states;
-    assert.ok(opacityOnOpen >= .77);
+    assert.equal(opacityOnOpen, 1);
     assert.deepEqual(dialogState, {open:false, display:'block', pointer:'none', focusRestored:true, focusedOnOpen:true, fading:true});
     await page.locator('#settings').click();
     await page.locator('#settings-dialog[open]').waitFor();
@@ -44,7 +44,7 @@ test('overlay fades leave the app immediately interactive and preserve focus on 
       const outline = getComputedStyle(input.closest('.model-search')!);
       return {focused:input === document.activeElement, visible:outline.outlineStyle === 'solid' && outline.outlineWidth === '2px'};
     }), {focused:true, visible:true});
-    assert.ok(await picker.evaluate(panel => Number(getComputedStyle(panel).opacity) >= .77));
+    assert.equal(await picker.evaluate(panel => getComputedStyle(panel).opacity), '1');
     await picker.evaluate(async panel => {
       await Promise.allSettled(panel.getAnimations().map(animation => animation.finished));
     });
@@ -52,8 +52,18 @@ test('overlay fades leave the app immediately interactive and preserve focus on 
     assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
     assert.equal(await trigger.evaluate(button => document.activeElement === button), true);
     assert.equal(await picker.evaluate(panel => getComputedStyle(panel).pointerEvents), 'none');
-    await trigger.click();
-    await page.getByRole('searchbox', {name:'Search models'}).waitFor();
+    const exiting = await picker.evaluate(panel => {
+      for (const animation of panel.getAnimations()) {
+        animation.pause();
+        animation.currentTime = 140;
+      }
+      return Number(getComputedStyle(panel).opacity);
+    });
+    assert.ok(exiting < .25, 'The picker must be close to transparent before reversing');
+    await trigger.press('Enter');
+    await search.waitFor();
+    assert.equal(await picker.evaluate(panel => getComputedStyle(panel).opacity), '1');
+    assert.equal(await search.evaluate(input => input === document.activeElement), true);
     assert.equal(await trigger.getAttribute('aria-expanded'), 'true');
     assert.deepEqual(errors, []);
   } finally {
@@ -88,17 +98,26 @@ test('rapid layout changes apply immediately and leave live pointer targets avai
       const button = document.querySelector<HTMLButtonElement>('#pane-agent')!;
       button.click();
       button.click();
-      document.querySelector<HTMLButtonElement>('#pane-preview')!.click();
       const shell = document.querySelector('.workspace-shell')!;
+      const preview = document.querySelector<HTMLButtonElement>('#pane-preview')!;
+      preview.click();
+      shell.getAnimations().find(animation => animation.id === 'refract-motion')!.currentTime = 125;
+      const opacityBefore = Number(getComputedStyle(shell).opacity);
+      preview.click();
+      const effect = shell.getAnimations().find(animation => animation.id === 'refract-motion')!.effect as KeyframeEffect;
+      const opacityAfter = Number(effect.getKeyframes()[0].opacity);
+      preview.click();
       const {right, top} = editor.getBoundingClientRect();
       const x = right - 28, y = top + 24;
-      return {x, y, reversed: button.getAttribute('aria-pressed') === 'true',
+      return {x, y, opacityBefore, opacityAfter, reversed: button.getAttribute('aria-pressed') === 'true',
         hitsEditor: document.elementFromPoint(x, y) === editor,
         fading: shell.getAnimations().some(animation => animation.id === 'refract-motion')};
     });
     assert.equal(layout.reversed, true);
     assert.equal(layout.hitsEditor, true);
     assert.equal(layout.fading, true);
+    assert.ok(layout.opacityBefore > .95);
+    assert.equal(layout.opacityAfter, layout.opacityBefore, 'Reversing a late fade must preserve the sampled opacity');
     assert.equal(await source.inputValue(), original);
     assert.deepEqual(await source.evaluate((editor: HTMLTextAreaElement) => [editor.selectionStart, editor.selectionEnd]), [2, 6]);
     await page.mouse.click(layout.x, layout.y);
@@ -192,13 +211,18 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     await page.keyboard.press('Tab');
     assert.equal(await page.locator('#file-list button[title="sections/abstract.tex"]')
       .evaluate(file => file === document.activeElement), true);
+    await page.keyboard.press('Tab');
+    const action = page.getByRole('button', {name:'Actions for sections/abstract.tex',exact:true});
+    assert.deepEqual(await action.evaluate(button => ({
+      focused:button === document.activeElement, opacity:getComputedStyle(button).opacity
+    })), {focused:true, opacity:'1'});
     const outline = page.locator('#outline-list');
     await page.locator('#outline-toggle').click();
     assert.equal(await outline.evaluate(list => (list as HTMLElement).hidden && getComputedStyle(list).pointerEvents === 'none'), true);
     await page.locator('#outline-toggle').click();
     assert.equal(await outline.isVisible(), true);
     const files = await page.evaluate(() => {
-      const list = document.getElementById('file-list')!;
+      const list = document.getElementById('files-surface')!;
       const before = list.getBoundingClientRect();
       document.getElementById('chats-tab')!.click();
       const after = list.getBoundingClientRect();
@@ -211,7 +235,7 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     assert.equal(files.inert, 'inert');
     assert.equal(files.chatsVisible, true);
     const reversal = await page.evaluate(() => {
-      const files = document.getElementById('file-list')!;
+      const files = document.getElementById('files-surface')!;
       const chats = document.getElementById('chat-list')!;
       for (const item of [files, chats]) {
         item.getAnimations().find(animation => animation.id === 'refract-motion')!.currentTime = 45;
@@ -265,6 +289,16 @@ test('Tools tabs give the new body a single entry fade and retain keyboard focus
   try {
     await openProject(page);
     await page.locator('#tools').click();
+    const raw = page.locator('.raw-output summary');
+    await raw.click();
+    await page.waitForFunction(() => document.querySelector('.workspace-shell')?.getAnimations()
+      .some(animation => animation.id === 'refract-motion'));
+    assert.equal(await page.locator('#workspace').evaluate(workspace => workspace.classList.contains('tools-expanded')), true);
+    await raw.click();
+    await page.waitForFunction(() => !document.querySelector('#workspace')?.classList.contains('tools-expanded'));
+    await page.locator('.workspace-shell').evaluate(async shell => {
+      await Promise.allSettled(shell.getAnimations().map(animation => animation.finished));
+    });
     const result = await page.evaluate(() => new Promise<{pressed:string|null; focused:boolean; animations:number[]}>(resolve => {
       const body = document.getElementById('tool-body')!;
       const tab = document.getElementById('tool-comments')!;
@@ -280,6 +314,43 @@ test('Tools tabs give the new body a single entry fade and retain keyboard focus
       tab.click();
     }));
     assert.deepEqual(result, {pressed:'true', focused:true, animations:[0,0,1]});
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a delayed Tools result leaves a newer layout fade in charge', {timeout:15000}, async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    await openProject(page);
+    await page.locator('#tools').click();
+    const layout = await page.evaluate(() => new Promise<{same:boolean; bodyMotion:boolean; opacity:number}>(resolve => {
+      const w = window as unknown as {store:{commentList:(id:string) => Promise<unknown[]>}};
+      const load = w.store.commentList;
+      const shell = document.querySelector('.workspace-shell')!;
+      const body = document.getElementById('tool-body')!;
+      const getFade = (element: Element) => element.getAnimations().find(animation => animation.id === 'refract-motion');
+      w.store.commentList = id => new Promise(resolveLoad => {
+        queueMicrotask(async () => {
+          const comments = await load(id);
+          document.querySelector<HTMLButtonElement>('.expand-tools')!.click();
+          const expansion = getFade(shell)!;
+          expansion.currentTime = 125;
+          const observer = new MutationObserver(() => {
+            if (!body.querySelector('.comment-card')) return;
+            observer.disconnect();
+            resolve({same:expansion === getFade(shell), bodyMotion:!!getFade(body), opacity:Number(getComputedStyle(shell).opacity)});
+          });
+          observer.observe(body, {childList:true});
+          resolveLoad(comments);
+        });
+      });
+      document.getElementById('tool-comments')!.click();
+    }));
+    assert.equal(layout.same, true);
+    assert.equal(layout.bodyMotion, false);
+    assert.ok(layout.opacity > .95);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

@@ -308,6 +308,13 @@ body:has(#projects:not([hidden])) .app-titlebar {
   min-height:0;
 }
 
+#files-surface {
+  display:flex;
+  flex:1;
+  flex-direction:column;
+  min-height:0;
+}
+
 .tabs {
   display:flex;
   align-items:center;
@@ -3370,6 +3377,11 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
       color var(--motion-control) ease-out, scale var(--motion-control) var(--motion-ease);
   }
 
+  :is(#file-list .file-tree-actions, .model-favorite):focus-visible {
+    opacity:1;
+    transition-property:background-color, color, scale;
+  }
+
   .resize-handle::after {
     transition:background-color var(--motion-control) ease-out;
   }
@@ -3402,6 +3414,11 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     interactivity:inert;
   }
 
+  /* A keyboard reopen may interrupt an almost-transparent exit frame. */
+  :is(.file-menu:not([hidden]), .model-panel:not([hidden]), dialog[open]):has(:focus-visible) {
+    transition:scale var(--motion-overlay) var(--motion-ease);
+  }
+
   dialog::backdrop {
     opacity:1;
     transition:opacity var(--motion-overlay) ease-out,
@@ -3427,6 +3444,10 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     opacity:1;
     scale:1;
     interactivity:auto;
+  }
+
+  .project-actions[open]:has(.project-action-menu :focus-visible)::details-content {
+    transition:scale var(--motion-overlay) var(--motion-ease);
   }
 
   @starting-style {
