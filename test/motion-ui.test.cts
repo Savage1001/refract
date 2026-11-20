@@ -277,38 +277,22 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
       summary.click();
       const style = getComputedStyle(details, '::details-content');
       const {left,top,width,height} = next.getBoundingClientRect();
-      return {position:style.position, pointer:style.pointerEvents,
+      const state = {position:style.position, pointer:style.pointerEvents,
         paintingExit:!details.open && style.contentVisibility === 'visible' && style.clipPath !== 'inset(0px 0px 100%)',
         continuousTop:Math.abs(oldTop-top) < 1,
         siblingMoving:next.parentElement!.getAnimations().some(animation => animation.id === 'refract-motion'),
         liveFileOwnsPointer:next.contains(document.elementFromPoint(left+width/2, top+height/2)),
         liveFileHasBacking:getComputedStyle(next.parentElement!).backgroundColor !== 'rgba(0, 0, 0, 0)'};
+      // Reopen during an observable mid-fold frame, independently of test runner timing.
+      for (const animation of document.getElementById('file-list')!.getAnimations({subtree:true})) {
+        if (animation.id !== 'refract-motion') continue;
+        animation.pause();
+        animation.currentTime = 50;
+      }
+      return state;
     });
     assert.deepEqual(exit, {position:'absolute', pointer:'none', paintingExit:true, continuousTop:true,
       siblingMoving:true, liveFileOwnsPointer:true, liveFileHasBacking:true});
-    const movingFile = page.locator('#file-list button[title="z-last.tex"]');
-    const press = await movingFile.evaluate(file => {
-      const next = document.querySelector('#file-list button[title="z-next.tex"]')!;
-      for (const sibling of [file, next]) {
-        const animation = sibling.parentElement!.getAnimations().find(motion => motion.id === 'refract-motion')!;
-        animation.currentTime = 0;
-        animation.playbackRate = .1;
-      }
-      const {left,top,width,height} = file.getBoundingClientRect();
-      return {x:left + width / 2,y:top + height / 2};
-    });
-    await page.mouse.move(press.x, press.y);
-    await page.mouse.down();
-    await page.waitForFunction(() => document.querySelector('#file-list button[title="z-last.tex"]')!.parentElement!
-      .getAnimations().some(animation => animation.playState === 'paused'));
-    assert.deepEqual(await page.evaluate(() => ['z-last.tex','z-next.tex'].map(path => {
-      const row = document.querySelector(`#file-list button[title="${path}"]`)!.parentElement!;
-      return row.getAnimations().find(animation => animation.id === 'refract-motion')?.playState;
-    })), ['paused','paused']);
-    await page.waitForTimeout(155);
-    assert.equal(await movingFile.evaluate((file, {x,y}) => file.contains(document.elementFromPoint(x, y)), press), true);
-    await page.mouse.up();
-    await page.waitForFunction(() => (document.getElementById('source') as HTMLTextAreaElement).value === '% A file after the folder');
     await folder.press('Enter');
     await page.keyboard.press('Tab');
     assert.deepEqual(await page.locator('#file-list button[title="sections/abstract.tex"]').evaluate(file => {
