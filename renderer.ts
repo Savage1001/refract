@@ -78,8 +78,36 @@ reducedMotion.addEventListener('change', () => {
 
 document.addEventListener('focusin', event => {
   if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) return;
-  for (let surface: Element | null = event.target; surface; surface = surface.parentElement) stopMotion(surface);
+  for (let surface: Element | null = event.target; surface; surface = surface.parentElement) {
+    if (activeMotion.get(surface)?.playState !== 'paused') stopMotion(surface);
+  }
 });
+
+// A real row may be moving when the pointer goes down. Keep it under the
+// pointer through the native click, then resume its compositor animation.
+const pressedRows = new Map<number, Animation[]>();
+document.addEventListener('pointerdown', event => {
+  if (!(event.target instanceof Element)) return;
+  const paused: Animation[] = [];
+  for (let row = event.target.closest('.file-tree-row'); row; row = row.parentElement?.closest('.file-tree-row') ?? null) {
+    const animation = activeMotion.get(row);
+    if (!animation || !isMoving(animation)) continue;
+    animation.pause();
+    paused.push(animation);
+  }
+  if (paused.length) pressedRows.set(event.pointerId, paused);
+}, {capture:true});
+function releaseRows(pointerId: number): void {
+  const paused = pressedRows.get(pointerId);
+  if (!paused) return;
+  pressedRows.delete(pointerId);
+  requestAnimationFrame(() => {
+    for (const animation of paused) if (animation.playState === 'paused') animation.play();
+  });
+}
+for (const type of ['pointerup', 'pointercancel'] as const)
+  window.addEventListener(type, event => releaseRows(event.pointerId), {capture:true});
+window.addEventListener('blur', () => { for (const pointerId of pressedRows.keys()) releaseRows(pointerId); });
 
 const exitProperties = ['--exit-left', '--exit-top', '--exit-width', '--exit-height', '--exit-display'] as const;
 let workspaceMotion: Animation | undefined;
@@ -436,6 +464,43 @@ document.addEventListener('focusin', event => {
   if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus();
 });
 let fileTreeRequest = 0, renderedTree = '', renderedTreeProject = '';
+const folderHeights = new WeakMap<HTMLDetailsElement, number>();
+
+function toggleFolderWithMotion(folder: HTMLDetailsElement, children: HTMLElement, event: MouseEvent): void {
+  if (!motionEnabled()) return;
+  const fileList = document.getElementById('file-list')!;
+  const viewport = fileList.getBoundingClientRect();
+  const atTop = fileList.scrollTop === 0;
+  const closing = folder.open;
+  const height = closing ? children.getBoundingClientRect().height : folderHeights.get(folder);
+  if (closing && height !== undefined) folderHeights.set(folder, height);
+  const rows: {row:Element;top:number;translate:number}[] = [];
+  for (let row = folder.parentElement?.closest('.file-tree-row'); row; row = row.parentElement?.closest('.file-tree-row')) {
+    for (let following = row.nextElementSibling; following; following = following.nextElementSibling) {
+      const bounds = following.getBoundingClientRect();
+      if (bounds.top > viewport.bottom + (closing ? height ?? 0 : 0)) break;
+      if (bounds.bottom < viewport.top) continue;
+      const translate = atTop && activeMotion.has(following)
+        ? parseFloat(getComputedStyle(following).translate.split(' ')[1] ?? '0') : 0;
+      rows.push({row:following, top:bounds.top, translate});
+    }
+  }
+  event.preventDefault();
+  for (const {row} of rows) stopMotion(row);
+  folder.open = !closing;
+  if (!rows.length) return;
+  // At the scroll origin, following rows move by exactly the disclosed
+  // height. Scrolled trees also need to account for native scroll anchoring.
+  const delta = (height ?? children.getBoundingClientRect().height) * (closing ? 1 : -1);
+  const moves = rows.map(({row, top, translate}) => ({
+    row, offset:atTop ? delta + translate : top - row.getBoundingClientRect().top
+  }));
+  for (const {row, offset} of moves) {
+    if (Math.abs(offset) > .5 && !ownsVisibleFocus(row))
+      playMotion(row, [{translate:`0 ${offset}px`}, {translate:'0'}]);
+  }
+}
+
 async function refreshFiles(remappedFocus?: string) {
   if (!active) return;
   const remapOrigin = remappedFocus ? contextMenuOrigin : null;
@@ -469,10 +534,9 @@ async function refreshFiles(remappedFocus?: string) {
         const label = document.createElement('summary'), folderIcon = document.createElementNS('http://www.w3.org/2000/svg','svg'), folderPath = document.createElementNS('http://www.w3.org/2000/svg','path'), folderName = document.createElement('span');
         folderIcon.setAttribute('viewBox','0 0 24 24'); folderIcon.setAttribute('aria-hidden','true'); folderIcon.setAttribute('class','folder-icon'); folderPath.setAttribute('d','M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'); folderIcon.append(folderPath); folderName.textContent=item.name; const disclosure=actionIcon('next');disclosure.classList.add('folder-chevron');label.append(disclosure,folderIcon,folderName); label.title = item.path;
         label.oncontextmenu = event => { menuFolder=item.path; $('#file-menu').hidden=true; showFileContextMenu($('#folder-menu'), event); };
-        label.addEventListener('click', () => {
-          if (folder.open && motionEnabled()) folder.style.setProperty('--folder-label-height', `${label.offsetHeight}px`);
-        });
-        folder.append(label, renderNodes(item.children));
+        const children = renderNodes(item.children);
+        label.addEventListener('click', event => toggleFolderWithMotion(folder, children, event));
+        folder.append(label, children);
         list.append(addActions(folder, item, true));
       } else {
         const button = document.createElement('button'), icon = document.createElement('span'), name = document.createElement('span');
@@ -1563,6 +1627,10 @@ function highlightLatex(text) {
 // path so saving, comment anchors, compilation and undo remain consistent.
 const findPanel = document.createElement('div');
 findPanel.className = 'editor-find'; findPanel.hidden = true;
+const findExitEdge = document.createElement('span');
+findExitEdge.className = 'find-exit-edge';
+findExitEdge.setAttribute('aria-hidden', 'true');
+$('.source-container').append(findExitEdge);
 findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">↑</button><button type="button" aria-label="Next match">↓</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">×</button>';
 const wrapLabel=document.createElement('label');wrapLabel.innerHTML='<input type="checkbox" aria-label="Wrap search" checked> Wrap';
 findPanel.insertBefore(wrapLabel,findPanel.querySelector('[aria-label="Previous match"]'));
@@ -1583,9 +1651,14 @@ function openFind() {
   if (document.activeElement===sourceEditor && selected && !selected.includes('\n')) findInput.value=selected;
   if (!displayedPaneLayout().editor) revealSource();
   findAnchor=sourceEditor.selectionStart;
-  showSurface(findPanel);findInput.focus();findInput.select();refreshFind();
+  stopMotion(findExitEdge);
+  findPanel.hidden=false;findInput.focus();findInput.select();refreshFind();
 }
-function closeFind() {swapSurfaces([], [findPanel]);sourceEditor.focus();}
+function closeFind() {
+  findPanel.hidden=true;
+  sourceEditor.focus();
+  if (motionEnabled()) playMotion(findExitEdge, [{opacity:.45}, {opacity:0}], motionTiming('--motion-control-ms'));
+}
 function selectFindMatch(position:number) {
   sourceEditor.setSelectionRange(position,position+findInput.value.length);
   // Measure using the editor's actual font and tab stops, including long lines.
@@ -1816,6 +1889,8 @@ sidebar.append(sidebarMotionSurface, sidebarEdge);
 $('#collapse').onclick = () => {
   const animate = motionEnabled();
   const start = animate ? sidebarEdge.getBoundingClientRect().left : 0;
+  const alpha = animate && isMoving(activeMotion.get(sidebarMotionSurface))
+    ? Number(getComputedStyle(sidebarMotionSurface).opacity) : .28;
   stopMotion(sidebarEdge);
   stopMotion(sidebarMotionSurface);
   const collapsed = sidebar.classList.toggle('collapsed');
@@ -1827,7 +1902,7 @@ $('#collapse').onclick = () => {
     if (Math.abs(offset) > .5) {
       const width = Math.max(1, sidebar.clientWidth);
       playMotion(sidebarMotionSurface, [
-        {scale:`${Math.max(1, width + offset) / width} 1`, opacity:.28},
+        {scale:`${Math.max(1, width + offset) / width} 1`, opacity:alpha},
         {scale:'1 1', opacity:0}
       ]);
       playMotion(sidebarEdge, [{translate:`${offset}px 0`}, {translate:'0'}]);

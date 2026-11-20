@@ -32,6 +32,31 @@ test('press feedback keeps a stationary edge click on its button', {timeout:1500
   }
 });
 
+test('keyboard project navigation leaves the new focus indicator fully opaque', async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    const card = page.locator(project).first();
+    await card.focus();
+    await page.keyboard.press('Enter');
+    const name = page.locator('#project-name');
+    await name.waitFor();
+    assert.deepEqual(await name.evaluate(button => ({
+      focused:button === document.activeElement && button.matches(':focus-visible'),
+      opacity:getComputedStyle(button.closest('.workspace-topbar')!).opacity
+    })), {focused:true, opacity:'1'});
+    await page.locator('#home').focus();
+    await page.keyboard.press('Enter');
+    await card.waitFor();
+    assert.deepEqual(await card.evaluate(button => ({
+      focused:button === document.activeElement && button.matches(':focus-visible'),
+      opacity:getComputedStyle(button.closest('#projects')!).opacity
+    })), {focused:true, opacity:'1'});
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('overlay fades leave the app immediately interactive and preserve focus on reversal', async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
@@ -195,11 +220,17 @@ test('Find and the composer show keyboard focus immediately and motion can be di
     })), {focused:true, barOpacity:'1', outline:'solid'});
     const editorTop = () => source.evaluate(editor => editor.getBoundingClientRect().top);
     const withFind = await editorTop();
+    const box = (await find.boundingBox())!;
     await page.keyboard.press('Escape');
     const afterClose = await editorTop();
     assert.ok(afterClose < withFind, 'Closing Find must immediately release its layout space');
     assert.equal(await source.evaluate(editor => editor === document.activeElement), true);
-    assert.equal(await page.locator('.editor-find').evaluate(bar => getComputedStyle(bar).pointerEvents), 'none');
+    const exposed = await page.evaluate(({x,y}) => ({
+      findDisplay:getComputedStyle(document.querySelector('.editor-find')!).display,
+      liveTarget:document.elementFromPoint(x,y)?.id,
+      exitEffect:document.querySelector('.find-exit-edge')!.getAnimations().some(animation => animation.id === 'refract-motion')
+    }), {x:box.x + box.width / 2,y:box.y + box.height / 2});
+    assert.deepEqual(exposed, {findDisplay:'none',liveTarget:'source',exitEffect:true});
     await page.locator('.editor-find').waitFor({state:'hidden'});
     assert.equal(await editorTop(), afterClose, 'The editor must stay in place when the exit finishes');
     await page.keyboard.press('Control+f');
@@ -239,16 +270,35 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
       const details = summary.parentElement as HTMLDetailsElement;
       if (!details.open) summary.click();
       getComputedStyle(details, '::details-content').clipPath;
+      const next = document.querySelector<HTMLButtonElement>('#file-list button[title="z-last.tex"]')!;
+      const oldTop = next.getBoundingClientRect().top;
       summary.click();
       const style = getComputedStyle(details, '::details-content');
-      const next = document.querySelector<HTMLButtonElement>('#file-list button[title="z-last.tex"]')!;
       const {left,top,width,height} = next.getBoundingClientRect();
       return {position:style.position, pointer:style.pointerEvents,
         paintingExit:!details.open && style.contentVisibility === 'visible' && style.clipPath !== 'inset(0px 0px 100%)',
+        continuousTop:Math.abs(oldTop-top) < 1,
+        siblingMoving:next.parentElement!.getAnimations().some(animation => animation.id === 'refract-motion'),
         liveFileOwnsPointer:next.contains(document.elementFromPoint(left+width/2, top+height/2)),
         liveFileHasBacking:getComputedStyle(next.parentElement!).backgroundColor !== 'rgba(0, 0, 0, 0)'};
     });
-    assert.deepEqual(exit, {position:'absolute', pointer:'none', paintingExit:true, liveFileOwnsPointer:true, liveFileHasBacking:true});
+    assert.deepEqual(exit, {position:'absolute', pointer:'none', paintingExit:true, continuousTop:true,
+      siblingMoving:true, liveFileOwnsPointer:true, liveFileHasBacking:true});
+    const movingFile = page.locator('#file-list button[title="z-last.tex"]');
+    const press = await movingFile.evaluate(file => {
+      const fade = file.parentElement!.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      fade.currentTime = 0;
+      fade.playbackRate = .1;
+      const {left,top,width,height} = file.getBoundingClientRect();
+      return {x:left + width / 2,y:top + height / 2};
+    });
+    await page.mouse.move(press.x, press.y);
+    await page.mouse.down();
+    await page.waitForFunction(() => document.querySelector('#file-list button[title="z-last.tex"]')!.parentElement!
+      .getAnimations().some(animation => animation.playState === 'paused'));
+    await page.waitForTimeout(155);
+    await page.mouse.up();
+    await page.waitForFunction(() => (document.getElementById('source') as HTMLTextAreaElement).value === '% A file after the folder');
     await folder.press('Enter');
     await page.keyboard.press('Tab');
     assert.equal(await page.locator('#file-list button[title="sections/abstract.tex"]')
@@ -258,9 +308,12 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     assert.deepEqual(await action.evaluate(button => ({
       focused:button === document.activeElement, opacity:getComputedStyle(button).opacity
     })), {focused:true, opacity:'1'});
+    await page.locator('#file-list button[title="main.tex"]').click();
+    await page.locator('#outline-list button').first().waitFor();
     const outline = page.locator('#outline-list');
     await page.locator('#outline-toggle').click();
-    assert.equal(await outline.evaluate(list => (list as HTMLElement).hidden && getComputedStyle(list).pointerEvents === 'none'), true);
+    assert.equal(await outline.evaluate(list => (list as HTMLElement).hidden &&
+      (getComputedStyle(list).display === 'none' || getComputedStyle(list).pointerEvents === 'none')), true);
     await page.locator('#outline-toggle').click();
     assert.equal(await outline.isVisible(), true);
     const files = await page.evaluate(() => {
@@ -370,7 +423,15 @@ test('Tools tabs give the new body a single entry fade and retain keyboard focus
     await page.waitForFunction(() => document.querySelector('.workspace-shell')?.getAnimations()
       .some(animation => animation.id === 'refract-motion'));
     assert.equal(await page.locator('#workspace').evaluate(workspace => workspace.classList.contains('tools-expanded')), true);
-    await raw.click();
+    const outputExit = await raw.evaluate((summary: HTMLElement) => {
+      getComputedStyle(summary.parentElement!, '::details-content').clipPath;
+      summary.click();
+      const style = getComputedStyle(summary.parentElement!, '::details-content');
+      return {position:style.position, visible:style.contentVisibility === 'visible',
+        controlsHidden:getComputedStyle(summary.parentElement!.querySelector('.log-controls')!).visibility === 'hidden',
+        pointer:style.pointerEvents};
+    });
+    assert.deepEqual(outputExit, {position:'absolute', visible:true, controlsHidden:true, pointer:'none'});
     await page.waitForFunction(() => !document.querySelector('#workspace')?.classList.contains('tools-expanded'));
     await page.locator('.workspace-shell').evaluate(async shell => {
       await Promise.allSettled(shell.getAnimations().map(animation => animation.finished));
@@ -390,6 +451,31 @@ test('Tools tabs give the new body a single entry fade and retain keyboard focus
       tab.click();
     }));
     assert.deepEqual(result, {pressed:'true', focused:true, animations:[0,0,1]});
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a late sidebar reversal preserves the tint already on screen', async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    await openProject(page);
+    const reversal = await page.evaluate(() => {
+      const surface = document.querySelector('.sidebar-motion-surface')!;
+      const edge = document.querySelector('.sidebar-motion-edge')!;
+      const button = document.getElementById('collapse')!;
+      const fade = () => surface.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      button.click();
+      fade().currentTime = 140;
+      edge.getAnimations().find(animation => animation.id === 'refract-motion')!.currentTime = 140;
+      const before = Number(getComputedStyle(surface).opacity);
+      button.click();
+      const effect = fade().effect as KeyframeEffect;
+      return {before,after:Number(effect.getKeyframes()[0].opacity)};
+    });
+    assert.ok(reversal.before < .05);
+    assert.equal(reversal.after, reversal.before);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
@@ -436,6 +522,9 @@ test('a delayed Tools result leaves a newer layout fade in charge', {timeout:150
 test('sidebar motion does not repeatedly lay out a 24-page PDF', {timeout:30000}, async context => {
   const {browser, page, errors} = await fixture.openHeadlessUi('light', undefined, {pageCount:24});
   try {
+    await page.evaluate(() => {
+      (window as unknown as {fixture:{files:Record<string,string>}}).fixture.files['z-last.tex'] = '% Moving sibling';
+    });
     await openProject(page);
     await page.waitForFunction(() => document.querySelectorAll('.pdf-pages canvas').length === 24);
     await page.locator('.pdf-pages').evaluate(async pages => {

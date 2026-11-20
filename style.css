@@ -3314,6 +3314,16 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 .settings-section { border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:14px; }
 
 .sidebar:has(>.sidebar-motion-edge) { border-right-color:transparent; }
+.find-exit-edge {
+  position:absolute;
+  z-index:1;
+  inset:0 0 auto;
+  height:1px;
+  background:var(--accent);
+  opacity:0;
+  pointer-events:none;
+}
+
 .sidebar-motion-surface {
   position:absolute;
   z-index:0;
@@ -3529,11 +3539,11 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 
   /* Fold departing rows behind the live rows, where no stale control can be
      painted over the target that now owns the pointer. */
-  .file-tree details::details-content { clip-path:inset(0); }
-  .file-tree details:not([open])::details-content {
+  .raw-output { position:relative; }
+  :is(.file-tree details,.raw-output)::details-content { clip-path:inset(0); }
+  :is(.file-tree details,.raw-output):not([open])::details-content {
     position:absolute;
-    z-index:-1;
-    inset:var(--folder-label-height, 32px) 0 auto;
+    inset:100% 0 auto;
     opacity:0;
     clip-path:inset(0 0 100% 0);
     pointer-events:none;
@@ -3541,6 +3551,8 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     transition:clip-path var(--motion-overlay) var(--motion-ease), opacity var(--motion-overlay) ease-out,
       content-visibility var(--motion-overlay) allow-discrete;
   }
+  .file-tree details:not([open])::details-content { z-index:-1; }
+  .raw-output:not([open]) :is(.log-controls,.log-filter-empty) { visibility:hidden; }
 
   .new-chat-tooltip {
     display:block;
@@ -3562,6 +3574,8 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   :is(#projects, #workspace, .workspace-topbar, .model-catalog, .model-settings-group) {
     animation:motion-surface var(--motion-overlay) var(--motion-ease);
   }
+
+  :is(#projects, #workspace, .workspace-topbar):has(:focus-visible) { animation:none; }
 
   @keyframes motion-surface {
     from { opacity:.8; }

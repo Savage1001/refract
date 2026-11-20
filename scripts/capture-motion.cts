@@ -46,6 +46,13 @@ const scenes: Scene[] = [
   ['02-project-navigation', async page => {
     await open(page);
     await click(page, '#home');
+    await page.locator(project).first().focus();
+    await page.keyboard.press('Enter');
+    await page.locator('#source').waitFor();
+    await pause(page);
+    await page.locator('#home').focus();
+    await page.keyboard.press('Enter');
+    await page.locator(project).first().waitFor();
   }],
   ['03-list-and-grid', async page => {
     await click(page, '#grid-view');
@@ -79,8 +86,15 @@ const scenes: Scene[] = [
     await open(page);
     await click(page, '#collapse');
     await click(page, '#collapse');
+    await page.locator('#collapse').click();
+    await pause(page, 95);
+    await page.locator('#collapse').click();
+    await pause(page);
   }, 'dark'],
   ['08-file-tree-outline-and-disclosures', async page => {
+    await page.evaluate(() => {
+      (window as unknown as {fixture:{files:Record<string,string>}}).fixture.files['z-results.tex'] = '% Results';
+    });
     await open(page);
     const folder = page.locator('#file-list summary').first();
     await folder.press('Enter');
@@ -204,6 +218,7 @@ const scenes: Scene[] = [
     await click(page, '#tool-info');
     await click(page, '#tool-logs');
     await click(page, '.raw-output summary');
+    await click(page, '.raw-output summary');
     await click(page, '#tools');
   }],
   ['16-update-progress', async page => {
@@ -241,31 +256,31 @@ const scenes: Scene[] = [
     await page.locator('#grid-view').click();
     await page.locator('#list-view').click();
     await pause(page);
-    const interruptedPreview = await page.evaluate(() => new Promise<boolean>(resolve => {
-      const preview = document.getElementById('pane-preview')!;
+    await page.evaluate(() => {
+      const w = window as unknown as {recordedPreviewFade?: Animation};
       const observer = new MutationObserver(() => {
         const pdf = document.querySelector('.pdf-pages');
         if (!pdf) return;
         observer.disconnect();
-        const started = pdf.getAnimations().some(animation => animation.id === 'refract-motion');
-        requestAnimationFrame(() => {
-          const {left,top,width,height} = preview.getBoundingClientRect();
-          const clickPreview = () => {
-            preview.dispatchEvent(new PointerEvent('refract-recorded-click', {bubbles:true,clientX:left + width / 2,clientY:top + height / 2}));
-            preview.click();
-          };
-          clickPreview();
-          window.setTimeout(() => {
-            clickPreview();
-            document.dispatchEvent(new CustomEvent('refract-recorded-caption', {detail:'Preview toggled twice during first render'}));
-            resolve(started);
-          }, 45);
-        });
+        w.recordedPreviewFade = pdf.getAnimations().find(animation => animation.id === 'refract-motion');
+        w.recordedPreviewFade?.pause();
       });
       observer.observe(document.getElementById('pdf-area')!, {childList:true});
-      document.querySelector<HTMLButtonElement>('#list .project-open')!.click();
-    }));
-    assert.equal(interruptedPreview, true, 'Capture must interrupt the first PDF reveal');
+    });
+    await page.locator(project).first().click();
+    await page.waitForFunction(() => Boolean((window as unknown as {recordedPreviewFade?:Animation}).recordedPreviewFade));
+    const preview = (await page.locator('#pane-preview').boundingBox())!;
+    await page.mouse.move(preview.x + preview.width / 2, preview.y + preview.height / 2);
+    const firstClick = page.waitForFunction(() => document.getElementById('pane-preview')?.getAttribute('aria-pressed') === 'false');
+    await page.evaluate(() => (window as unknown as {recordedPreviewFade:Animation}).recordedPreviewFade.play());
+    await page.mouse.down();
+    await page.mouse.up();
+    await firstClick;
+    await pause(page, 45);
+    await page.mouse.click(preview.x + preview.width / 2, preview.y + preview.height / 2);
+    await page.locator('#pane-preview[aria-pressed=true]').waitFor();
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('refract-recorded-caption',
+      {detail:'Preview toggled twice with the pointer'})));
     await pause(page);
     const collapse = page.locator('#collapse');
     await collapse.click();
@@ -325,7 +340,6 @@ async function record([name, run, theme, reducedMotion, viewport]: Scene): Promi
       };
       document.addEventListener('pointermove', movePointer);
       document.addEventListener('pointerdown', clickPointer);
-      document.addEventListener('refract-recorded-click', event => clickPointer(event as PointerEvent));
       let cueTimer: number | undefined;
       const showCue = (label: string, duration = 650) => {
         keyCue.textContent = label;
