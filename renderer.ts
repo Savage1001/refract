@@ -24,22 +24,27 @@ function saveEditorView() {
 }
 let chatOpening=0, chatLoading=false;
 let providerDiscovery=0, providerAvailable=false;
-type ChatDraft={text:string;attachments:{token:string;name:string}[]};
+type ChatProvider = 'codex' | 'opencode';
+type ChatDraft={text:string;attachments:{token:string;name:string}[];provider?:ChatProvider};
 const chatDrafts=new Map<string,ChatDraft>();
 function draftKey(id:string,chatId:string) {return `${id}:${chatId}`;}
 function writeChatDraft(key:string,draft:ChatDraft) {
   chatDrafts.set(key,draft);
-  try {if(draft.text || draft.attachments.length)localStorage.setItem('refract-chat-draft:'+key,JSON.stringify(draft));else localStorage.removeItem('refract-chat-draft:'+key);} catch(error) {console.error('Could not persist chat draft',error);}
+  try {if(draft.text || draft.attachments.length || draft.provider)localStorage.setItem('refract-chat-draft:'+key,JSON.stringify(draft));else localStorage.removeItem('refract-chat-draft:'+key);} catch(error) {console.error('Could not persist chat draft',error);}
 }
 function readChatDraft(key:string):ChatDraft {
   const cached=chatDrafts.get(key);if(cached)return cached;
-  try {const data=JSON.parse(localStorage.getItem('refract-chat-draft:'+key) || 'null');if(data && typeof data.text==='string' && Array.isArray(data.attachments))return {text:data.text,attachments:data.attachments.filter(item=>item && typeof item.token==='string' && typeof item.name==='string')};} catch {}
+  try {const data=JSON.parse(localStorage.getItem('refract-chat-draft:'+key) || 'null');if(data && typeof data.text==='string' && Array.isArray(data.attachments))return {text:data.text,attachments:data.attachments.filter(item=>item && typeof item.token==='string' && typeof item.name==='string'),provider:data.provider==='codex' || data.provider==='opencode' ? data.provider : undefined};} catch {}
   return {text:'',attachments:[]};
 }
-function saveChatDraft() {if(active)writeChatDraft(draftKey(active.id,currentChat),{text:$('#chat-input').value,attachments:[...attachments]});}
+function saveChatDraft() {
+  if (!active) return;
+  const key = draftKey(active.id,currentChat);
+  writeChatDraft(key,{...readChatDraft(key),text:$('#chat-input').value,attachments:[...attachments]});
+}
 function restoreChatDraft(id:string,chatId:string) {const draft=readChatDraft(draftKey(id,chatId));$('#chat-input').value=draft.text;attachments=[...draft.attachments];renderAttachments();}
 const $ = (s: string): any => document.querySelector(s);
-function updateSendState() {$('#send').disabled=!active || !providerAvailable || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
+function updateSendState() {$('#send').disabled=!active || !providerAvailable || Boolean($('#chat-provider').dataset.pickerBlock) || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
 function setEditorReadOnly(value:boolean) {$('#source').readOnly=value;completionButton.disabled=value || $('.source-container').hidden;}
 type AppDialogOptions = {
   title: string;
@@ -373,7 +378,9 @@ async function openProject(p) {
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
   ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = !$('#files-tab').classList.contains('active'); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
-  attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p; restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
+  attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p;
+  suspendPickerForProject(p.id);
+  restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
   compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; toolsButton.setAttribute('aria-expanded', 'false'); $('#compile').textContent = 'Compile';
   pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
   $('#project-navigation').hidden = false; $('#project-name').textContent = p.name;
@@ -459,7 +466,7 @@ function updateEditor() {
   }));
 }
 $('#new').onclick = createProject; $('#start').onclick = createProject;
-$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
+$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; suspendPickerForProject(); clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
 const pendingSaves = new Map<string, Map<string, Promise<Error | null>>>();
 $('#source').oninput = () => {
   const id = active.id, name = currentFile, content = $('#source').value;
@@ -802,26 +809,55 @@ const assistantFormatter: Promise<(text:string)=>string> = (async () => {
   const parser=new Marked({extensions:[math(true),math(false)]});
   return (text:string) => sanitize(parser.parse(text));
 })();
-function renderChat(chat) {
-  if (active?.id) window.dispatchEvent(new CustomEvent('picker-project', {detail:active.id}));
+function publishProviderStatus(provider: HTMLSelectElement, status: 'loading' | 'ready' | 'error'): void {
+  provider.dataset.pickerStatus = status;
+  provider.dispatchEvent(new Event('providerstate'));
+  updateSendState();
+}
+function suspendPickerForProject(projectId?: string): void {
   const provider = $('#chat-provider') as HTMLSelectElement;
-  const locked = Boolean(chat.provider || chat.sessionId || chat.messages.length);
-  const saved = chat.provider || (locked ? 'codex' : null);
-  const request=++providerDiscovery;
-  providerAvailable=false;provider.disabled=true;provider.dispatchEvent(new Event('providerstate'));updateSendState();
-  void store.discoverProviders().then((available:{codex:boolean;opencode:boolean})=>{
-    if(request!==providerDiscovery)return;
+  providerDiscovery++;
+  providerAvailable = false;
+  provider.disabled = true;
+  publishProviderStatus(provider, 'loading');
+  window.dispatchEvent(new CustomEvent('picker-project', {detail:projectId}));
+}
+function discoverChatProviders(preferred: string | null, handoff: string | null): void {
+  const provider = $('#chat-provider') as HTMLSelectElement;
+  provider.dataset.handoff = handoff ?? '';
+  const request = ++providerDiscovery;
+  providerAvailable = false;
+  provider.disabled = true;
+  publishProviderStatus(provider, 'loading');
+  void store.discoverProviders().then((available: {codex: boolean; opencode: boolean}) => {
+    if (request !== providerDiscovery) return;
     provider.replaceChildren();
-    for(const [id,label] of [['codex','Codex'],['opencode','OpenCode']]) {
-      if(!available[id] && saved!==id)continue;
-      const option=document.createElement('option');option.value=id;option.disabled=!available[id];option.textContent=available[id] ? label : `${label} (not installed)`;provider.append(option);
+    for (const [id, label] of [['codex', 'Codex'], ['opencode', 'OpenCode']]) {
+      if (!available[id] && handoff !== id && preferred !== id) continue;
+      const option = new Option(available[id] ? label : `${label} (not installed)`, id);
+      option.disabled = !available[id];
+      provider.append(option);
     }
-    if(!provider.options.length) {const option=document.createElement('option');option.value='';option.textContent='No providers found';provider.append(option);}
-    if(saved)provider.value=saved;
-    provider.disabled=!provider.value;
-    providerAvailable=Boolean(available[provider.value]);
-    provider.dispatchEvent(new Event('providerstate')); updateSendState();
-  }).catch(()=>{if(request===providerDiscovery){const option=document.createElement('option');option.value='';option.textContent='Provider detection failed';provider.replaceChildren(option);provider.disabled=true;providerAvailable=false;provider.dispatchEvent(new Event('providerstate'));updateSendState();}});
+    if (preferred && Array.from(provider.options).some(option => option.value === preferred)) provider.value = preferred;
+    provider.disabled = !provider.value;
+    providerAvailable = Boolean(available[provider.value]);
+    publishProviderStatus(provider, 'ready');
+  }).catch(() => {
+    if (request !== providerDiscovery) return;
+    provider.replaceChildren();
+    providerAvailable = false;
+    publishProviderStatus(provider, 'error');
+  });
+}
+$('#chat-provider').addEventListener('picker-retry-providers', () => {
+  const {value, dataset} = $('#chat-provider') as HTMLSelectElement;
+  const staged = active && readChatDraft(draftKey(active.id,currentChat)).provider;
+  discoverChatProviders(staged ?? (value || dataset.handoff || null), dataset.handoff || null);
+});
+function renderChat(chat) {
+  const saved = chat.provider || (chat.sessionId || chat.messages.length ? 'codex' : null);
+  const staged = active && readChatDraft(draftKey(active.id,currentChat)).provider;
+  discoverChatProviders(staged ?? saved, saved);
   updateChatProgress();
   const pane = $('#chat-messages');
   if (!chat.messages.length) {
@@ -860,11 +896,25 @@ function renderChat(chat) {
   const latest = Array.from((pane as HTMLElement).querySelectorAll<HTMLElement>('.message.user')).at(-1);
   pane.scrollTop = latest ? pane.scrollTop + latest.getBoundingClientRect().top - pane.getBoundingClientRect().top - 12 : pane.scrollHeight;
 }
-$('#chat-provider').onchange = () => { providerAvailable=Boolean(($('#chat-provider') as HTMLSelectElement).value && !($('#chat-provider') as HTMLSelectElement).selectedOptions[0]?.disabled); $('#chat-provider').dispatchEvent(new Event('providerstate'));updateSendState(); };
+$('#chat-provider').addEventListener('picker-readiness', updateSendState);
+$('#chat-provider').onchange = () => {
+  const select = $('#chat-provider') as HTMLSelectElement;
+  const id = select.value as ChatProvider;
+  providerAvailable = Boolean(id && !select.selectedOptions[0]?.disabled);
+  if (active && providerAvailable) {
+    const key = draftKey(active.id,currentChat);
+    writeChatDraft(key,{...readChatDraft(key),provider:id === select.dataset.handoff ? undefined : id});
+  }
+  select.dispatchEvent(new Event('providerstate'));
+  updateSendState();
+};
 async function sendChat() {
-  if (!active || !providerAvailable || chatLoading || restoringProject === active.id || chatBusy.has(active.id) || pendingAttachments.has(draftKey(active.id,currentChat)) || !$('#chat-input').value.trim()) return;
+  if (!active || !providerAvailable || $('#chat-provider').dataset.pickerBlock || chatLoading || restoringProject === active.id || chatBusy.has(active.id) || pendingAttachments.has(draftKey(active.id,currentChat)) || !$('#chat-input').value.trim()) return;
   const id = active.id, chatId = currentChat, prompt = $('#chat-input').value, images = attachments, provider = ($('#chat-provider') as HTMLSelectElement).value;
-  $('#chat-provider').disabled = true; $('#chat-provider').dispatchEvent(new Event('providerstate'));
+  const providerSelect = $('#chat-provider') as HTMLSelectElement;
+  providerSelect.disabled = true;
+  providerSelect.dataset.pickerStatus = 'busy';
+  providerSelect.dispatchEvent(new Event('providerstate'));
   attachments = []; renderAttachments();
   $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
   saveChatDraft();
@@ -872,8 +922,16 @@ async function sendChat() {
   if ($('#chat-messages .dismiss-welcome')) $('#chat-messages').replaceChildren(pending); else $('#chat-messages').append(pending);
   let submitted=false, chat=null;
   try {
-    await (window as unknown as Window & { codexPickerReady: () => Promise<void> }).codexPickerReady();
-    submitted=true;chat=await store.chatSend(id,prompt,chatId,images,provider);
+    const selection = await (window as unknown as Window & {
+      codexPickerReady: (id: string) => Promise<Omit<import('./src/codex-preferences.cjs').CodexPreferences, 'favorites'>>;
+    }).codexPickerReady(provider);
+    submitted = true;
+    chat = await store.chatSend(id, prompt, chatId, images, provider, selection);
+    if (chat) {
+      const key = draftKey(id,chatId);
+      const draft = readChatDraft(key);
+      if (draft.provider === provider) writeChatDraft(key,{...draft,provider:undefined});
+    }
   } catch (error) {
     if(String(error.message).includes('Save pending changes before sending a message.')) submitted=false;
     if(active?.id===id && currentChat===chatId) {
@@ -882,7 +940,7 @@ async function sendChat() {
         if(!attachments.length) {attachments=images;renderAttachments();}
         saveChatDraft();
       }
-      pending.remove(); if (!submitted) { $('#chat-provider').disabled = false; $('#chat-provider').dispatchEvent(new Event('providerstate')); } report('send message',error);
+      pending.remove(); report('send message',error);
     } else if(!String(error.message).includes('Assistant operation finished, but its recovery snapshot failed')) {
       const key=draftKey(id,chatId),draft=readChatDraft(key);
       if(!draft.text)draft.text=prompt;if(!draft.attachments.length)draft.attachments=images;
@@ -907,6 +965,11 @@ async function sendChat() {
       }
     } catch(error) {if(active?.id===id) report('refresh project after assistant',error);}
     chatBusy.delete(id);chatProgress.delete(id);updateChatProgress();
+    if (active?.id === id && providerSelect.dataset.pickerStatus === 'busy') {
+      providerSelect.disabled = false;
+      providerSelect.dataset.pickerStatus = 'ready';
+      providerSelect.dispatchEvent(new Event('providerstate'));
+    }
     if(active) {setEditorReadOnly(chatBusy.has(active.id) || restoringProject===active.id);updateSendState();}updateCancelButton();
   }
 }

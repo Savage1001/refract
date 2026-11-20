@@ -51,7 +51,7 @@ async function main():Promise<void> {
    await page.locator('#tool-versions').click();await page.locator('.version-row').waitFor();
    await page.locator('.version-comparison>summary').click();await page.getByText('changed: main.tex',{exact:true}).click();await page.locator('.comparison-wrap').waitFor();await capture('versions');
    await page.locator('#tools').click();await page.locator('.model-trigger').click();
-   await page.locator('[data-focus-key="model:model-a"]').click();await page.locator('.model-trigger').click();await capture('models');await page.keyboard.press('Escape');
+   await page.getByRole('region',{name:'Codex',exact:true}).getByRole('button',{name:'Research model',exact:true}).click();await capture('models');await page.keyboard.press('Escape');
    await page.setViewportSize({width:1000,height:740});await capture('compact');
    await chooseView(page,'pdf');await settledPdf(page);await capture('compact-preview');
    await page.locator('#pane-editor').click();await page.setViewportSize({width:900,height:650});await page.locator('#source').focus();await capture('short');

@@ -13,7 +13,7 @@ const { ChatService } = require('./src/chat.cjs');
 const {runWarmCodex,closeCodexRuntimes,closeCodexWorkspace} = require('./src/codex-runtime.cjs');
 const {AssistantPerformance} = require('./src/assistant-performance.cjs');
 const codexModels: typeof import('./src/codex-models.cjs') = require('./src/codex-models.cjs');
-const { CodexPreferencesStore } = require('./src/codex-preferences.cjs');
+const { CodexPreferencesStore, validateCodexPreferences } = require('./src/codex-preferences.cjs');
 const { importProject, exportProject } = require('./src/archive.cjs');
 const { Versions } = require('./src/versions.cjs');
 const { Comments } = require('./src/comments.cjs');
@@ -446,13 +446,15 @@ app.whenReady().then(async () => {
     return writes;
   });
 
-  ipcMain.handle('chat:send', async (event, id, prompt, chatId, attachments, provider = 'codex') => {
+  ipcMain.handle('chat:send', async (event, id, prompt, chatId, attachments, provider = 'codex', selection?: Omit<import('./src/codex-preferences.cjs').CodexPreferences, 'favorites'>) => {
     if(!acceptingAssistantOperations) throw new Error('Application is shutting down');
     if(deletingProjects.has(id)) throw new Error('Project deletion is in progress');
     clearTimeout(snapshotTimers.get(id));snapshotTimers.delete(id);
     const metrics = new AssistantPerformance();
+    if (provider !== 'codex' && provider !== 'opencode') throw new Error('Invalid assistant provider');
+    const snapshot = selection === undefined ? undefined : validateCodexPreferences({...selection, favorites: []}, provider === 'opencode');
     try {return await assistant.run(id,async signal=>{
-      const preferences = provider === 'codex' ? await codexPreferences.load() : await openCodePreferences.load();
+      const preferences = snapshot ?? await (provider === 'codex' ? codexPreferences : openCodePreferences).load();
       const project = await store.destinationDir(id);
       const bridge = await startAssistantTools(store, id, async (force=false) => {
         await require('./src/document-images.cjs').materializeDocumentImages(store,id);

@@ -82,7 +82,7 @@ contextBridge.exposeInMainWorld('store', {
   chatCreate: id => ipcRenderer.invoke('chat:create', id),
   chatPasteImage: (id,bytes) => ipcRenderer.invoke('chat:paste-image', id, bytes),
   chatAttach: (id,remaining) => ipcRenderer.invoke('chat:attach', id,remaining),
-  chatSend: (id, prompt, chatId, attachments, provider) => ipcRenderer.invoke('chat:send', id, prompt, chatId, attachments, provider),
+  chatSend: (id, prompt, chatId, attachments, provider, selection?: Omit<import('./src/codex-preferences.cjs').CodexPreferences, 'favorites'>) => ipcRenderer.invoke('chat:send', id, prompt, chatId, attachments, provider, selection),
   chatCancel: id => ipcRenderer.invoke('chat:cancel', id),
   onChatProgress: callback => {ipcRenderer.on('chat:progress', (_event,update) => callback(update));},
   compile: (id,force=false) => ipcRenderer.invoke('compile', id,force),
