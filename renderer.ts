@@ -829,12 +829,15 @@ function discoverChatProviders(preferred: string | null, handoff: string | null)
   providerAvailable = false;
   provider.disabled = true;
   publishProviderStatus(provider, 'loading');
-  void store.discoverProviders().then((available: {codex: boolean; opencode: boolean}) => {
+  void store.discoverProviders().then((available: {codex: boolean; opencode: boolean; codexMode?: import('./src/codex-account.cjs').CodexMode; codexSetupRequired?: boolean}) => {
     if (request !== providerDiscovery) return;
+    provider.dataset.codexMode = available.codexMode ?? '';
+    provider.dataset.codexSetupRequired = String(Boolean(available.codexSetupRequired));
     provider.replaceChildren();
     for (const [id, label] of [['codex', 'Codex'], ['opencode', 'OpenCode']]) {
       if (!available[id] && handoff !== id && preferred !== id) continue;
-      const option = new Option(available[id] ? label : `${label} (not installed)`, id);
+      const unavailable = id === 'codex' && available.codexSetupRequired ? 'connect in Settings' : 'not installed';
+      const option = new Option(available[id] ? label : `${label} (${unavailable})`, id);
       option.disabled = !available[id];
       provider.append(option);
     }
@@ -849,11 +852,13 @@ function discoverChatProviders(preferred: string | null, handoff: string | null)
     publishProviderStatus(provider, 'error');
   });
 }
-$('#chat-provider').addEventListener('picker-retry-providers', () => {
+function retryChatProviders(): void {
   const {value, dataset} = $('#chat-provider') as HTMLSelectElement;
   const staged = active && readChatDraft(draftKey(active.id,currentChat)).provider;
   discoverChatProviders(staged ?? (value || dataset.handoff || null), dataset.handoff || null);
-});
+}
+$('#chat-provider').addEventListener('picker-retry-providers', retryChatProviders);
+window.addEventListener('codex-connection-changed', () => { if (active) retryChatProviders(); });
 function renderChat(chat) {
   const saved = chat.provider || (chat.sessionId || chat.messages.length ? 'codex' : null);
   const staged = active && readChatDraft(draftKey(active.id,currentChat)).provider;
@@ -912,6 +917,7 @@ async function sendChat() {
   if (!active || !providerAvailable || $('#chat-provider').dataset.pickerBlock || chatLoading || restoringProject === active.id || chatBusy.has(active.id) || pendingAttachments.has(draftKey(active.id,currentChat)) || !$('#chat-input').value.trim()) return;
   const id = active.id, chatId = currentChat, prompt = $('#chat-input').value, images = attachments, provider = ($('#chat-provider') as HTMLSelectElement).value;
   const providerSelect = $('#chat-provider') as HTMLSelectElement;
+  const codexMode = provider === 'codex' ? providerSelect.dataset.codexMode || undefined : undefined;
   providerSelect.disabled = true;
   providerSelect.dataset.pickerStatus = 'busy';
   providerSelect.dispatchEvent(new Event('providerstate'));
@@ -926,7 +932,7 @@ async function sendChat() {
       codexPickerReady: (id: string) => Promise<Omit<import('./src/codex-preferences.cjs').CodexPreferences, 'favorites'>>;
     }).codexPickerReady(provider);
     submitted = true;
-    chat = await store.chatSend(id, prompt, chatId, images, provider, selection);
+    chat = await store.chatSend(id, prompt, chatId, images, provider, selection, codexMode);
     if (chat) {
       const key = draftKey(id,chatId);
       const draft = readChatDraft(key);
@@ -2014,18 +2020,104 @@ const updateProgress = document.querySelector<HTMLProgressElement>('#update-prog
 const updatePercent = document.querySelector<HTMLSpanElement>('#update-percent')!;
 const checkUpdates = document.querySelector<HTMLButtonElement>('#check-updates')!;
 const restartUpdate = document.querySelector<HTMLButtonElement>('#restart-update')!;
+const codexConnection = document.querySelector<HTMLSelectElement>('#codex-connection')!;
+const codexAccountSettings = document.querySelector<HTMLElement>('#codex-account-settings')!;
+const codexAccountStatus = document.querySelector<HTMLParagraphElement>('#codex-account-status')!;
+const codexDownload = document.querySelector<HTMLDivElement>('#codex-download')!;
+const codexProgress = document.querySelector<HTMLProgressElement>('#codex-download-progress')!;
+const codexPercent = document.querySelector<HTMLSpanElement>('#codex-download-percent')!;
+const codexRetry = document.querySelector<HTMLButtonElement>('#codex-download-retry')!;
+const codexSignIn = document.querySelector<HTMLButtonElement>('#codex-sign-in')!;
+const codexSwitch = document.querySelector<HTMLButtonElement>('#codex-switch-account')!;
+const codexSignOut = document.querySelector<HTMLButtonElement>('#codex-sign-out')!;
+const codexCancel = document.querySelector<HTMLButtonElement>('#codex-setup-cancel')!;
+type CodexAccountStatus = import('./src/codex-account.cjs').CodexAccountStatus;
+let previousCodexStatus: CodexAccountStatus | undefined;
+let codexAction = false;
+let codexSettingsError = '';
+let codexSettingsPoll: ReturnType<typeof setInterval> | undefined;
+let codexStatusRequest = 0;
+
+function showDownloadProgress(container: HTMLElement, progress: HTMLProgressElement, label: HTMLElement,
+  visible: boolean, percent?: number): void {
+  container.hidden = !visible;
+  label.hidden = percent === undefined;
+  if (percent === undefined) {
+    progress.removeAttribute('value');
+  } else {
+    progress.value = percent;
+    label.textContent = `${percent}%`;
+  }
+}
+
+function renderCodexAccount(status: CodexAccountStatus): void {
+  const previous = previousCodexStatus;
+  previousCodexStatus = status;
+  if (previous && (previous.mode !== status.mode || previous.signedIn !== status.signedIn || previous.installed !== status.installed)) {
+    window.dispatchEvent(new Event('codex-connection-changed'));
+  }
+  codexConnection.value = status.mode;
+  codexAccountSettings.hidden = status.mode !== 'account' && !codexSettingsError;
+  const { phase, installed, signedIn } = status;
+  const busy = codexAction || phase !== 'idle';
+  const message = codexSettingsError || status.message || (phase === 'downloading' ? 'Downloading the Codex runtime…'
+    : phase === 'installing' ? 'Installing the Codex runtime…'
+    : phase === 'signing-in' ? 'Finish signing in in your browser.'
+    : phase === 'signing-out' ? 'Signing out of ChatGPT…'
+    : signedIn ? (status.email ? `Signed in as ${status.email}` : 'Signed in to ChatGPT.')
+    : installed ? 'Connect your ChatGPT account to use Codex.' : 'Download the Codex runtime to continue.');
+  if (codexAccountStatus.textContent !== message) codexAccountStatus.textContent = message;
+  showDownloadProgress(codexDownload, codexProgress, codexPercent, phase === 'downloading' || phase === 'installing', status.percent);
+  codexRetry.hidden = busy || installed;
+  codexSignIn.hidden = busy || !installed || signedIn;
+  codexSignIn.textContent = status.remembered ? `Reconnect ${status.remembered}` : 'Continue with ChatGPT';
+  codexSwitch.hidden = codexSignIn.hidden || !status.hasRegistration;
+  codexSignOut.hidden = busy || !signedIn;
+  codexCancel.hidden = phase === 'idle' || phase === 'signing-out';
+}
+async function refreshCodexAccount(): Promise<void> {
+  const request = ++codexStatusRequest;
+  try {
+    const status = await store.codexAccountStatus();
+    if (request === codexStatusRequest) renderCodexAccount(status);
+  } catch {
+    if (request !== codexStatusRequest) return;
+    codexAccountSettings.hidden = false;
+    codexAccountStatus.textContent = 'Could not read Codex settings.';
+  }
+}
+async function changeCodexAccount(action: () => Promise<void>): Promise<void> {
+  if (codexAction) return;
+  codexAction = true;
+  codexConnection.disabled = true;
+  codexSettingsError = '';
+  if (previousCodexStatus) renderCodexAccount(previousCodexStatus);
+  try { await action(); }
+  catch (error) { codexSettingsError = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not change the Codex connection.'; }
+  finally {
+    codexAction = false;
+    codexConnection.disabled = false;
+    await refreshCodexAccount();
+  }
+}
+codexConnection.onchange = () => {
+  const mode = codexConnection.value;
+  void changeCodexAccount(() => store.codexAccountSelect(mode));
+};
+codexRetry.onclick = () => void changeCodexAccount(() => store.codexAccountSelect('account'));
+codexSignIn.onclick = () => void changeCodexAccount(() => store.codexAccountSignIn(false));
+codexSwitch.onclick = () => void changeCodexAccount(() => store.codexAccountSignIn(true));
+codexSignOut.onclick = () => void changeCodexAccount(() => store.codexAccountSignOut());
+codexCancel.onclick = async () => {
+  codexCancel.disabled = true;
+  try { await store.codexAccountCancel(); }
+  catch { codexSettingsError = 'Could not cancel Codex setup.'; }
+  finally { codexCancel.disabled = false; await refreshCodexAccount(); }
+};
 let restartingUpdate = false;
 let settingsPoll: ReturnType<typeof setInterval> | undefined;
 function renderUpdateStatus(status: import('./src/updates.cjs').UpdateStatus): void {
-  updateDownload.hidden = status.phase !== 'downloading';
-  const percent = status.downloadPercent;
-  updatePercent.hidden = percent === undefined;
-  if (percent === undefined) {
-    updateProgress.removeAttribute('value');
-  } else {
-    updateProgress.value = percent;
-    updatePercent.textContent = `${percent}%`;
-  }
+  showDownloadProgress(updateDownload, updateProgress, updatePercent, status.phase === 'downloading', status.downloadPercent);
   restartUpdate.hidden = status.phase !== 'ready' && status.phase !== 'restarting';
   restartUpdate.disabled = restartingUpdate || status.phase !== 'ready' || updateTrack.disabled;
   updateTrack.value = status.track;
@@ -2040,10 +2132,14 @@ async function refreshUpdateStatus(): Promise<void> {
 }
 $('#settings').onclick = () => {
   settingsDialog.showModal(); void refreshUpdateStatus();
+  if (typeof store.codexAccountStatus === 'function') {
+    void refreshCodexAccount();
+    codexSettingsPoll = setInterval(() => void refreshCodexAccount(), 300);
+  }
   settingsPoll = setInterval(() => { if (!restartingUpdate) void refreshUpdateStatus(); }, 2000);
 };
 $('#settings-close').onclick = () => settingsDialog.close();
-settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); $('#settings').focus(); });
+settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); clearInterval(codexSettingsPoll); $('#settings').focus(); });
 updateTrack.onchange = async () => {
   restartUpdate.hidden = true;
   updateDownload.hidden = true;

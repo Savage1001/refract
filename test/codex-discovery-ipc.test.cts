@@ -14,6 +14,7 @@ nodeTest.test('preload exposes discovery results and contains unexpected failure
   const app = await playwright._electron.launch({ args: [root], env });
   t.after(async () => { await app.close(); await fs.rm(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); });
   const page = await app.firstWindow();
+  await page.evaluate(() => store.codexAccountSelect('cli'));
   await app.evaluate(({ app }) => {
     const requireFromApp = process.getBuiltinModule('module').createRequire(app.getAppPath() + '/build/main.cjs');
     const discovery = requireFromApp('./src/codex-models.cjs');

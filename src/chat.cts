@@ -1,6 +1,6 @@
 export type CodexReasoningEffort = import('./codex-preferences.cjs').ReasoningEffort;
 export type Provider = 'codex' | 'opencode';
-export interface CodexOptions { model?: string; reasoningEffort?: string; fastMode?: boolean; tools?: import('./assistant-tools.cjs').ToolConnection; performance?: InstanceType<typeof import('./assistant-performance.cjs').AssistantPerformance> }
+export interface CodexOptions { launch?: import('./codex-launch.cjs').CodexLaunch; model?: string; reasoningEffort?: string; fastMode?: boolean; tools?: import('./assistant-tools.cjs').ToolConnection; performance?: InstanceType<typeof import('./assistant-performance.cjs').AssistantPerformance> }
 
 const { modelId } = require('./codex-preferences.cjs');
 const fs = require('node:fs/promises');
@@ -231,6 +231,9 @@ class ChatService {
         if (chat.messages.length) { handoff = {role:'handoff', from:chat.provider, to:selected, status:'pending'}; chat.messages.push(handoff); }
         chat.sessionId = null; chat.handoffPending = true;
       } else if (chat.handoffPending) chat.sessionId = null;
+      const codexAccount = selected === 'codex' ? options?.launch?.accountKey : undefined;
+      if (selected === 'codex' && chat.codexAccount !== codexAccount) chat.sessionId = null;
+      chat.codexAccount = codexAccount;
       const history = !chat.sessionId ? portableHistory(chat.messages,options?.tools ? 32000 : Infinity) : '';
       if (history) chat.handoffPending = true;
       chat.provider = selected;

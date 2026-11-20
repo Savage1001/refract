@@ -11,9 +11,9 @@ function probe(command:string, args:string[]):Promise<boolean> {
     child.once('error',()=>finish(false));child.once('close',code=>finish(code===0));
   });
 }
-async function discoverProviders():Promise<{codex:boolean;opencode:boolean}> {
+async function discoverProviders(accountAvailable?: boolean):Promise<{codex:boolean;opencode:boolean}> {
   const script=path.join(process.env.APPDATA || '', 'npm','node_modules','@openai','codex','bin','codex.js');
-  const codex=probe('node',[script,'--version']);
+  const codex=accountAvailable ?? probe('node',[script,'--version']);
   let opencode:Promise<boolean>;
   try {opencode=probe(openCode.executable(),['--version']);} catch {opencode=Promise.resolve(false);}
   const [hasCodex,hasOpenCode]=await Promise.all([codex,opencode]);
