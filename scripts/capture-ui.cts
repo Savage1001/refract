@@ -40,16 +40,27 @@ async function main():Promise<void> {
    await page.screenshot({path:path.join(output,`${name}-${theme}.png`)});
   };
   try {
-   await capture('populated');await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.setProperty('--sidebar-width','150px'));await page.screenshot({path:path.join(output,`branding-narrow-${theme}.png`)});await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.removeProperty('--sidebar-width'));await page.locator('#grid-view').click();await capture('grid');await page.locator('#list-view').click();
+   await capture('populated');await page.locator('#grid-view').click();await capture('grid');await page.locator('#list-view').click();
+   await page.setViewportSize({width:720,height:650});await capture('library-narrow');
+   await page.locator('#search').fill('No matching project');await capture('library-no-results');
+   await page.locator('#clear-search').click();
+   await page.locator('#settings').click();await page.locator('#update-status').filter({hasText:'up to date'}).waitFor();await capture('settings');
+   await page.keyboard.press('Escape');await page.locator('#deleted-projects').click();await capture('deleted-projects');await page.keyboard.press('Escape');
+   await page.setViewportSize({width:1440,height:900});
    await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();await settledPdf(page);
    await page.locator('#file-list button[title="sections/abstract.tex"]').click();await page.getByRole('button',{name:'main.tex',exact:true}).click();
    await capture('workspace');
-   await page.screenshot({path:path.join(output,`layout-${theme}.png`)});
+   await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.setProperty('--sidebar-width','150px'));
+   await page.waitForFunction(()=>document.querySelector('.sidebar')!.getBoundingClientRect().width===150);
+   await capture('branding-narrow');
+   await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.removeProperty('--sidebar-width'));
    await page.locator('#project-name').click();await capture('dialog');await page.locator('#rename-dialog button[value=cancel]').click();
    await page.locator('#tools').click();await page.locator('#tool-info').click();await page.locator('.project-facts').waitFor();await capture('tools');
    await page.locator('#tool-comments').click();await page.waitForFunction(()=>document.querySelectorAll('.comment-card').length===2);await capture('comments');
    await page.locator('#tool-versions').click();await page.locator('.version-row').waitFor();
    await page.locator('.version-comparison>summary').click();await page.getByText('changed: main.tex',{exact:true}).click();await page.locator('.comparison-wrap').waitFor();await capture('versions');
+   await page.locator('#tool-logs').click();await page.getByText('Full build output',{exact:true}).click();
+   await page.locator('#workspace.tools-expanded').waitFor();await capture('logs');
    await page.locator('#tools').click();await page.locator('.model-trigger').click();
    await page.getByRole('region',{name:'Codex',exact:true}).getByRole('button',{name:'Research model',exact:true}).click();await capture('models');await page.keyboard.press('Escape');
    await page.setViewportSize({width:1000,height:740});await capture('compact');
@@ -61,8 +72,8 @@ async function main():Promise<void> {
    assert.deepEqual(errors,[]);
   } finally {await browser.close();}
  }
- assert.equal(Object.keys(captures).length,26);
+ assert.equal(Object.keys(captures).length,38);
  await fs.writeFile(path.join(output,'capture-manifest.json'),JSON.stringify({renderer:'Headless Chromium with isolated sample IPC data',pairedStateVerified:true,captures},null,2)+'\n');
- console.log('Captured 26 screenshots; all 13 theme pairs have identical dimensions, pane sizes, selection and comments. No native windows were created.');
+ console.log('Captured 38 screenshots; all 19 theme pairs have identical dimensions, pane sizes, selection and comments. No native windows were created.');
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});

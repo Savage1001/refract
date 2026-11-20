@@ -40,6 +40,9 @@ test('headless editor escape, completion, context menus and dialog primary actio
   await page.locator('#project-name').click();await page.locator('#rename-name').fill('Cancelled project');await page.keyboard.press('Escape');await page.locator('#rename-dialog').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.rename),projectRenameCount);assert.equal(await page.locator('#project-name').textContent(),'Confirmed project');
   const folder=page.locator('#file-list summary[title="sections"]');await folder.focus();await folder.press('Shift+F10');await page.locator('#folder-move').click();
+  await page.locator('#folder-move-path').fill('   ');await page.locator('#folder-move-path').press('Enter');
+  assert.equal(await page.locator('#folder-move-error').textContent(),'Enter a new project path.');
+  assert.equal(await page.locator('#folder-move-dialog').isVisible(),true);
   await page.locator('#folder-move-path').fill('chapters');await page.locator('#folder-move-path').press('Enter');await page.locator('#file-list summary[title="chapters"]').waitFor();
   const before=await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.createFile);
   for(const cancel of ['button','escape']) {await page.locator('#add-file').click();await page.locator('#file-name').fill('cancelled.tex');if(cancel==='escape')await page.keyboard.press('Escape');else await page.locator('#file-dialog button[value=cancel]').click();}
@@ -236,6 +239,8 @@ test('headless icon controls share idle and hover colors in both themes', {timeo
    await check('#deleted-projects');
    await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
    await page.locator('#source').waitFor({state:'visible'});
+   await page.locator('#chat-input').fill('Check this source');
+   await page.waitForFunction(() => !(document.querySelector('#send') as HTMLButtonElement).disabled);
    for (const selector of ['#duplicate','#pane-editor','#attach','#send']) await check(selector);
    await page.locator('#chats-tab').click();
    await check('.chat-rename','');

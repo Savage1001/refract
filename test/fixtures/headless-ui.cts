@@ -1,5 +1,3 @@
-import fs = require('node:fs/promises');
-import os = require('node:os');
 import path = require('node:path');
 import url = require('node:url');
 import playwright = require('playwright');
@@ -74,19 +72,26 @@ function installFixture(data:{pdf:string; source:string}):void {
  };
 }
 
-let cachedDocument:Promise<{pdf:string;source:string}>|undefined;
-async function fixtureDocument():Promise<{pdf:string;source:string}> {
- if (!cachedDocument) cachedDocument = (async()=>{
-  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'refract-headless-paper-'));
-  const source='\\documentclass[11pt]{article}\n\\usepackage[margin=1in]{geometry}\n\\title{Spectral methods}\n\\author{Research notes}\n\\date{Working draft}\n\\begin{document}\n\\maketitle\n\\section{Introduction}\nA stable spectral approximation for fluid dynamics.\n\\end{document}\n';
-  try {
-   await fs.writeFile(path.join(directory,'main.tex'),source);
-   const {compile}:{compile(directory:string):Promise<{ok:boolean;pdf?:string;log:string}>}=require('../../src/compiler.cjs');
-   const result=await compile(directory);if(!result.ok || !result.pdf)throw new Error(result.log);
-   return {pdf:result.pdf,source};
-  } finally {await fs.rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:200});}
- })();
- return cachedDocument;
+function fixtureDocument(): {pdf:string;source:string} {
+ const source='\\documentclass[11pt]{article}\n\\usepackage[margin=1in]{geometry}\n\\title{Spectral methods}\n\\author{Research notes}\n\\date{Working draft}\n\\begin{document}\n\\maketitle\n\\section{Introduction}\nA stable spectral approximation for fluid dynamics.\n\\end{document}\n';
+ // This fixture exercises real PDF rendering independently of the installed compiler.
+ const stream = 'BT /F1 24 Tf 72 690 Td (Spectral methods) Tj /F1 12 Tf 0 -28 Td (Research notes) Tj 0 -20 Td (Working draft) Tj /F1 16 Tf 0 -52 Td (1 Introduction) Tj /F1 12 Tf 0 -25 Td (A stable spectral approximation for fluid dynamics.) Tj ET\n';
+ const objects = [
+  '<< /Type /Catalog /Pages 2 0 R >>',
+  '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+  '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>',
+  `<< /Length ${stream.length} >>\nstream\n${stream}endstream`
+ ];
+ let pdf = '%PDF-1.4\n';
+ const offsets = objects.map((object, index) => {
+  const offset = pdf.length;
+  pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  return `${String(offset).padStart(10, '0')} 00000 n \n`;
+ });
+ const crossReference = pdf.length;
+ pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${crossReference}\n%%EOF\n`;
+ return {pdf:Buffer.from(pdf, 'ascii').toString('base64'),source};
 }
 
 async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: {pdf:string;source:string}) {
@@ -94,7 +99,7 @@ async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: 
  try {
   const context=await browser.newContext({viewport:{width:1440,height:900},colorScheme,locale:'en-US',timezoneId:'UTC'});
   await context.route(/^https?:/,route=>route.abort());
-  await context.addInitScript(installFixture,fixtureData ?? await fixtureDocument());
+  await context.addInitScript(installFixture,fixtureData ?? fixtureDocument());
   const page=await context.newPage();const errors:string[]=[];
   page.on('pageerror',error=>errors.push(error.message));
   page.on('dialog',dialog=>{errors.push(dialog.message());void dialog.dismiss();});
