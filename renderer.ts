@@ -43,14 +43,13 @@ function motionTiming(duration: MotionDuration = '--motion-layout-ms'): Keyframe
   return timing;
 }
 
-function playMotion(surface: Element, keyframes: Keyframe[], timing = motionTiming(), onFinish?: () => void): Animation {
+function playMotion(surface: Element, keyframes: Keyframe[], timing = motionTiming()): Animation {
   stopMotion(surface);
   const animation = surface.animate(keyframes, timing);
   activeMotion.set(surface, animation);
   const finish = () => {
     if (activeMotion.get(surface) !== animation) return;
     activeMotion.delete(surface);
-    onFinish?.();
   };
   void animation.finished.then(finish, finish);
   return animation;
@@ -109,7 +108,6 @@ for (const type of ['pointerup', 'pointercancel'] as const)
   window.addEventListener(type, event => releaseRows(event.pointerId), {capture:true});
 window.addEventListener('blur', () => { for (const pointerId of pressedRows.keys()) releaseRows(pointerId); });
 
-const exitProperties = ['--exit-left', '--exit-top', '--exit-width', '--exit-height', '--exit-display'] as const;
 let workspaceMotion: Animation | undefined;
 
 function playWorkspaceMotion(surface: Element, interrupt = true, focusSafeSurface?: Element): void {
@@ -124,49 +122,6 @@ function playWorkspaceMotion(surface: Element, interrupt = true, focusSafeSurfac
   workspaceMotion = next;
   const clear = () => { if (workspaceMotion === next) workspaceMotion = undefined; };
   void next.finished.then(clear, clear);
-}
-
-function clearSurfaceExit(surface: HTMLElement): void {
-  surface.classList.remove('motion-exit');
-  for (const property of exitProperties) surface.style.removeProperty(property);
-}
-
-function showSurface(surface: HTMLElement): void {
-  stopMotion(surface);
-  clearSurfaceExit(surface);
-  surface.hidden = false;
-}
-
-// Sample both sides before writing styles so reversals continue from the
-// current frame and outgoing controls leave the layout in one batch.
-function swapSurfaces(show: HTMLElement[], hide: HTMLElement[]): void {
-  const animate = motionEnabled();
-  const timing = animate ? motionTiming('--motion-control-ms') : undefined;
-  const entries = show.filter(surface => surface.hidden).map(surface => ({
-    surface, opacity: animate && surface.classList.contains('motion-exit') ? Number(getComputedStyle(surface).opacity) : .8
-  }));
-  const exits = hide.filter(surface => !surface.hidden).map(surface => {
-    const style = animate ? getComputedStyle(surface) : undefined;
-    return {surface, opacity:Number(style?.opacity ?? '1'), display:style?.display,
-      bounds:style && surface.checkVisibility() ? surface.getBoundingClientRect() : undefined};
-  });
-  for (const {surface, bounds, display} of exits) {
-    if (bounds?.height && bounds.width && display) {
-      const values = [`${bounds.left}px`, `${bounds.top}px`, `${bounds.width}px`, `${bounds.height}px`, display];
-      for (const [index, property] of exitProperties.entries()) surface.style.setProperty(property, values[index]);
-      surface.classList.add('motion-exit');
-    }
-    surface.hidden = true;
-  }
-  for (const {surface} of entries) showSurface(surface);
-  if (!timing) return;
-  for (const {surface, opacity} of exits) {
-    if (surface.classList.contains('motion-exit'))
-      playMotion(surface, [{opacity}, {opacity:0}], timing, () => clearSurfaceExit(surface));
-  }
-  for (const {surface, opacity} of entries) {
-    playMotion(surface, [{opacity}, {opacity:1}], timing);
-  }
 }
 
 let projects = [], active = null, currentFile = 'main.tex', opening = 0, projectOpening = 0, currentChat = 'default';
@@ -464,40 +419,52 @@ document.addEventListener('focusin', event => {
   if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus();
 });
 let fileTreeRequest = 0, renderedTree = '', renderedTreeProject = '';
-const folderHeights = new WeakMap<HTMLDetailsElement, number>();
+const folderRowMotions = new Set<Animation>();
+// Bound the retained disclosure and the number of rows sampled per toggle.
+const maxFolderExitRows = 64;
+const maxMeasuredFollowingRows = 48;
 
 function toggleFolderWithMotion(folder: HTMLDetailsElement, children: HTMLElement, event: MouseEvent): void {
-  if (!motionEnabled()) return;
+  if (!folder.open) {
+    // Following rows must clear the space before children become interactive.
+    for (const animation of folderRowMotions) animation.cancel();
+    folderRowMotions.clear();
+    return;
+  }
+  if (!motionEnabled() || !folder.classList.contains('folder-motion')) return;
   const fileList = document.getElementById('file-list')!;
   const viewport = fileList.getBoundingClientRect();
   const atTop = fileList.scrollTop === 0;
-  const closing = folder.open;
-  const height = closing ? children.getBoundingClientRect().height : folderHeights.get(folder);
-  if (closing && height !== undefined) folderHeights.set(folder, height);
+  const height = children.getBoundingClientRect().height;
+  if (!height) return;
   const rows: {row:Element;top:number;translate:number}[] = [];
-  for (let row = folder.parentElement?.closest('.file-tree-row'); row; row = row.parentElement?.closest('.file-tree-row')) {
-    for (let following = row.nextElementSibling; following; following = following.nextElementSibling) {
+  let remaining = maxMeasuredFollowingRows;
+  for (let row = folder.parentElement?.closest('.file-tree-row'); row && remaining; row = row.parentElement?.closest('.file-tree-row')) {
+    for (let following = row.nextElementSibling; following && remaining; following = following.nextElementSibling) {
+      remaining--;
       const bounds = following.getBoundingClientRect();
-      if (bounds.top > viewport.bottom + (closing ? height ?? 0 : 0)) break;
+      if (bounds.top > viewport.bottom + height) break;
       if (bounds.bottom < viewport.top) continue;
       const translate = atTop && activeMotion.has(following)
         ? parseFloat(getComputedStyle(following).translate.split(' ')[1] ?? '0') : 0;
       rows.push({row:following, top:bounds.top, translate});
     }
   }
+  if (!remaining || rows.some(({row}) => ownsVisibleFocus(row))) return;
   event.preventDefault();
   for (const {row} of rows) stopMotion(row);
-  folder.open = !closing;
-  if (!rows.length) return;
+  folder.open = false;
   // At the scroll origin, following rows move by exactly the disclosed
   // height. Scrolled trees also need to account for native scroll anchoring.
-  const delta = (height ?? children.getBoundingClientRect().height) * (closing ? 1 : -1);
   const moves = rows.map(({row, top, translate}) => ({
-    row, offset:atTop ? delta + translate : top - row.getBoundingClientRect().top
+    row, offset:atTop ? height + translate : top - row.getBoundingClientRect().top
   }));
   for (const {row, offset} of moves) {
-    if (Math.abs(offset) > .5 && !ownsVisibleFocus(row))
-      playMotion(row, [{translate:`0 ${offset}px`}, {translate:'0'}]);
+    if (Math.abs(offset) <= .5) continue;
+    const animation = playMotion(row, [{translate:`0 ${offset}px`}, {translate:'0'}]);
+    folderRowMotions.add(animation);
+    const clear = () => { folderRowMotions.delete(animation); };
+    void animation.finished.then(clear, clear);
   }
 }
 
@@ -526,15 +493,18 @@ async function refreshFiles(remappedFocus?: string) {
     row.append(control, actions);
     return row;
   }
-  function renderNodes(items) {
+  function renderNodes(items): {list:HTMLDivElement; rowCount:number} {
     const list = document.createElement('div'); list.className = 'file-tree';
+    let rowCount = items.length;
     for (const item of items) {
       if (item.children) {
         const folder = document.createElement('details'); folder.dataset.path = item.path; folder.open = folderStates.get(item.path) ?? true;
         const label = document.createElement('summary'), folderIcon = document.createElementNS('http://www.w3.org/2000/svg','svg'), folderPath = document.createElementNS('http://www.w3.org/2000/svg','path'), folderName = document.createElement('span');
         folderIcon.setAttribute('viewBox','0 0 24 24'); folderIcon.setAttribute('aria-hidden','true'); folderIcon.setAttribute('class','folder-icon'); folderPath.setAttribute('d','M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'); folderIcon.append(folderPath); folderName.textContent=item.name; const disclosure=actionIcon('next');disclosure.classList.add('folder-chevron');label.append(disclosure,folderIcon,folderName); label.title = item.path;
         label.oncontextmenu = event => { menuFolder=item.path; $('#file-menu').hidden=true; showFileContextMenu($('#folder-menu'), event); };
-        const children = renderNodes(item.children);
+        const {list:children, rowCount:childCount} = renderNodes(item.children);
+        rowCount += childCount;
+        folder.classList.toggle('folder-motion', childCount > 0 && childCount <= maxFolderExitRows);
         label.addEventListener('click', event => toggleFolderWithMotion(folder, children, event));
         folder.append(label, children);
         list.append(addActions(folder, item, true));
@@ -555,7 +525,7 @@ async function refreshFiles(remappedFocus?: string) {
         button.oncontextmenu = event => { menuFile = item.path; $('#folder-menu').hidden=true; showFileContextMenu($('#file-menu'), event); }; list.append(addActions(button, item, false));
       }
     }
-    return list;
+    return {list, rowCount};
   }
   const fileList = document.getElementById('file-list')!;
   const focused = document.activeElement?.closest<HTMLElement>('#file-list button, #file-list summary')
@@ -563,7 +533,7 @@ async function refreshFiles(remappedFocus?: string) {
   const row = focused?.closest('.file-tree-row');
   const focusedPath = row?.firstElementChild?.getAttribute('data-path');
   const destination = focused === remapOrigin ? remappedFocus : undefined;
-  fileList.replaceChildren(renderNodes(nodes));
+  fileList.replaceChildren(renderNodes(nodes).list);
   if (focused && document.activeElement === document.body) {
     const replacement = Array.from(fileList.querySelectorAll<HTMLElement>('[data-path]')).find(item => item.dataset.path === (destination ?? focusedPath));
     if (destination && replacement) {
@@ -1911,7 +1881,9 @@ $('#collapse').onclick = () => {
 };
 $('#outline-toggle').onclick = () => {
   const list = $('#outline-list');
-  if (list.hidden) swapSurfaces([list], []); else swapSurfaces([], [list]);
+  stopMotion(list);
+  list.hidden = !list.hidden;
+  if (!list.hidden) playLayoutMotion(list, .8);
   $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden));
 };
 function setProjectView(view: 'grid' | 'list', persist = true): void {

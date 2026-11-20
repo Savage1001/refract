@@ -3494,19 +3494,6 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     transition:border-color var(--motion-overlay) var(--motion-ease);
   }
 
-  /* The live layout is already at its destination when these surfaces exit. */
-  .motion-exit[hidden] {
-    display:var(--exit-display)!important;
-    position:fixed;
-    z-index:12;
-    inset:var(--exit-top) auto auto var(--exit-left);
-    width:var(--exit-width);
-    height:var(--exit-height);
-    margin:0;
-    pointer-events:none;
-    interactivity:inert;
-  }
-
   .latex-completions {
     opacity:1;
     translate:0;
@@ -3530,7 +3517,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 
   /* Native disclosure semantics settle before paint so Enter then Tab can
      always reach the first disclosed control. */
-  :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .raw-output, .compile-error details)[open]::details-content {
+  :is(.file-alternatives, .version-comparison, .comment-reply-form, .raw-output, .compile-error details)[open]::details-content {
     animation:motion-surface var(--motion-overlay) var(--motion-ease);
   }
 
@@ -3540,8 +3527,8 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   /* Fold departing rows behind the live rows, where no stale control can be
      painted over the target that now owns the pointer. */
   .raw-output { position:relative; }
-  :is(.file-tree details,.raw-output)::details-content { clip-path:inset(0); }
-  :is(.file-tree details,.raw-output):not([open])::details-content {
+  :is(.folder-motion,.raw-output)::details-content { clip-path:inset(0); }
+  :is(.folder-motion,.raw-output):not([open])::details-content {
     position:absolute;
     inset:100% 0 auto;
     opacity:0;
@@ -3551,7 +3538,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     transition:clip-path var(--motion-overlay) var(--motion-ease), opacity var(--motion-overlay) ease-out,
       content-visibility var(--motion-overlay) allow-discrete;
   }
-  .file-tree details:not([open])::details-content { z-index:-1; }
+  .folder-motion:not([open])::details-content { z-index:-1; }
   .raw-output:not([open]) :is(.log-controls,.log-filter-empty) { visibility:hidden; }
 
   .new-chat-tooltip {

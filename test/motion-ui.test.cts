@@ -301,8 +301,13 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     await page.waitForFunction(() => (document.getElementById('source') as HTMLTextAreaElement).value === '% A file after the folder');
     await folder.press('Enter');
     await page.keyboard.press('Tab');
-    assert.equal(await page.locator('#file-list button[title="sections/abstract.tex"]')
-      .evaluate(file => file === document.activeElement), true);
+    assert.deepEqual(await page.locator('#file-list button[title="sections/abstract.tex"]').evaluate(file => {
+      const {left,top,width,height} = file.getBoundingClientRect();
+      return {focused:file === document.activeElement, opacity:getComputedStyle(file.closest('details')!, '::details-content').opacity,
+        ownsPointer:file.contains(document.elementFromPoint(left+width/2, top+height/2)),
+        siblingSettled:document.querySelector('#file-list button[title="z-last.tex"]')!.parentElement!
+          .getAnimations().every(animation => animation.id !== 'refract-motion')};
+    }), {focused:true, opacity:'1', ownsPointer:true, siblingSettled:true});
     await page.keyboard.press('Tab');
     const action = page.getByRole('button', {name:'Actions for sections/abstract.tex',exact:true});
     assert.deepEqual(await action.evaluate(button => ({
@@ -312,8 +317,13 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     await page.locator('#outline-list button').first().waitFor();
     const outline = page.locator('#outline-list');
     await page.locator('#outline-toggle').click();
-    assert.equal(await outline.evaluate(list => (list as HTMLElement).hidden &&
-      (getComputedStyle(list).display === 'none' || getComputedStyle(list).pointerEvents === 'none')), true);
+    assert.deepEqual(await outline.evaluate(list => {
+      const toggle = document.getElementById('outline-toggle')!;
+      const {left,top,width,height} = toggle.getBoundingClientRect();
+      return {hidden:(list as HTMLElement).hidden, display:getComputedStyle(list).display,
+        rowRectangles:list.querySelector('button')!.getClientRects().length,
+        ownsPointer:toggle.contains(document.elementFromPoint(left+width/2, top+height/2))};
+    }), {hidden:true, display:'none', rowRectangles:0, ownsPointer:true});
     await page.locator('#outline-toggle').click();
     assert.equal(await outline.isVisible(), true);
     const files = await page.evaluate(() => {
@@ -513,6 +523,44 @@ test('a delayed Tools result leaves a newer layout fade in charge', {timeout:150
     assert.equal(layout.same, true);
     assert.equal(layout.bodyMotion, false);
     assert.ok(layout.opacity > .95);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('large folder collapse leaves native layout and paints no retained rows', {timeout:30000}, async context => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    await page.evaluate(() => {
+      const {files} = (window as unknown as {fixture:{files:Record<string,string>}}).fixture;
+      for (let index = 0; index < 1400; index++) {
+        const name = `z-${String(index).padStart(4, '0')}.tex`;
+        files[`sections/${name}`] = '% Nested sample';
+        files[name] = '% Following sample';
+      }
+    });
+    await openProject(page);
+    const folder = page.locator('#file-list summary').first();
+    const collapse = () => folder.evaluate(async (summary:HTMLElement) => {
+      const details = summary.closest('details')!;
+      const following = document.querySelector('#file-list button[title="z-0000.tex"]')!;
+      const start = await new Promise<number>(resolve => requestAnimationFrame(resolve));
+      summary.click();
+      const disclosure = getComputedStyle(details, '::details-content').contentVisibility;
+      const {left,top,width,height} = following.getBoundingClientRect();
+      const ownsPointer = following.contains(document.elementFromPoint(left+width/2, top+height/2));
+      const moving = following.parentElement!.getAnimations().some(animation => animation.id === 'refract-motion');
+      const next = await new Promise<number>(resolve => requestAnimationFrame(resolve));
+      return {closed:!details.open, disclosure, ownsPointer, moving, firstFrame:Math.round(next-start)};
+    });
+    const animated = await collapse();
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await folder.press('Enter');
+    const reduced = await collapse();
+    for (const {closed, disclosure, ownsPointer, moving} of [animated, reduced])
+      assert.deepEqual({closed, disclosure, ownsPointer, moving}, {closed:true, disclosure:'hidden', ownsPointer:true, moving:false});
+    context.diagnostic(`Large folder collapse first sampled frame: ${animated.firstFrame} ms with motion, ${reduced.firstFrame} ms with reduced motion.`);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

@@ -100,6 +100,10 @@ const scenes: Scene[] = [
     await folder.press('Enter');
     await pause(page);
     await folder.press('Enter');
+    await pause(page);
+    await folder.press('Enter');
+    await pause(page, 45);
+    await folder.press('Enter');
     await page.keyboard.press('Tab');
     await pause(page);
     await page.keyboard.press('Tab');
