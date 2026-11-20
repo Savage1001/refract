@@ -203,7 +203,12 @@ test('a failed save prevents compilation until the same file is saved successful
  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-save-fail-'));
  const env: NodeJS.ProcessEnv = {...process.env, REFRACT_DATA_DIR:data, REFRACT_TEST_HIDDEN:'1'}; delete env.ELECTRON_RUN_AS_NODE;
  const app = await launchDesktop(env,true);
- t.after(async () => { await app.close().catch(() => {}); await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200}); });
+ let restoreTestFile: (() => Promise<void>) | undefined;
+ t.after(async () => {
+  if (restoreTestFile) await restoreTestFile();
+  await app.close().catch(() => {});
+  await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200});
+ });
  await app.evaluate(({app})=>{
   const req=(process.getBuiltinModule('module') as any).createRequire(app.getAppPath()+'\\package.json');
   const {ChatService}=req('./build/src/chat.cjs');
@@ -215,24 +220,30 @@ test('a failed save prevents compilation until the same file is saved successful
  const source = await page.locator('#source').inputValue();
  const [id] = (await fs.readdir(path.join(data,'projects'))).filter((name:string)=>/^[0-9a-f-]{36}$/.test(name));
  const file = path.join(data,'projects',id,'main.tex'), backup = path.join(data,'main-backup.tex');
- await fs.rename(file,backup); await fs.mkdir(file);
+ await fs.rename(file,backup);
+ restoreTestFile = async () => {
+  await fs.rmdir(file).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  await fs.rename(backup,file);
+ };
+ await fs.mkdir(file);
  await page.locator('#source').fill(source + '\nSave must fail');
  await page.getByRole('dialog',{name:/could not save file/i}).waitFor(); await page.locator('#app-dialog-action').click();
  await page.getByText('Errors',{exact:true}).waitFor({timeout:30000});
- assert.match(await page.locator('#pdf-area').innerText(),/Cannot compile until the file is saved/);
+ await page.locator('#pdf-content .compile-error > p').filter({hasText:/Cannot compile until the file is saved/}).waitFor();
  assert.equal(await page.locator('#download').isDisabled(),true);
  await page.locator('#chat-input').fill('Keep this draft');const sendAttempt=page.locator('#send').click();
  await sendAttempt; await page.locator('#app-dialog').getByText(/Save pending changes/).waitFor(); await page.locator('#app-dialog-action').click();
  assert.equal(await page.locator('#chat-input').inputValue(),'Keep this draft');
  assert.match(await page.locator('#source').inputValue(),/Save must fail/);
  assert.equal(await app.evaluate(()=>(globalThis as any).__assistantRan===true),false);
- await fs.rmdir(file); await fs.rename(backup,file);
+ await restoreTestFile();
+ restoreTestFile = undefined;
  await page.locator('#source').fill(source + '\n% saved after recovery');
  await page.getByText('Compiled',{exact:true}).waitFor({timeout:30000});
  assert.match(await fs.readFile(file,'utf8'),/saved after recovery/);
  assert.equal(await page.locator('#download').isEnabled(),true);
  await page.locator('#send').click();
- await page.waitForFunction(()=>(document.querySelector('#send') as HTMLButtonElement).disabled===false);
+ await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>('#source')?.readOnly);
  assert.equal(await app.evaluate(()=>(globalThis as any).__assistantRan===true),true);
 });
 
