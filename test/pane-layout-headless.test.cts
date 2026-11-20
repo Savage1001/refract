@@ -34,7 +34,7 @@ test('all seven pane combinations remain recoverable and preserve editor/chat dr
   const titleAligned = () => page.waitForFunction(() => {
    const title = document.querySelector('#project-name')!.getBoundingClientRect();
    const sidebar = document.querySelector('#project-navigation')!.getBoundingClientRect();
-   return Math.abs(title.left - sidebar.right) < 1;
+   return Math.abs(title.left - sidebar.right - 12) < 1;
   });
   await titleAligned();
   const sidebarWidth = (await sidebar.boundingBox())!.width;
@@ -105,8 +105,10 @@ test('pane preferences survive reload and narrow preview switching; malformed pr
   await page.locator('#pane-agent').click();await verify(page,[true,false,false]);
   await page.locator('#pane-editor').click();await verify(page,[true,true,false]);
   await page.locator('#pane-preview').click();await verify(page,[false,false,true]);
-  await page.locator('#pane-preview').click();await verify(page,[false,true,false]);
-  await page.setViewportSize({width:1440,height:900});await verify(page,[false,true,false]);
+  await page.setViewportSize({width:1440,height:900});await verify(page,[true,true,true]);
+  await page.setViewportSize({width:1000,height:740});await verify(page,[false,false,true]);
+  await page.locator('#pane-preview').click();await verify(page,[true,true,false]);
+  await page.setViewportSize({width:1440,height:900});await verify(page,[true,true,true]);
   for(const saved of ['broken','{"agent":false,"editor":false,"preview":false}','{"agent":"false","editor":false,"preview":false}']) {
    await page.evaluate(value=>localStorage.setItem('refract.workspace-panes.v1',value),saved);
    await page.reload();await page.waitForFunction(()=>!document.body.inert);await openProject(page);

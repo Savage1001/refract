@@ -15,7 +15,7 @@ test('renderer displays compile status and control symbols as Unicode', {timeout
   await project.click();
 
   const compile = page.locator('#compile');
-  await compile.locator('xpath=self::*[@disabled]').waitFor();
+  await compile.locator('xpath=self::*[@aria-disabled="true"]').waitFor();
   assert.equal(await compile.textContent(), 'Compiling…');
 
   await page.getByRole('button', {name: 'Chats', exact: true}).click();

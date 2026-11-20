@@ -142,8 +142,9 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  const validSource = await page.locator('#source').inputValue();
  await page.locator('#source').fill(validSource.replace('\\end{document}', '\\undefinedrefractcommand\n\\end{document}'));
  assert.equal(await page.locator('#download').isDisabled(), true);
- assert.equal(await page.locator('#pdf-area canvas').count(), 0);
+ assert.equal(await page.locator('#pdf-area canvas').count(), 1);
  await page.getByText('Errors', {exact:true}).waitFor({timeout:30000});
+ await page.getByText(/Showing the last successful PDF/).waitFor();
  assert.equal(await page.locator('#download').isDisabled(), true);
  await page.locator('#source').fill(validSource);
  await page.getByText('Compiled', {exact:true}).waitFor({timeout:30000});
@@ -889,7 +890,7 @@ test('send button keeps a centered arrow at wide and narrow composer widths', {t
  assert.equal(await page.locator('#send').isVisible(),true);
 });
 
-test('compiled PDF viewer navigates pages, zooms and disables stale controls', {timeout:90000}, async t=>{
+test('compiled PDF viewer keeps page and zoom controls while stale', {timeout:90000}, async t=>{
  const data=await fs.mkdtemp(path.join(os.tmpdir(),'refract-ui-pdf-controls-'));
  const env: NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const app=await launchDesktop(env);t.after(async()=>{await app.close().catch(()=>{});await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
@@ -928,7 +929,11 @@ test('compiled PDF viewer navigates pages, zooms and disables stale controls', {
  await zoom.click();assert.equal(await page.locator('.pdf-zoom-value').innerText(),'50%');
  await page.locator('#zoom-fit').click();assert.equal(await page.locator('.pdf-zoom-value').innerText(),'Fit');assert.equal(await page.locator('#zoom-fit').getAttribute('aria-pressed'),'true');
  await page.getByRole('button',{name:'Fit PDF page to view'}).click();assert.equal(await page.getByRole('button',{name:'Fit PDF page to view'}).getAttribute('aria-pressed'),'true');
- await page.locator('#source').fill('unsaved change');assert.equal(await zoom.isDisabled(),true);assert.equal(await jump.isDisabled(),true);
+ await page.locator('#source').fill('unsaved change');
+ assert.equal(await zoom.isEnabled(),true);
+ assert.equal(await current.isEnabled(),true);
+ assert.equal(await page.locator('#download').isDisabled(),true);
+ assert.equal(await page.getByRole('button',{name:'Show in PDF'}).isDisabled(),true);
 });
 
 test('compiled PDF links open external URLs and navigate to internal destinations', {timeout:90000}, async t=>{
