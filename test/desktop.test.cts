@@ -990,11 +990,13 @@ test('SyncTeX navigates between a nested source and compiled PDF', {timeout:9000
  await assertSourceVisible();
  await app.evaluate(({ipcMain})=>{
   const state=globalThis as any;state.__syncStarted=new Promise<void>(resolve=>{state.__syncNotify=resolve;});
-  ipcMain.removeHandler('synctex:forward');ipcMain.handle('synctex:forward',async()=>{state.__syncNotify();await new Promise<void>(resolve=>{state.__syncRelease=resolve;if(state.__syncCancel)resolve();});return {page:2,x:100,y:100};});
+  ipcMain.removeHandler('synctex:forward');ipcMain.handle('synctex:forward',async()=>{state.__syncNotify();await new Promise<void>(resolve=>{state.__syncRelease=resolve;if(state.__syncCancel)resolve();});return {page:1,x:100,y:100};});
  });
  await page.getByRole('button',{name:'Show in PDF'}).click();await app.evaluate(async()=>await (globalThis as any).__syncStarted);
  await source.fill('Changed');assert.equal(await page.getByRole('button',{name:'Show in PDF'}).isDisabled(),true);
- await app.evaluate(()=>{(globalThis as any).__syncRelease();});await page.waitForTimeout(250);assert.equal(await page.locator('.pdf-page-count').innerText(),'0 / 0');
+ await app.evaluate(()=>{(globalThis as any).__syncRelease();});await page.waitForTimeout(250);
+ assert.equal(await page.locator('.pdf-page-count').innerText(),'2 / 2');
+ assert.equal(await page.getByRole('button',{name:'Show in PDF'}).isDisabled(),true);
  assert.deepEqual(dialogs,[]);
 });
 
