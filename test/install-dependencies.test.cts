@@ -60,6 +60,19 @@ test('download failures preserve existing data, clean staging and permit retry',
   assert.equal(await setup.complete(target),true);
 });
 
+test('setup retries a transient Windows lock when activating the toolchain', {skip:process.platform !== 'win32'}, async t => {
+  const root = await fixture(t), target = path.join(root, 'Refract/dependencies/TinyTeX');
+  const rename = fs.rename;
+  let attempts = 0;
+  t.mock.method(fs, 'rename', async (source: string, destination: string) => {
+    if (destination === target && ++attempts === 1) throw Object.assign(new Error('File is locked'), {code:'EPERM'});
+    await rename(source, destination);
+  });
+  await setup.install({localAppData:root,download:async()=>{},extract:unpackFixture});
+  assert.equal(attempts, 2);
+  assert.equal(await setup.complete(target), true);
+});
+
 test('failed extraction never publishes a partial toolchain', async t => {
   const root=await fixture(t);
   await assert.rejects(setup.install({localAppData:root,download:async()=>{},extract:()=>{throw new Error('bad archive');}}),/bad archive/);

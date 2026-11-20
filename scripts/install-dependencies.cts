@@ -2,6 +2,7 @@ import fs = require('node:fs/promises');
 import path = require('node:path');
 import crypto = require('node:crypto');
 import childProcess = require('node:child_process');
+import timers = require('node:timers/promises');
 
 const tools = ['pdflatex', 'xelatex', 'lualatex', 'kpsewhich', 'synctex', 'bibtex', 'biber'];
 async function complete(root: string): Promise<boolean> {
@@ -17,6 +18,18 @@ async function download(url: string, hash: string, file: string): Promise<void> 
 function extract(archive: string, destination: string, files: string[] = []): void {
   const result = childProcess.spawnSync('tar.exe', ['-xf', archive, '-C', destination, ...files], { windowsHide: true, encoding: 'utf8', timeout: 600000 });
   if (result.error || result.status !== 0) throw new Error(`Extraction failed: ${result.error?.message || result.stderr}`);
+}
+async function renameDirectory(source: string, destination: string): Promise<void> {
+  // Windows can briefly lock extracted files while scanning them.
+  const delays = [100, 200, 400, 800, 1600, 3200, 5000];
+  for (const delay of delays) {
+    try { await fs.rename(source, destination); return; }
+    catch (error) {
+      if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      await timers.setTimeout(delay);
+    }
+  }
+  await fs.rename(source, destination);
 }
 interface InstallOptions {
   localAppData?: string;
@@ -41,16 +54,20 @@ async function install(options: InstallOptions = {}): Promise<void> {
     // Pin the upstream revision as well as its checksum.
     await fetchArchive('https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/synctex.windows.r78097.tar.xz', '09ff70bf3a0de6b1c81c5aa3eb136473fce83314dc407a9ad6c4592376a6a83c', sync);
     unpack(sync, path.join(staging, 'TinyTeX'), ['bin/windows/synctex.exe']);
-    if (!await complete(path.join(staging, 'TinyTeX'))) throw new Error('Downloaded TeX is missing required tools');
+    const extracted = path.join(staging, 'TinyTeX');
+    if (!await complete(extracted)) throw new Error('Downloaded TeX is missing required tools');
+    if (await complete(target)) return;
     // Preserve any incomplete previous installation rather than deleting user files.
-    try { await fs.rename(target, path.join(root, `previous-${path.basename(staging)}`)); } catch (error) {
+    try { await renameDirectory(target, path.join(root, `previous-${path.basename(staging)}`)); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
-    await fs.rename(path.join(staging, 'TinyTeX'), target);
+    try { await renameDirectory(extracted, target); } catch (error) {
+      if (!await complete(target)) throw error;
+    }
   } finally {
     // Only remove this function's unique staging directory, inside our data root.
     if (path.dirname(staging) !== root || !path.basename(staging).startsWith('setup-')) throw new Error('Unsafe staging path');
-    await fs.rm(staging, { recursive: true, force: true });
+    await fs.rm(staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }
 if (require.main === module) install().catch(async (error: unknown) => {
