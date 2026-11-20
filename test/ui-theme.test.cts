@@ -80,8 +80,7 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
    await capture(`${mode}-versions`);
    await page.locator('#tools').click();
    await page.locator('.model-trigger').click();
-   await page.locator('.model-row button').first().click();
-   await page.locator('.model-trigger').click();
+   await page.locator('.model-choice').filter({hasNotText:'CLI default'}).first().click();
    await capture(`${mode}-models`);
    const bounds = await page.locator('.model-panel').boundingBox();
    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 1440);

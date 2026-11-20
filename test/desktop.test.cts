@@ -1192,7 +1192,7 @@ test('attachment selection enforces the message limit and blocks sending while p
  await app.evaluate(()=>{(globalThis as any).__attachRelease();});await page.waitForFunction(()=>document.querySelectorAll('#attachment-list button').length===10);assert.equal(await page.locator('#send').isDisabled(),false);assert.equal(await page.locator('#chat-input').inputValue(),'Wait for attachment');
 });
 
-test('saved Codex preferences reach new and resumed chat turns', {timeout:60000}, async t=>{
+test('saved Codex preferences and explicit snapshots reach chat turns', {timeout:60000}, async t=>{
  const data=await fs.mkdtemp(path.join(os.tmpdir(),'refract-ui-preferences-'));
  const env: NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const app=await launchDesktop(env);
@@ -1220,12 +1220,18 @@ test('saved Codex preferences reach new and resumed chat turns', {timeout:60000}
   const chat=await api.chatCreate(project.id);
   await api.chatSend(project.id,'new',chat,[]);
   await api.chatSend(project.id,'resume',chat,[]);
+  await api.codexPreferencesSave({model:'other-model',reasoningEffort:'low',favorites:[],fastMode:true});
+  await api.chatSend(project.id,'snapshot',chat,[],'codex',{model:'chosen-model',reasoningEffort:'high',fastMode:false});
  });
  const runs=await app.evaluate(()=>(globalThis as any).__codexRuns);
- assert.equal(runs.length,3);
+ assert.equal(runs.length,4);
  assert.equal(runs[0].session,null);assert.ok(!runs[0].args.some((arg:string)=>arg.startsWith('--model') || arg.startsWith('model_reasoning_effort=')));
  assert.equal(runs[1].session,null);assert.equal(runs[2].session,'thread');
- for(const run of runs.slice(1)){assert.ok(run.args.includes('--model=--vendor/model with space'));assert.ok(run.args.includes('model_reasoning_effort="high"'));}
+ for(const run of runs.slice(1,3)){assert.ok(run.args.includes('--model=--vendor/model with space'));assert.ok(run.args.includes('model_reasoning_effort="high"'));}
+ assert.equal(runs[3].session,'thread');
+ assert.ok(runs[3].args.includes('--model=chosen-model'));
+ assert.ok(runs[3].args.includes('model_reasoning_effort="high"'));
+ assert.ok(runs[3].args.includes('service_tier="default"'));
 });
 
 test('chat provider selection remains available for a started conversation', {timeout:60000}, async t=>{
@@ -1238,10 +1244,10 @@ test('chat provider selection remains available for a started conversation', {ti
  await page.waitForLoadState('load'); await page.reload();
  await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  const provider=page.locator('#chat-provider');await page.waitForFunction(()=>!(document.querySelector('#chat-provider') as HTMLSelectElement).disabled);assert.equal(await provider.inputValue(),'codex');assert.equal(await provider.isEnabled(),true);
- await page.locator('.model-trigger').click();await page.getByLabel('OpenCode models').click();await page.waitForFunction(()=>document.querySelector('.model-trigger')?.textContent==='model');
- await page.locator('#chat-input').fill('Hello');await page.locator('#send').click();await page.getByText('Done',{exact:true}).waitFor();
+ await page.locator('.model-trigger').click();await page.getByLabel('OpenCode models').click();assert.equal(await provider.inputValue(),'codex');await page.getByRole('button',{name:'model',exact:true}).click();
+ await page.locator('#chat-input').fill('Hello');await page.locator('#send').click();await page.locator('#chat-messages').getByText('Done',{exact:true}).waitFor();
  assert.equal(await app.evaluate(()=>(globalThis as any).__provider),'opencode');await page.waitForFunction(()=>!(document.querySelector('#chat-provider') as HTMLSelectElement).disabled);
- await page.locator('.model-trigger').click();await page.getByLabel('Codex models').click();assert.equal(await provider.inputValue(),'codex');await page.keyboard.press('Escape');
+ await page.locator('.model-trigger').click();await page.getByLabel('Codex models').click();assert.equal(await provider.inputValue(),'opencode');await page.getByRole('button',{name:'CLI default',exact:true}).click();assert.equal(await provider.inputValue(),'codex');await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'New chat',exact:false}).click();await page.waitForFunction(()=>!document.querySelector('.message'));assert.equal(await page.locator('#chat-input').inputValue(),'');
 });
 
@@ -1257,7 +1263,7 @@ test('new chats offer only installed providers', {timeout:60000}, async t=>{
  await page.waitForFunction(()=>!(document.querySelector('#chat-provider') as HTMLSelectElement).disabled);
  assert.deepEqual(await page.locator('#chat-provider option').evaluateAll(options=>options.map(option=>(option as HTMLOptionElement).value)),['opencode']);
  assert.equal(await page.locator('#chat-provider').inputValue(),'opencode');
- await page.waitForFunction(()=>document.querySelector('.model-trigger')?.textContent==='model');
+ await page.waitForFunction(()=>document.querySelector('.model-trigger-label')?.textContent==='model');
 });
 
 test('saved chats retain an unavailable provider and cannot send', {timeout:60000}, async t=>{
@@ -1276,7 +1282,7 @@ test('saved chats retain an unavailable provider and cannot send', {timeout:6000
  assert.equal(await page.locator('#chat-provider').isEnabled(),true);
  await page.locator('#chat-input').fill('New message');
  assert.equal(await page.locator('#send').isDisabled(),true);
- await page.locator('.model-trigger').click();assert.equal(await page.getByLabel('OpenCode models').isDisabled(),true);await page.getByLabel('Codex models').click();
+ await page.locator('.model-trigger').click();await page.getByLabel('OpenCode models').click();await page.getByText('OpenCode unavailable',{exact:true}).last().waitFor();await page.getByLabel('Codex models').click();await page.getByRole('button',{name:'CLI default',exact:true}).click();
  assert.equal(await page.locator('#chat-provider').inputValue(),'codex');assert.equal(await page.locator('#send').isEnabled(),true);
 });
 

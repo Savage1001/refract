@@ -54,10 +54,10 @@ test('headless composition confirmation cannot send or select, and ordinary Ente
   await openProject(page); const input=page.locator('#chat-input');await input.fill('Research question');
   await input.dispatchEvent('keydown',{key:'Enter',isComposing:true});await input.dispatchEvent('keydown',{key:'Enter',keyCode:229});
   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.chatSend ?? 0),0);
-  await page.locator('.model-trigger').click();const search=page.getByLabel('Search models');await search.fill('Research');
+  await page.locator('.model-trigger').click();const search=page.getByLabel('Search models');await search.fill('Codex Research');
   await search.dispatchEvent('keydown',{key:'Enter',isComposing:true});assert.equal(await page.locator('.model-panel').isVisible(),true);
-  assert.equal(await page.locator('.model-trigger').textContent(),'CLI default');
-  await search.press('Enter');assert.equal(await page.locator('.model-panel').isVisible(),false);
+  assert.equal(await page.locator('.model-trigger-label').textContent(),'CLI default');
+  await search.press('Enter');assert.equal(await page.locator('.model-trigger-label').textContent(),'Research model');await page.keyboard.press('Escape');
   await input.focus();await input.press('End');await input.press('Shift+Enter');assert.match(await input.inputValue(),/\n$/);
   await input.press('Enter');await page.waitForFunction(()=>(window as unknown as StateWindow).fixture.counters.chatSend===1);
   assert.deepEqual(errors,[]);
@@ -105,11 +105,13 @@ test('headless selected states, picker dismissal, and default-choice styling agr
   await page.locator('#tools').click();await page.locator('#tool-versions').click();assert.equal(await page.locator('#tool-versions').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('#tool-info').getAttribute('aria-pressed'),'false');await page.locator('#tools').click();
   for(const mode of ['light','dark'] as const) {
    await page.emulateMedia({colorScheme:mode});await page.locator('.model-trigger').click();
-   const choice=page.locator('[data-focus-key="model:model-a"]'), fallback=page.locator('[data-focus-key="model:default"]');
+   const catalog=page.getByRole('region',{name:'Codex',exact:true});
+   const choice=catalog.getByRole('button',{name:'Research model',exact:true}), fallback=catalog.getByRole('button',{name:'CLI default',exact:true});
    assert.equal(await fallback.evaluate(el=>getComputedStyle(el).fontSize),await choice.evaluate(el=>getComputedStyle(el).fontSize));
    assert.equal(await fallback.evaluate(el=>getComputedStyle(el).padding),await choice.evaluate(el=>getComputedStyle(el).padding));
-   await page.locator('[data-focus-key="favorite:model-a"]').click();assert.equal(await page.locator('[data-focus-key="favorite:model-a"]').evaluate(el=>el===document.activeElement),true);
-   await choice.click();await page.locator('.model-trigger').click();await page.getByRole('button',{name:'High',exact:true}).click();assert.equal(await page.getByRole('button',{name:'High',exact:true}).evaluate(el=>el===document.activeElement),true);
+   const favorite=catalog.locator('.model-favorite');
+   await favorite.click();assert.equal(await favorite.evaluate(el=>el===document.activeElement),true);
+   await choice.click();const effort=page.getByLabel('Reasoning effort');await effort.focus();await effort.selectOption('high');assert.equal(await effort.evaluate(el=>el===document.activeElement),true);
    await page.getByRole('button',{name:'Fast',exact:true}).focus();await page.keyboard.press('Tab');assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');
    await page.locator('.model-trigger').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').evaluate(el=>el===document.activeElement),true);
    await page.locator('.model-trigger').click();await page.locator('#source').click({position:{x:10,y:10}});assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('#source').evaluate(el=>el===document.activeElement),true);
@@ -283,4 +285,91 @@ test('headless project search has its own row and retains content search', {time
    assert.deepEqual(errors,[]);
   } finally {await browser.close();}
  }
+});
+
+test('headless provider detection recovers and sends the explicit picker snapshot', {timeout:60000}, async()=> {
+ const {browser,page,errors}=await fixture.openHeadlessUi('light',{pdf:'',source:'An example document'});
+ try {
+  await page.evaluate(()=> {
+   type FixtureWindow = Window & {store:Record<string,unknown>; discoveryChecks:number; snapshot:unknown[]};
+   const w=window as unknown as FixtureWindow;
+   w.discoveryChecks=0;
+   w.store.discoverProviders=async()=> {
+    if (++w.discoveryChecks===1) throw new Error('Discovery unavailable');
+    return {codex:true,opencode:true};
+   };
+   w.store.chatSend=async(_id:string,prompt:string,_chat:string,_attachments:unknown[],provider:string,selection:unknown)=>{
+    w.snapshot=[provider,selection];
+    return {provider,messages:[{role:'user',text:prompt},{role:'assistant',text:'Response received'}]};
+   };
+  });
+  await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+  await page.locator('#source').waitFor({state:'visible'});
+  await page.getByRole('button',{name:/Choose provider and model.*Provider check failed/}).click();
+  await page.getByRole('button',{name:'Check providers'}).click();
+  const codex=page.getByRole('region',{name:'Codex',exact:true});
+  await codex.getByRole('button',{name:'Research model',exact:true}).click();
+  await page.getByLabel('Reasoning effort').selectOption('high');
+  await page.getByRole('button',{name:'Fast',exact:true}).click();
+  await page.getByRole('button',{name:'OpenCode models'}).click();
+  await page.keyboard.press('Escape');
+  await page.locator('#chat-input').fill('Please review this document');
+  await page.locator('#send').click();
+  await page.getByText('Response received',{exact:true}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>(window as unknown as {snapshot:unknown[]}).snapshot),
+   ['codex',{model:'model-a',reasoningEffort:'high',fastMode:true}]);
+  assert.deepEqual(errors,[]);
+ } finally {await browser.close();}
+});
+
+test('headless chat drafts keep a staged handoff and block sends until model recovery', {timeout:60000}, async()=> {
+ const {browser,page,errors}=await fixture.openHeadlessUi('dark',{pdf:'',source:'An example document'});
+ try {
+  await page.evaluate(()=> {
+   const w=window as unknown as Window & {store:Record<string,unknown>};
+   w.store.chatList=async()=>[{id:'default',title:'Original chat'},{id:'second',title:'Second chat'}];
+   w.store.chatLoad=async(_project:string, chat='default')=>chat==='default'
+    ? {provider:'codex',sessionId:'example',messages:[{role:'user',text:'Earlier prompt'}]}
+    : {provider:'codex',sessionId:null,messages:[]};
+  });
+  await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+  await page.getByText('Earlier prompt',{exact:true}).waitFor();
+  const input=page.locator('#chat-input');
+  await input.fill('A staged provider handoff');
+  await page.locator('.model-trigger').click();
+  await page.getByLabel('OpenCode models').click();
+  await page.getByRole('region',{name:'OpenCode',exact:true}).getByRole('button',{name:'Research model',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await page.locator('#chats-tab').click();
+  await page.getByRole('button',{name:'Second chat',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#chat-provider')?.getAttribute('data-handoff')==='codex' &&
+   (document.querySelector('#chat-provider') as HTMLSelectElement).value === 'codex');
+  await page.getByRole('button',{name:'Original chat',exact:true}).click();
+  await page.waitForFunction(()=>(document.querySelector('#chat-provider') as HTMLSelectElement).value === 'opencode');
+  assert.equal(await input.inputValue(),'A staged provider handoff');
+  await page.locator('.model-trigger').click();
+  assert.ok(await page.getByText('Your next message will hand off this conversation to the selected provider.',{exact:true}).isVisible());
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>{
+   const w=window as unknown as Window & {store:Record<string,unknown>;completeCatalog?:()=>void};
+   w.store.discoverOpenCodeModels=()=>new Promise(resolve=>{
+    w.completeCatalog=()=>resolve({ok:true,models:[{id:'opencode/replacement',name:'Replacement model',variants:[]}]});
+   });
+   window.dispatchEvent(new CustomEvent('picker-project',{detail:'changed-project'}));
+  });
+  await page.getByRole('button',{name:'Checking OpenCode models…',exact:true}).waitFor();
+  assert.ok(await page.locator('#send').isDisabled());
+  await input.press('Enter');
+  assert.equal(await input.inputValue(),'A staged provider handoff');
+  await page.evaluate(()=>(window as unknown as {completeCatalog:()=>void}).completeCatalog());
+  const recovery=page.getByRole('button',{name:'Choose an available OpenCode model',exact:true});
+  await recovery.waitFor();
+  assert.ok(await page.locator('#send').isDisabled());
+  await input.press('Enter');
+  assert.equal(await input.inputValue(),'A staged provider handoff');
+  await recovery.click();
+  await page.getByRole('button',{name:'Replacement model',exact:true}).click();
+  assert.ok(await page.locator('#send').isEnabled());
+  assert.deepEqual(errors,[]);
+ } finally {await browser.close();}
 });

@@ -1,261 +1,890 @@
 (() => {
-type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
-interface CodexPreferences { model: string | null; reasoningEffort: string | null; favorites: string[]; fastMode?: boolean }
-interface DiscoveredModel { id: string; model: string; displayName: string; description: string; supportedReasoningEfforts: { effort: string; description: string }[]; defaultReasoningEffort: string | null; isDefault: boolean }
-type DiscoveryResult = { ok: true; models: DiscoveredModel[] } | { ok: false; error: string };
-interface PickerApi { discoverOpenCodeModels(projectId?: string): Promise<{ok:true;models:{id:string;name:string;variants:string[]}[]}|{ok:false;error:string}>; openCodePreferencesLoad(): Promise<CodexPreferences>; openCodePreferencesSave(value: CodexPreferences): Promise<void>; discoverCodexModels(): Promise<DiscoveryResult>; codexPreferencesLoad(): Promise<CodexPreferences>; codexPreferencesSave(value: CodexPreferences): Promise<void> }
-interface PickerModel { id: string; label: string; description: string; efforts: string[] }
-interface PickerWindow extends Window { store: PickerApi }
-const api = (window as unknown as PickerWindow).store;
-const host = document.getElementById('model-picker')!;
-const trigger = document.createElement('button');
-trigger.type = 'button'; trigger.className = 'model-trigger'; trigger.setAttribute('aria-haspopup', 'dialog'); trigger.setAttribute('aria-expanded', 'false'); trigger.disabled = true;
-const panel = document.createElement('div'); panel.className = 'model-panel'; panel.hidden = true; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Choose provider and model');
-const pickerHeader = document.createElement('div'); pickerHeader.className = 'model-header';
-const pickerTitle = document.createElement('strong'); pickerTitle.textContent = 'Choose a model';
-const pickerClose = document.createElement('button'); pickerClose.type = 'button'; pickerClose.className = 'model-close'; pickerClose.textContent = 'Close'; pickerClose.setAttribute('aria-label','Close model picker'); pickerClose.onclick = () => close(); pickerHeader.append(pickerTitle,pickerClose);
-const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Search models'; search.setAttribute('aria-label', 'Search models');
-const list = document.createElement('div'); list.className = 'model-list';
-const effort = document.createElement('div'); effort.className = 'effort-options'; effort.setAttribute('role', 'group'); effort.setAttribute('aria-label', 'Reasoning effort');
-const sidebar = document.createElement('div'); sidebar.className = 'model-sidebar';
-const favoritesTab = document.createElement('button'); favoritesTab.type = 'button'; favoritesTab.className = 'model-favorites-tab'; favoritesTab.textContent = '★'; favoritesTab.setAttribute('aria-label', 'Favorite models');
-favoritesTab.dataset.label = 'Favorites';
-function providerLogo(provider: 'codex' | 'opencode'): HTMLPictureElement {
-  const picture = document.createElement('picture'); picture.className = `provider-logo provider-logo-${provider}`; picture.setAttribute('aria-hidden', 'true');
-  const source = document.createElement('source'); source.media = '(prefers-color-scheme: dark)'; source.srcset = `provider-logos/${provider === 'codex' ? 'openai-white' : 'opencode-dark'}.svg`;
-  const image = document.createElement('img'); image.alt = ''; image.src = `provider-logos/${provider === 'codex' ? 'openai-black' : 'opencode-light'}.svg`;
-  picture.append(source, image); return picture;
+type Provider = 'codex' | 'opencode';
+type Scope = 'all' | 'favorites' | Provider;
+type Preferences = import('./src/codex-preferences.cjs').CodexPreferences;
+type Selection = Omit<Preferences, 'favorites'>;
+type Discovery<T> = {ok: true; models: T[]} | {ok: false; error: string};
+interface Model {
+  id: string | null;
+  label: string;
+  source?: string;
+  description?: string;
+  efforts: string[];
+  defaultEffort?: string;
+  disambiguator?: string;
 }
-const codexTab = document.createElement('button'); codexTab.type = 'button'; codexTab.append(providerLogo('codex')); codexTab.setAttribute('aria-label', 'Codex models');
-codexTab.dataset.label = 'Codex';
-const provider = document.getElementById('chat-provider') as HTMLSelectElement;
-const providerLabel = document.querySelector<HTMLLabelElement>('.provider-label')!;
-provider.hidden = true; providerLabel.hidden = true;
-const openCodeTab = document.createElement('button'); openCodeTab.type = 'button'; openCodeTab.append(providerLogo('opencode')); openCodeTab.setAttribute('aria-label', 'OpenCode models');
-openCodeTab.dataset.label = 'OpenCode';
-sidebar.append(favoritesTab, codexTab, openCodeTab);
-let favoritesOnly = false;
-function selectProvider(id: string): void {
-  if ((provider.disabled && provider.value !== id) || !Array.from(provider.options).some(option => option.value === id && !option.disabled)) return;
-  favoritesOnly = false;
-  if (provider.value !== id) { provider.value = id; provider.dispatchEvent(new Event('change')); }
-  render();
+interface State {
+  models: Model[];
+  status: 'loading' | 'ready' | 'error';
+  error?: string;
+  preferences?: Preferences;
+  loadFailed?: boolean;
+  revision: number;
+  savedRevision: number;
+  selectionRevision: number;
+  loadingPreferences?: Promise<Preferences | undefined>;
+  saveError?: boolean;
+  savePromise?: Promise<void>;
+  write?: Promise<boolean>;
+  initialized?: Promise<void>;
 }
-provider.addEventListener('providerstate', () => render());
-provider.addEventListener('change', () => render());
-favoritesTab.onclick = () => { favoritesOnly = true; render(); };
-codexTab.onclick = () => selectProvider('codex');
-openCodeTab.onclick = () => selectProvider('opencode');
-const notice = document.createElement('p'); notice.className = 'model-notice'; notice.setAttribute('role', 'status');
-const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry saving'; retry.hidden = true;
-const modelsPane = document.createElement('div'); modelsPane.className = 'model-pane'; const modelsTitle=document.createElement('div'); modelsTitle.className='model-list-title'; modelsTitle.textContent='Models'; modelsPane.append(modelsTitle,search,list);
-const effortPane = document.createElement('div'); effortPane.className = 'effort-pane';
-const effortTitle = document.createElement('div'); effortTitle.className = 'effort-title'; effortTitle.textContent = 'Reasoning';
-const effortHint = document.createElement('p'); effortHint.className = 'effort-hint'; effortHint.textContent = 'More effort can improve difficult answers but may take longer.';
-effortPane.append(effortTitle, effortHint, effort);
-const pickerContent = document.createElement('div'); pickerContent.className = 'model-content'; pickerContent.append(modelsPane, effortPane);
-const footer = document.createElement('div'); footer.className = 'model-footer';
-const speed = document.createElement('div'); speed.className = 'model-speed'; speed.setAttribute('role', 'group'); speed.setAttribute('aria-label', 'Codex speed');
-const standard = document.createElement('button'); standard.type = 'button'; standard.textContent = 'Standard';
-function fastIcon(): SVGSVGElement {
-  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  icon.classList.add('fast-icon'); icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
-  const bolt = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  bolt.setAttribute('d', 'M13 2 3 14h8l-1 8L21 10h-8l1-8Z');
-  icon.append(bolt); return icon;
+interface PickerApi {
+  discoverCodexModels(): Promise<Discovery<import('./src/codex-models.cjs').CodexModel>>;
+  discoverOpenCodeModels(project?: string): Promise<Discovery<{id: string; name: string; variants: string[]}>>;
+  codexPreferencesLoad(): Promise<Preferences>;
+  openCodePreferencesLoad(): Promise<Preferences>;
+  codexPreferencesSave(value: Preferences): Promise<void>;
+  openCodePreferencesSave(value: Preferences): Promise<void>;
 }
-const fast = document.createElement('button'); fast.type = 'button'; fast.append(fastIcon(), 'Fast'); fast.setAttribute('aria-label', 'Fast'); fast.title = 'Faster responses with higher usage. Availability depends on your model and account.';
-standard.onclick = () => setFastMode(false); fast.onclick = () => setFastMode(true);
-function setFastMode(enabled: boolean): void { if (activeId() !== 'codex' || states.codex.loadFailed) return; states.codex.preferences.fastMode = enabled; changed('codex'); }
-speed.append(standard, fast); footer.append(speed);
-panel.append(pickerHeader, sidebar, pickerContent, footer); host.append(trigger, panel, notice, retry);
-const supportedEfforts = new Set<string>(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
-type ProviderId = 'codex' | 'opencode';
-interface PickerState { models: PickerModel[]; preferences: CodexPreferences; status: 'loading' | 'ready' | 'error'; error: string; loadFailed: boolean; saveError: boolean; revision: number; savedRevision: number; savePromise: Promise<void> | null; initialized: Promise<void> | null }
-function newState(): PickerState { return {models:[], preferences:{model:null,reasoningEffort:null,favorites:[]}, status:'loading', error:'', loadFailed:false, saveError:false, revision:0, savedRevision:0, savePromise:null, initialized:null}; }
-const states: Record<ProviderId, PickerState> = {codex:newState(),opencode:newState()};
-function activeId(): ProviderId { return provider.value === 'opencode' ? 'opencode' : 'codex'; }
-function activeState(): PickerState { return states[activeId()]; }
-function updateNotice(): void {
-  const state = activeState();
-  notice.textContent = state.loadFailed ? 'Could not load model preferences. Restart to retry; saved preferences were not changed.' : state.saveError ? 'Could not save model preferences. Retry saving.' : state.status === 'error' ? `Could not load models: ${state.error}` : '';
-  retry.hidden = !state.saveError;
+
+const pickerWindow = window as unknown as Window & {
+  store: PickerApi;
+  codexPickerReady: (id?: Provider) => Promise<Selection>;
+};
+const api = pickerWindow.store;
+const host = document.querySelector<HTMLElement>('#model-picker')!;
+const provider = document.querySelector<HTMLSelectElement>('#chat-provider')!;
+provider.hidden = true;
+document.querySelector<HTMLElement>('.provider-label')!.hidden = true;
+const providers = ['codex', 'opencode'] as const;
+const labels = {all: 'All models', favorites: 'Favorites', codex: 'Codex', opencode: 'OpenCode'};
+const sourceNames: Record<string, string> = {
+  opencode: 'OpenCode', lmstudio: 'LM Studio', anthropic: 'Anthropic',
+  openai: 'OpenAI', openrouter: 'OpenRouter', google: 'Google'
+};
+function openCodeSource(id: string): string {
+  const prefix = id.split('/')[0];
+  return sourceNames[prefix.toLowerCase()] ?? prefix;
 }
-function save(id: ProviderId): Promise<void> {
-  const state = states[id]; if (state.savePromise) return state.savePromise;
-  state.saveError = false; updateNotice();
-  state.savePromise = (async () => {
-    while (state.savedRevision < state.revision) {
-      const version = state.revision, value = {...state.preferences, favorites:[...state.preferences.favorites]};
-      try { await (id === 'codex' ? api.codexPreferencesSave(value) : api.openCodePreferencesSave(value)); state.savedRevision = version; }
-      catch { state.saveError = true; break; }
-    }
-  })().finally(() => { state.savePromise = null; updateNotice(); });
-  return state.savePromise;
+const effortOrder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+const numeric = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+const cliDefault: Model = {id: null, label: 'CLI default', description: 'Use the model and reasoning configured in Codex.', efforts: []};
+const newState = (): State => ({models: [], status: 'loading', revision: 0, savedRevision: 0, selectionRevision: 0});
+const states = {codex: newState(), opencode: newState()};
+let scope: Scope = 'all';
+let firstProvider: Provider = 'codex';
+let project: string | undefined;
+let generation = 0;
+let catalogProject: string | undefined;
+let detected = new Set<Provider>();
+let resultKey: string | undefined;
+let detailsOpen = false;
+
+function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', content?: string): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  node.className = className;
+  if (content) node.textContent = content;
+  return node;
 }
-function changed(id: ProviderId = activeId()): void { states[id].revision++; void save(id); render(); }
-retry.onclick = () => { void save(activeId()); };
-function compareVersions(a: PickerModel, b: PickerModel): number {
-  const version = (model: PickerModel): number[] => (model.label.match(/\d+(?:\.\d+)*/)?.[0] ?? model.id.match(/\d+(?:\.\d+)*/)?.[0] ?? '0').split('.').map(Number);
-  const left = version(a), right = version(b);
-  for (let i = 0; i < Math.max(left.length, right.length); i++) { const difference = (right[i] ?? 0) - (left[i] ?? 0); if (difference) return difference; }
-  return a.label.localeCompare(b.label);
+function button(className: string, label: string, onClick: () => void): HTMLButtonElement {
+  const control = element('button', className, label);
+  control.type = 'button';
+  control.onclick = onClick;
+  return control;
 }
-function preferredEffort(model: PickerModel | undefined): string | null {
-  const choices = model?.efforts ?? [];
-  const order = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
-  const known = choices.filter(value => order.includes(value));
-  if (known.length) return known.reduce((best, value) => Math.abs(order.indexOf(value) - 3) < Math.abs(order.indexOf(best) - 3) ? value : best);
-  return choices[Math.floor((choices.length - 1) / 2)] ?? null;
+function providerLogo(id: Provider): HTMLPictureElement {
+  const picture = element('picture', `provider-logo provider-logo-${id}`);
+  picture.setAttribute('aria-hidden', 'true');
+  const source = element('source');
+  source.media = '(prefers-color-scheme: dark)';
+  source.srcset = `provider-logos/${id === 'codex' ? 'openai-white' : 'opencode-dark'}.svg`;
+  const image = element('img');
+  image.alt = '';
+  image.src = `provider-logos/${id === 'codex' ? 'openai-black' : 'opencode-light'}.svg`;
+  picture.append(source, image);
+  return picture;
 }
 function effortLabel(value: string): string {
-  return value === 'xhigh' ? 'Extra High' : value.replace(/\b\p{L}/gu, letter => letter.toUpperCase());
+  return value === 'xhigh' ? 'Extra high' : value.replace(/[-_]/g, ' ').replace(/^\p{L}/u, letter => letter.toUpperCase());
 }
-function render(): void {
-  const focusedKey = document.activeElement instanceof HTMLElement && panel.contains(document.activeElement) ? document.activeElement.dataset.focusKey : undefined;
-  const state = activeState(), models = state.models, preferences = state.preferences;
-  const selected = models.find(m => m.id === preferences.model);
-  const openCode = provider.value === 'opencode';
-  footer.hidden = openCode || state.loadFailed;
-  standard.setAttribute('aria-pressed', String(!preferences.fastMode));
-  fast.setAttribute('aria-pressed', String(!!preferences.fastMode));
-  trigger.classList.toggle('is-opencode', openCode);
-  modelsPane.hidden = state.loadFailed; effortPane.hidden = state.loadFailed;
-  for (const [tab, id] of [[codexTab, 'codex'], [openCodeTab, 'opencode']] as const) {
-    tab.disabled = (provider.disabled && provider.value !== id) || !Array.from(provider.options).some(option => option.value === id && !option.disabled);
-    tab.setAttribute('aria-pressed', String(!favoritesOnly && provider.value === id));
+function preferredEffort(model: Model): string | null {
+  const known = model.efforts.filter(value => effortOrder.includes(value));
+  if (!known.length) return model.efforts[Math.floor((model.efforts.length - 1) / 2)] ?? null;
+  const distance = (value: string) => Math.abs(effortOrder.indexOf(value) - 3);
+  return known.reduce((best, value) => distance(value) < distance(best) ? value : best);
+}
+function activeId(): Provider | undefined {
+  return provider.value === 'codex' || provider.value === 'opencode' ? provider.value : undefined;
+}
+function installed(id: Provider): boolean {
+  return Array.from(provider.options).some(option => option.value === id && !option.disabled);
+}
+function pending(): boolean { return provider.dataset.pickerStatus === 'loading'; }
+function busy(): boolean { return provider.dataset.pickerStatus === 'busy'; }
+function canSelect(id: Provider): boolean {
+  return installed(id) && !pending() && !busy() && (!provider.disabled || activeId() === id);
+}
+function selectedModel(id: Provider): Model | undefined {
+  const {preferences, models} = states[id];
+  if (!preferences) return;
+  return preferences.model === null && id === 'codex' ? cliDefault : models.find(model => model.id === preferences.model);
+}
+function modelKey(id: Provider, model: string | null): string { return JSON.stringify([id, model]); }
+
+const trigger = button('model-trigger', '', toggle);
+trigger.setAttribute('aria-haspopup', 'dialog');
+trigger.setAttribute('aria-expanded', 'false');
+trigger.setAttribute('aria-controls', 'model-picker-panel');
+const panel = element('div', 'model-panel');
+panel.id = 'model-picker-panel';
+panel.hidden = true;
+panel.setAttribute('role', 'dialog');
+panel.setAttribute('aria-labelledby', 'model-picker-title');
+const header = element('div', 'model-header');
+const title = element('h2', '', 'Choose a model');
+title.id = 'model-picker-title';
+header.append(title, button('model-done', 'Done', close));
+const searchBar = element('div', 'model-search');
+const search = element('input');
+search.type = 'search';
+search.placeholder = 'Search models';
+search.setAttribute('aria-label', 'Search models');
+search.setAttribute('aria-controls', 'model-picker-results');
+searchBar.append(search);
+const filters = element('div', 'model-filters');
+filters.setAttribute('role', 'group');
+filters.setAttribute('aria-label', 'Filter models');
+const filterButtons = (['all', 'favorites', ...providers] as const).map(id => {
+  const control = button('model-filter', labels[id], () => {
+    scope = id;
+    resetResults();
+    if (id === 'favorites') {
+      for (const provider of providers) {
+        const state = states[provider];
+        if (!state.preferences && !state.initialized) void loadPreferences(provider).then(render);
+      }
+    }
+    render();
+  });
+  if (id === 'codex' || id === 'opencode') control.prepend(providerLogo(id));
+  if (id === 'favorites') control.setAttribute('aria-label', 'Favorite models');
+  if (id === 'codex' || id === 'opencode') control.setAttribute('aria-label', `${labels[id]} models`);
+  filters.append(control);
+  return {id, control};
+});
+
+const body = element('div', 'model-content');
+const list = element('div', 'model-list');
+list.id = 'model-picker-results';
+list.setAttribute('role', 'region');
+list.setAttribute('aria-label', 'Model results');
+const settings = element('section', 'model-settings');
+settings.setAttribute('aria-label', 'Current model settings');
+settings.id = 'model-picker-settings';
+const settingsToggle = button('model-settings-toggle', 'Model settings', () => {
+  detailsOpen = !detailsOpen;
+  updateDetailsVisibility();
+});
+settingsToggle.setAttribute('aria-controls', settings.id);
+const settingsGroup = element('div', 'model-settings-group');
+settingsGroup.append(settingsToggle, settings);
+body.append(list, settingsGroup);
+const announcements = element('span', 'model-announcement');
+announcements.setAttribute('role', 'status');
+const selectionAnnouncement = element('span', 'model-announcement');
+selectionAnnouncement.setAttribute('role', 'status');
+const notice = button('model-notice', '', openRecovery);
+notice.id = 'model-picker-recovery';
+function openRecovery(): void {
+  const issue = sendIssue();
+  const id = issue ? activeId() : saveFailure();
+  if (!id) return;
+  if (panel.hidden) toggle();
+  if ((issue && issue.area === 'settings') || (!issue && id === activeId())) {
+    detailsOpen = true;
+    updateDetailsVisibility();
+    (settings.querySelector<HTMLElement>('.model-retry:enabled,select:enabled') ?? settingsToggle).focus();
+  } else {
+    scope = id;
+    resetResults();
+    render();
+    (list.querySelector<HTMLElement>('.model-retry:enabled') ?? search).focus();
   }
-  trigger.textContent = state.loadFailed ? 'Model preferences unavailable' : (selected?.label ?? (preferences.model ? `${openCode ? preferences.model.slice(preferences.model.indexOf('/') + 1) : preferences.model} (unavailable)` : (openCode ? 'Loading models...' : 'CLI default'))) + (preferences.reasoningEffort ? ` \u00b7 ${effortLabel(preferences.reasoningEffort)}` : '');
-  if (!openCode && preferences.fastMode) trigger.append(' \u00b7 ', fastIcon(), ' Fast');
-  favoritesTab.setAttribute('aria-pressed', String(favoritesOnly));
-  effortTitle.textContent = 'Reasoning';
-  list.replaceChildren();
-  const query = search.value.trim().toLowerCase();
-  const matches = models.filter(m => (!favoritesOnly || preferences.favorites.includes(m.id)) && `${m.label} ${m.id} ${m.description}`.toLowerCase().includes(query)).slice().sort((a,b) => a.label.localeCompare(b.label, undefined, {sensitivity:'base'}));
-  for (const model of matches) {
-    const row = document.createElement('div'); row.className = 'model-row';
-    const button = document.createElement('button'); button.type = 'button'; button.dataset.focusKey = `model:${model.id}`; button.setAttribute('aria-pressed', String(preferences.model === model.id)); button.textContent = `${preferences.model === model.id ? '✓ ' : ''}${model.label}`; button.prepend(providerLogo(activeId())); if (activeId() !== 'opencode') button.title = model.description || model.id; if (activeId() === 'opencode') { button.dataset.provider = model.description; button.classList.add('model-provider-tooltip'); } button.onclick = () => choose(model.id);
-    const favorite = document.createElement('button'); favorite.type = 'button'; favorite.className = 'model-favorite'; favorite.dataset.focusKey = `favorite:${model.id}`; const isFavorite = preferences.favorites.includes(model.id); favorite.textContent = isFavorite ? '★' : '☆'; favorite.setAttribute('aria-label', `${isFavorite ? 'Remove' : 'Add'} ${model.label} ${isFavorite ? 'from' : 'to'} favorites`); favorite.onclick = () => { preferences.favorites = isFavorite ? preferences.favorites.filter(id => id !== model.id) : [...preferences.favorites, model.id]; changed(); };
-    row.classList.toggle('is-selected', preferences.model === model.id); row.append(button, favorite); list.append(row);
+}
+notice.hidden = true;
+panel.append(header, searchBar, filters, body, announcements, selectionAnnouncement);
+host.append(trigger, panel, notice);
+
+function save(id: Provider): Promise<void> {
+  const state = states[id];
+  if (state.savePromise) return state.savePromise;
+  state.saveError = false;
+  state.savePromise = (async () => {
+    while (state.savedRevision < state.revision) {
+      const version = state.revision;
+      const value = {...state.preferences!, favorites: [...state.preferences!.favorites]};
+      state.write = Promise.resolve().then(() =>
+        id === 'codex' ? api.codexPreferencesSave(value) : api.openCodePreferencesSave(value)
+      ).then(() => {
+        state.savedRevision = version;
+        return true;
+      }, () => {
+        state.saveError = true;
+        return false;
+      });
+      if (!await state.write) break;
+    }
+  })().finally(() => {
+    state.write = undefined;
+    state.savePromise = undefined;
+    render();
+  });
+  return state.savePromise;
+}
+function changed(id: Provider, affectsSelection = true): void {
+  const state = states[id];
+  state.revision++;
+  if (affectsSelection) state.selectionRevision = state.revision;
+  void save(id);
+}
+
+function choose(id: Provider, model: Model): void {
+  const {preferences} = states[id];
+  if (!preferences || !canSelect(id)) return;
+  if (preferences.model !== model.id || (model.id === null && preferences.reasoningEffort !== null)) {
+    preferences.model = model.id;
+    if (model.id === null) preferences.reasoningEffort = null;
+    else if (!model.efforts.includes(preferences.reasoningEffort ?? '')) {
+      preferences.reasoningEffort = id === 'codex' ? null : preferredEffort(model);
+    }
+    changed(id);
   }
-  if (!openCode && !favoritesOnly && 'cli default'.includes(query)) {
-    const row = document.createElement('div'); row.className = 'model-row';
-    row.classList.toggle('is-selected', preferences.model === null);
-    const button = document.createElement('button'); button.type = 'button'; button.textContent = 'CLI default'; button.dataset.focusKey = 'model:default';
-    button.setAttribute('aria-pressed', String(preferences.model === null));
-    button.onclick = () => { if (preferences.model !== null || preferences.reasoningEffort !== null) { preferences.model = null; preferences.reasoningEffort = null; changed(); } close(); };
-    row.append(button); list.append(row);
+  if (activeId() !== id) {
+    provider.value = id;
+    provider.dispatchEvent(new Event('change'));
   }
-  if (!matches.length && (!list.children.length || state.status !== 'ready')) { const message = document.createElement('p'); message.textContent = state.status === 'loading' ? 'Loading models…' : state.status === 'error' ? 'Models could not be loaded.' : 'No matching models.'; list.append(message); }
-  if (!openCode && state.status === 'error') {
-    const retry = document.createElement('button');
-    retry.type = 'button';
-    retry.textContent = 'Retry model discovery';
-    retry.className = 'model-retry';
-    retry.addEventListener('click', () => {
-      if (state.status !== 'error') return;
-      state.status = 'loading';
-      state.initialized = initialize('codex', undefined, state.preferences);
+  render();
+  selectionAnnouncement.textContent = [model.label, labels[id], model.disambiguator, 'selected.'].filter(Boolean).join(', ');
+}
+
+function saveFailure(): Provider | undefined {
+  const id = activeId();
+  return id && states[id].saveError ? id : providers.find(candidate => states[candidate].saveError);
+}
+
+interface SendIssue {message: string; area: 'models' | 'settings'; loading?: boolean}
+function sendIssue(id = activeId()): SendIssue | undefined {
+  if (!id || !installed(id)) return;
+  const state = states[id];
+  if (state.loadFailed) return {message: 'Retry loading model preferences', area: 'models'};
+  if (!state.preferences || state.status === 'loading') {
+    return {message: `Checking ${labels[id]} models…`, area: 'models', loading: true};
+  }
+  if (state.saveError && state.savedRevision < state.selectionRevision)
+    return {message: 'Retry saving model settings', area: 'settings'};
+  const model = selectedModel(id);
+  if (id === 'opencode' && state.status === 'error')
+    return {message: 'Retry loading OpenCode models', area: 'models'};
+  if (!model && state.status === 'ready') return {message: `Choose an available ${labels[id]} model`, area: 'models'};
+  if (model?.id && state.preferences.reasoningEffort && !model.efforts.includes(state.preferences.reasoningEffort))
+    return {message: id === 'codex' ? 'Choose an available reasoning effort' : 'Choose an available model variant', area: 'settings'};
+}
+function publishReadiness(): void {
+  const issue = sendIssue();
+  const message = issue?.message ?? '';
+  if ((provider.dataset.pickerBlock ?? '') !== message) {
+    provider.dataset.pickerBlock = message;
+    provider.dispatchEvent(new Event('picker-readiness'));
+  }
+  const failedSave = saveFailure();
+  notice.hidden = !message && !failedSave;
+  notice.classList.toggle('is-loading', Boolean(issue?.loading));
+  notice.textContent = message || (failedSave ? `${labels[failedSave]} settings weren’t saved` : '');
+  if (notice.hidden) trigger.removeAttribute('aria-describedby');
+  else trigger.setAttribute('aria-describedby', notice.id);
+}
+function updateTrigger(): void {
+  const id = activeId();
+  const state = id && states[id];
+  const model = id && selectedModel(id);
+  const preferences = state?.preferences;
+  let label = 'Choose a model';
+  if (pending()) label = 'Checking providers…';
+  else if (!id) label = provider.dataset.pickerStatus === 'error' ? 'Provider check failed' : 'No providers found';
+  else if (!installed(id)) label = `${labels[id]} unavailable`;
+  else if (state.loadFailed) label = 'Preferences unavailable';
+  else if (model) label = model.label;
+  else if (state.status === 'loading') label = preferences?.model ?? 'Loading models…';
+  else if (preferences?.model) label = `${preferences.model.split('/').at(-1)} (unavailable)`;
+  else if (state.status === 'error') label = 'Models unavailable';
+
+  const effort = preferences?.reasoningEffort && effortLabel(preferences.reasoningEffort);
+  const speed = id === 'codex' && preferences?.fastMode ? 'Fast' : '';
+  const options = [effort, speed].filter(Boolean).join(' · ');
+  const identity = model?.disambiguator ?? model?.source ?? '';
+  const fullLabel = [id && installed(id) ? labels[id] : '', label, identity !== labels[id] || model?.disambiguator ? identity : '', options].filter(Boolean).join(' · ');
+  trigger.replaceChildren();
+  if (id) trigger.append(providerLogo(id));
+  trigger.append(element('span', 'model-trigger-label', label));
+  if (model?.disambiguator) trigger.append(element('span', 'model-trigger-options', identity));
+  if (options && model && installed(id)) trigger.append(element('span', 'model-trigger-options', options));
+  const arrow = element('span', 'model-chevron', '⌄');
+  arrow.setAttribute('aria-hidden', 'true');
+  trigger.append(arrow);
+  trigger.setAttribute('aria-label', `Choose provider and model. ${fullLabel}`);
+  trigger.title = fullLabel;
+  publishReadiness();
+}
+
+function statusBlock(title: string, description: string, action?: HTMLButtonElement): HTMLElement {
+  const status = element('div', 'model-status');
+  status.append(element('strong', '', title), element('p', '', description));
+  if (action) status.append(action);
+  return status;
+}
+function retryButton(label: string, key: string, action: () => void): HTMLButtonElement {
+  const control = button('model-retry', label, action);
+  control.dataset.focusKey = key;
+  return control;
+}
+function retryProviders(): void { provider.dispatchEvent(new Event('picker-retry-providers')); }
+function providerStatus(id: Provider): HTMLElement | undefined {
+  const state = states[id];
+  if (state.loadFailed) return statusBlock('Preferences couldn’t be loaded', 'Your saved choices are kept.',
+    retryButton('Retry preferences', `${id}:preferences`, () => {
+      if (installed(id)) startDiscovery(id);
+      else void loadPreferences(id).then(render);
+      render();
+    }));
+  if (!installed(id)) {
+    if (scope === 'favorites') return state.loadingPreferences
+      ? statusBlock('Loading favorites…', `Reading saved ${labels[id]} models.`) : undefined;
+    return statusBlock(`${labels[id]} unavailable`, 'Install and authenticate the CLI, then check again.',
+      retryButton('Check providers', 'providers:retry', retryProviders));
+  }
+  if (state.status === 'error') return statusBlock('Models couldn’t be loaded', state.error ?? 'Check your provider setup and retry.',
+    retryButton('Retry model discovery', `${id}:discovery`, () => startDiscovery(id)));
+  if (state.status === 'loading') return statusBlock('Loading models…', `Checking the ${labels[id]} catalog and preferences.`);
+  if (!state.models.length) return statusBlock('No models available', `Check your ${labels[id]} setup to add models.`,
+    retryButton('Check for models', `${id}:discovery`, () => startDiscovery(id)));
+}
+function matchesQuery(model: Model, id: Provider, terms: string[]): boolean {
+  const text = [model.label, model.id, model.source, model.description, labels[id]].filter(Boolean).join(' ').toLowerCase();
+  return terms.every(term => text.includes(term));
+}
+function modelRow(id: Provider, model: Model, available: boolean): HTMLElement {
+  const {preferences} = states[id];
+  const key = modelKey(id, model.id);
+  const current = activeId() === id && preferences?.model === model.id;
+  const row = element('div', 'model-row');
+  row.classList.toggle('is-selected', current);
+  const choice = button('model-choice', '', () => choose(id, model));
+  choice.dataset.result = key;
+  choice.dataset.focusKey = `model:${key}`;
+  choice.setAttribute('aria-pressed', String(current));
+  choice.disabled = !available || !canSelect(id);
+  const marker = element('span', 'model-check', current ? '✓' : '');
+  marker.setAttribute('aria-hidden', 'true');
+  const lines = element('span', 'model-row-copy');
+  lines.append(element('span', 'model-row-name', model.label));
+  const detail = model.disambiguator ?? (model.source !== labels[id] ? model.source : '');
+  const secondary = [detail, !available ? 'Unavailable' : ''].filter(Boolean).join(' · ');
+  if (secondary) lines.append(element('span', 'model-row-source', secondary));
+  choice.setAttribute('aria-label', model.label);
+  choice.title = [model.label, model.id && model.id !== model.label ? model.id : '', model.description].filter(Boolean).join('\n');
+  choice.append(marker, lines);
+  const description = [labels[id] === secondary ? '' : labels[id], secondary];
+  if (provider.dataset.handoff && provider.dataset.handoff !== id && available && canSelect(id)) {
+    const handoff = element('span', 'model-handoff', 'Handoff');
+    handoff.title = 'Your next message will hand off the conversation to this provider.';
+    choice.append(handoff);
+    description.push(handoff.title);
+  }
+  choice.setAttribute('aria-description', description.filter(Boolean).join('. '));
+  row.append(choice);
+
+  if (model.id !== null && preferences && (available || scope === 'favorites')) {
+    const modelId = model.id;
+    const favored = preferences.favorites.includes(modelId);
+    const action = favored ? `Remove ${model.label} from favorites` : `Add ${model.label} to favorites`;
+    const star = button('model-favorite', favored ? '★' : '☆', () => {
+      preferences.favorites = favored ? preferences.favorites.filter(value => value !== modelId) : [...preferences.favorites, modelId];
+      changed(id, false);
+      render();
+    });
+    star.disabled = busy();
+    star.dataset.focusKey = `favorite:${key}`;
+    star.setAttribute('aria-label', action);
+    star.setAttribute('aria-description', [labels[id], model.disambiguator ?? (model.source === labels[id] ? '' : model.source)].filter(Boolean).join(', '));
+    star.setAttribute('aria-pressed', String(favored));
+    star.title = action;
+    row.append(star);
+  }
+  return row;
+}
+
+function announce(message: string): void {
+  if (announcements.textContent !== message) announcements.textContent = message;
+}
+function emptySearch(): HTMLElement {
+  return statusBlock('No matching models', 'Try another name or provider.',
+    retryButton('Clear search', 'search:clear', () => {
+      search.value = '';
+      resetResults();
       render();
       search.focus();
+    }));
+}
+function renderResults(): void {
+  list.replaceChildren();
+  const terms = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (pending()) {
+    list.append(statusBlock('Checking providers…', 'Looking for Codex and OpenCode.'));
+    announce('Checking providers.');
+    return;
+  }
+  const detectionFailed = provider.dataset.pickerStatus === 'error';
+  const allMissing = scope === 'all' && !providers.some(installed);
+  if (detectionFailed || allMissing) {
+    const title = detectionFailed ? 'Provider check failed' : 'No providers found';
+    list.append(statusBlock(title, detectionFailed ? 'Refract couldn’t check for Codex or OpenCode.' : 'Install and authenticate Codex or OpenCode to use the assistant.',
+      retryButton('Check providers', 'providers:retry', retryProviders)));
+    if (scope !== 'favorites') {
+      if (terms.length) list.append(emptySearch());
+      announce(terms.length ? `No matching models. ${title}.` : title);
+      return;
+    }
+  }
+  const ordered = firstProvider === 'opencode' ? ['opencode', 'codex'] as const : providers;
+  const visibleProviders = scope === 'all' || scope === 'favorites'
+    ? ordered.filter(id => installed(id) || (scope === 'favorites' && (states[id].preferences?.favorites.length || states[id].loadFailed || states[id].loadingPreferences)))
+    : [scope];
+
+  let count = 0;
+  let hasStatus = false;
+  for (const id of visibleProviders) {
+    const state = states[id];
+    const preferences = state.preferences;
+    const ready = state.status === 'ready' && installed(id) && Boolean(preferences);
+    const catalog = ready ? state.models : [];
+    const availableModels = new Set(catalog);
+    let models = [...catalog].sort((a, b) => numeric.compare(a.label, b.label) || numeric.compare(a.id, b.id));
+    if (scope === 'favorites') {
+      const byId = new Map(models.map(model => [model.id, model]));
+      models = (preferences?.favorites ?? []).map(key => byId.get(key) ?? {
+        id: key, label: key.split('/').at(-1)!, source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []
+      });
+    } else if (id === 'codex' && preferences && installed(id) && !state.loadFailed) {
+      models.unshift(cliDefault);
+    }
+    models = models.filter(model => matchesQuery(model, id, terms));
+    const status = state.saveError && id !== activeId()
+      ? statusBlock('Settings weren’t saved', 'Retry to save your latest choices.',
+        retryButton('Retry saving', `${id}:save`, () => {void save(id); render();}))
+      : providerStatus(id);
+    if (!models.length && !status) continue;
+
+    const group = element('section', 'model-results-group');
+    const heading = element('h3', 'model-group-title', labels[id]);
+    heading.prepend(providerLogo(id));
+    heading.id = `model-group-${id}`;
+    group.setAttribute('aria-labelledby', heading.id);
+    group.append(heading);
+    for (const model of models) group.append(modelRow(id, model, model.id === null || availableModels.has(model)));
+    count += models.length;
+    if (status) {
+      group.append(status);
+      hasStatus = true;
+    }
+    list.append(group);
+  }
+  if (!count) {
+    if (terms.length) list.append(emptySearch());
+    else if (scope === 'favorites' && !hasStatus) list.append(statusBlock('No favorites yet', 'Use the star beside a model to find it here.'));
+  }
+  syncResultTabStop();
+  const loading = visibleProviders.some(id => installed(id) && states[id].status === 'loading');
+  const resultText = count ? `${count} ${count === 1 ? 'model' : 'models'} in ${labels[scope]}` :
+    loading ? 'Loading models' : terms.length ? 'No matching models' : scope === 'favorites' ? 'No favorites yet' : 'No models available';
+  announce(`${resultText}.${hasStatus && !loading ? ' Check provider status in the results.' : ''}`);
+}
+
+function renderSettings(): void {
+  settings.replaceChildren();
+  const id = activeId();
+  const state = id && states[id];
+  const model = id && selectedModel(id);
+  const preferences = state?.preferences;
+  const current = element('div', 'model-current');
+  current.append(element('h3', '', 'Current selection'));
+  settings.append(current);
+  if (!id || !installed(id) || pending()) {
+    current.append(element('p', '', 'Choose an available model to configure it here.'));
+    return;
+  }
+  const providerLine = element('div', 'model-current-provider', labels[id]);
+  providerLine.prepend(providerLogo(id));
+  current.append(providerLine);
+  if (!model) {
+    current.append(element('strong', '', preferences?.model?.split('/').at(-1) ?? 'No model selected'));
+    current.append(element('p', '', state.status === 'loading' ? 'Checking model availability.' :
+      state.loadFailed ? 'Retry loading preferences in the model list.' : 'Choose an available model to continue.'));
+  } else {
+    current.append(element('strong', '', model.label));
+    const identity = model.disambiguator ?? model.source;
+    if (identity && identity !== labels[id]) current.append(element('p', '', identity));
+    if (model.description) current.append(element('p', '', model.description));
+    if (model.id !== null && state.status === 'loading') current.append(element('p', '', 'Checking model availability.'));
+  }
+  if (provider.dataset.handoff && provider.dataset.handoff !== id) {
+    current.append(element('p', 'model-handoff-note', 'Your next message will hand off this conversation to the selected provider.'));
+  }
+  if (busy()) current.append(element('p', '', 'Settings are paused while a reply is in progress.'));
+  if (state.saveError) {
+    const retry = retryButton('Retry saving', `${id}:save`, () => {void save(id); render();});
+    retry.disabled = busy();
+    settings.append(statusBlock('Settings weren’t saved', 'Retry to save your latest choices before sending.', retry));
+  }
+  if (!preferences) return;
+
+  if (model?.efforts.length) {
+    const reasoning = element('div', 'model-setting');
+    const title = id === 'codex' ? 'Reasoning effort' : 'Model variant';
+    const label = element('label', 'model-setting-title', title);
+    const select = element('select');
+    select.id = 'model-effort';
+    label.htmlFor = select.id;
+    select.dataset.focusKey = 'settings:effort';
+    const description = element('p', 'model-setting-description', id === 'codex' ?
+      'Higher effort can help with harder tasks and may take longer.' : 'Variants are defined by the model provider.');
+    description.id = 'model-effort-help';
+    select.setAttribute('aria-describedby', description.id);
+    if (id === 'codex') select.add(new Option(model.defaultEffort ? `Default (${effortLabel(model.defaultEffort)})` : 'Model default', ''));
+    for (const value of model.efforts) select.add(new Option(effortLabel(value), value));
+    if (preferences.reasoningEffort && !model.efforts.includes(preferences.reasoningEffort)) {
+      const stale = new Option(`${effortLabel(preferences.reasoningEffort)} (unavailable)`, preferences.reasoningEffort);
+      stale.disabled = true;
+      select.add(stale);
+    }
+    select.value = preferences.reasoningEffort ?? '';
+    select.disabled = !canSelect(id) || state.status !== 'ready';
+    select.onchange = () => {
+      preferences.reasoningEffort = select.value || null;
+      changed(id);
+      render();
+    };
+    reasoning.append(label, select, description);
+    settings.append(reasoning);
+  } else if (model && model.id !== null && preferences.reasoningEffort) {
+    const reset = retryButton('Use default reasoning', 'settings:reset-effort', () => {
+      preferences.reasoningEffort = null;
+      changed(id);
+      render();
     });
-    list.append(retry);
+    reset.disabled = !canSelect(id);
+    settings.append(statusBlock('Reasoning effort unavailable', 'This model uses its default reasoning.', reset));
+  } else if (model && model.id !== null) {
+    settings.append(element('p', 'model-setting-description', id === 'codex' ? 'This model uses its default reasoning.' : 'This model offers no variants.'));
   }
-  effort.replaceChildren();
-  const fasterEffort = ['low','minimal'].find(value=>selected?.efforts.includes(value));
-  if(fasterEffort) {
-    const faster = document.createElement('button');faster.type='button';faster.textContent='Faster replies';faster.dataset.focusKey='effort:faster';
-    faster.title='Use lower reasoning effort for simple requests. Difficult requests may benefit from more effort.';
-    faster.onclick=()=>{preferences.reasoningEffort=fasterEffort;changed();};effort.append(faster);
+  if (id === 'codex') {
+    const speedSetting = element('div', 'model-setting');
+    const speedLabel = element('div', 'model-setting-title', 'Response speed');
+    const speed = element('div', 'model-speed');
+    speed.setAttribute('role', 'group');
+    speed.setAttribute('aria-label', 'Codex speed');
+    for (const [enabled, label] of [[undefined, 'Inherit'], [false, 'Standard'], [true, 'Fast']] as const) {
+      const control = button('', label, () => {
+        if (preferences.fastMode === enabled) return;
+        if (enabled === undefined) delete preferences.fastMode;
+        else preferences.fastMode = enabled;
+        changed(id);
+        render();
+      });
+      control.dataset.focusKey = `settings:speed:${label}`;
+      control.disabled = !canSelect(id);
+      control.setAttribute('aria-pressed', String(preferences.fastMode === enabled));
+      speed.append(control);
+    }
+    const hint = element('p', 'model-setting-description', 'Inherit uses the CLI setting. Fast may use more of your limit.');
+    hint.id = 'model-speed-help';
+    speed.setAttribute('aria-describedby', hint.id);
+    speedSetting.append(speedLabel, speed, hint);
+    settings.append(speedSetting);
   }
-  const choices: { value: string | null; label: string }[] = (selected?.efforts ?? []).map(value => ({ value, label: effortLabel(value) }));
-  if (!openCode && selected) choices.unshift({value:null, label:'Default effort'});
-  if (preferences.reasoningEffort && !selected?.efforts.includes(preferences.reasoningEffort)) choices.push({ value: preferences.reasoningEffort, label: `${effortLabel(preferences.reasoningEffort)} (unavailable)` });
+}
+
+function updateDetailsVisibility(): void {
+  const compact = panel.classList.contains('model-panel-compact');
+  settings.hidden = compact && !detailsOpen;
+  panel.classList.toggle('model-panel-details', compact && detailsOpen);
+  settingsToggle.setAttribute('aria-expanded', String(!settings.hidden));
+  settingsToggle.textContent = settings.hidden ? 'Show current model settings' : 'Back to models';
+}
+
+function render(): void {
+  updateTrigger();
+  if (panel.hidden) return;
+  const focused = document.activeElement as HTMLElement;
+  const focusKey = panel.contains(focused) ? focused.dataset.focusKey : undefined;
+  const oldStars = Array.from(list.querySelectorAll<HTMLButtonElement>('.model-favorite:enabled'));
+  const favoriteIndex = oldStars.findIndex(star => star === focused);
+  const listTop = list.scrollTop;
+  const settingsTop = settingsGroup.scrollTop;
+  for (const {id, control} of filterButtons) control.setAttribute('aria-pressed', String(id === scope));
+  renderResults();
+  renderSettings();
+  updateDetailsVisibility();
+  if (focusKey) {
+    const targets = Array.from(panel.querySelectorAll<HTMLElement>('[data-focus-key]'));
+    const replacement = targets.find(control => control.dataset.focusKey === focusKey && !control.matches(':disabled'));
+    const fallback = detailsOpen && panel.classList.contains('model-panel-compact') ? settingsToggle : search;
+    const stars = list.querySelectorAll<HTMLButtonElement>('.model-favorite:enabled');
+    const neighbor = favoriteIndex >= 0 ? stars[Math.min(favoriteIndex, stars.length - 1)] : undefined;
+    (replacement ?? neighbor ?? fallback).focus({preventScroll: true});
+  }
+  list.scrollTop = listTop;
+  settingsGroup.scrollTop = settingsTop;
+  positionPanel();
+}
+function resultButtons(): HTMLButtonElement[] {
+  return Array.from(list.querySelectorAll<HTMLButtonElement>('.model-choice:enabled'));
+}
+function syncResultTabStop(): void {
+  const choices = resultButtons();
+  const target = choices.find(choice => choice.dataset.result === resultKey) ??
+    choices.find(choice => choice.getAttribute('aria-pressed') === 'true') ?? choices[0];
   for (const choice of choices) {
-    const button = document.createElement('button'); button.type = 'button'; button.textContent = choice.label; button.dataset.focusKey = `effort:${choice.value ?? 'default'}`; button.disabled = !selected || (choice.value !== null && !selected.efforts.includes(choice.value));
-    button.setAttribute('aria-pressed', String(choice.value === preferences.reasoningEffort));
-    button.onclick = () => { preferences.reasoningEffort = choice.value; changed(); }; effort.append(button);
+    choice.tabIndex = choice === target ? 0 : -1;
+    const favorite = choice.parentElement!.querySelector<HTMLButtonElement>('.model-favorite');
+    if (favorite) favorite.tabIndex = choice === target ? 0 : -1;
   }
-  updateNotice();
-  if (focusedKey && !panel.hidden) {
-    const replacement = Array.from(panel.querySelectorAll<HTMLElement>('[data-focus-key]')).find(control => control.dataset.focusKey === focusedKey);
-    (replacement ?? search).focus({preventScroll:true});
+}
+function resetResults(): void {
+  resultKey = undefined;
+  list.scrollTop = 0;
+}
+function positionPanel(): void {
+  if (panel.hidden) return;
+  const anchor = trigger.getBoundingClientRect();
+  const margin = 10;
+  const gap = 8;
+  const width = Math.min(604, innerWidth - margin * 2);
+  const above = anchor.top - margin - gap;
+  const below = innerHeight - anchor.bottom - margin - gap;
+  const overlay = Math.max(above, below) < 310;
+  const placeAbove = above >= 450 || above >= below;
+  const available = overlay ? innerHeight - margin * 2 : placeAbove ? above : below;
+  const compact = width < 470;
+  if (panel.classList.contains('model-panel-compact') !== compact) {
+    const focusInSettings = settings.contains(document.activeElement);
+    const toggleFocused = document.activeElement === settingsToggle;
+    panel.classList.toggle('model-panel-compact', compact);
+    if (compact && focusInSettings) detailsOpen = true;
+    updateDetailsVisibility();
+    if (!compact && toggleFocused) {
+      (settings.querySelector<HTMLElement>('select:enabled,button:enabled') ?? search).focus();
+    }
   }
-  if (!panel.hidden && !query) requestAnimationFrame(() => {
-    const selectedRow=list.querySelector<HTMLElement>('.model-row.is-selected');
-    if (!selectedRow || panel.hidden) return;
-    const rowBounds=selectedRow.getBoundingClientRect(), listBounds=list.getBoundingClientRect();
-    if(rowBounds.top < listBounds.top || rowBounds.bottom > listBounds.bottom) list.scrollTop += rowBounds.top-listBounds.top;
+  panel.style.width = `${width}px`;
+  const maxHeight = `${Math.max(0, Math.min(490, available))}px`;
+  panel.style.maxHeight = maxHeight;
+  panel.style.setProperty('--picker-height', maxHeight);
+  panel.style.left = `${Math.max(margin, Math.min(anchor.right - width, innerWidth - width - margin))}px`;
+  panel.style.top = overlay ? `${margin}px` : placeAbove ? 'auto' : `${anchor.bottom + gap}px`;
+  panel.style.bottom = !overlay && placeAbove ? `${innerHeight - anchor.top + gap}px` : 'auto';
+}
+let positionFrame = 0;
+let anchorGeometry = '';
+function followAnchor(): void {
+  const {x, y, width, height} = trigger.getBoundingClientRect();
+  const geometry = `${x},${y},${width},${height},${innerWidth},${innerHeight}`;
+  if (geometry !== anchorGeometry) {
+    anchorGeometry = geometry;
+    positionPanel();
+  }
+  positionFrame = requestAnimationFrame(followAnchor);
+}
+function dismiss(restoreFocus = false): void {
+  if (panel.hidden) return;
+  panel.hidden = true;
+  cancelAnimationFrame(positionFrame);
+  trigger.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) trigger.focus();
+}
+function close(): void { dismiss(true); }
+function toggle(): void {
+  if (!panel.hidden) return close();
+  panel.hidden = false;
+  trigger.setAttribute('aria-expanded', 'true');
+  scope = 'all';
+  firstProvider = activeId() ?? 'codex';
+  detailsOpen = false;
+  search.value = '';
+  selectionAnnouncement.textContent = '';
+  resetResults();
+  render();
+  followAnchor();
+  search.focus({preventScroll: true});
+}
+search.oninput = () => {resetResults(); render();};
+list.addEventListener('focusin', event => {
+  const choice = (event.target as HTMLElement).closest('.model-row')?.querySelector<HTMLButtonElement>('.model-choice:enabled');
+  if (choice) {
+    resultKey = choice.dataset.result;
+    syncResultTabStop();
+  }
+});
+host.addEventListener('keydown', event => {
+  if (panel.hidden) return;
+  if (event.isComposing || event.keyCode === 229) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    close();
+    return;
+  }
+  const focused = document.activeElement as HTMLElement;
+  const choice = focused.closest('.model-row')?.querySelector<HTMLButtonElement>('.model-choice:enabled');
+  if (focused !== search && !choice) return;
+  const choices = resultButtons();
+  if (!choices.length) return;
+  if (focused === search && event.key === 'Enter' && search.value.trim()) {
+    event.preventDefault();
+    choices[0].focus();
+    if (choices.length === 1) choices[0].click();
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || (choice && ['Home', 'End'].includes(event.key))) {
+    event.preventDefault();
+    const index = choice ? choices.indexOf(choice) : -1;
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 :
+      event.key === 'ArrowDown' ? (index + 1) % choices.length : index < 0 ? choices.length - 1 : (index - 1 + choices.length) % choices.length;
+    choices[next].focus();
+  } else if (choice && focused === choice && event.key === 'ArrowRight') {
+    choice.parentElement!.querySelector<HTMLButtonElement>('.model-favorite:enabled')?.focus();
+  } else if (choice && focused !== choice && event.key === 'ArrowLeft') {
+    choice.focus();
+  }
+});
+document.addEventListener('focusin', event => {
+  if (event.target instanceof Node && !host.contains(event.target)) dismiss();
+});
+document.addEventListener('pointerdown', event => {
+  if (!event.composedPath().includes(host)) dismiss();
+});
+new IntersectionObserver(entries => {
+  if (entries.some(entry => !entry.isIntersecting)) dismiss();
+}).observe(trigger);
+
+async function discover(id: Provider): Promise<Model[]> {
+  if (id === 'codex') {
+    const result = await api.discoverCodexModels();
+    if (result.ok === false) throw new Error(result.error);
+    return result.models.map(model => ({
+      id: model.model, label: model.displayName, description: model.description,
+      efforts: model.supportedReasoningEfforts.map(option => option.effort).filter(value => effortOrder.includes(value) && value !== 'none'),
+      defaultEffort: model.defaultReasoningEffort
+    }));
+  }
+  const result = await api.discoverOpenCodeModels(project);
+  if (result.ok === false) throw new Error(result.error);
+  return result.models.map(model => {
+    return {id: model.id, label: model.name, source: openCodeSource(model.id), efforts: model.variants};
   });
 }
-function choose(model: string): void { const state = activeState(); if (model !== state.preferences.model) { state.preferences.model = model; const selected = state.models.find(m => m.id === model); if (state.preferences.reasoningEffort && !selected?.efforts.includes(state.preferences.reasoningEffort)) state.preferences.reasoningEffort = activeId() === 'codex' ? null : preferredEffort(selected); else if (activeId() === 'opencode' && !state.preferences.reasoningEffort) state.preferences.reasoningEffort = preferredEffort(selected); changed(); } if (activeId() === 'codex') close(); else render(); }
-function positionPanel(): void {
-  const anchor = trigger.getBoundingClientRect();
-  const width = panel.getBoundingClientRect().width;
-  const editor = document.querySelector<HTMLElement>('.editor-pane')?.getBoundingClientRect();
-  const minimumLeft = Math.max(12, Math.min(editor ? editor.left + 8 : 12, window.innerWidth - width - 12));
-  const above=Math.max(0,anchor.top-18), below=Math.max(0,window.innerHeight-anchor.bottom-18);
-  const placeAbove=above>=400 || above>=below;
-  panel.style.maxHeight = `${Math.max(0,placeAbove ? above : below)}px`;
-  panel.style.left = `${Math.max(minimumLeft, Math.min(anchor.right - width, window.innerWidth - width - 12))}px`;
-  panel.style.top = placeAbove ? 'auto' : `${anchor.bottom+6}px`;
-  panel.style.bottom = placeAbove ? `${window.innerHeight-anchor.top+6}px` : 'auto';
-}
-window.addEventListener('resize', () => { if (!panel.hidden) positionPanel(); });
-function dismiss(restoreFocus = false): void { panel.hidden = true; trigger.setAttribute('aria-expanded', 'false'); if (restoreFocus) trigger.focus(); }
-function close(): void { dismiss(true); }
-// Nonmodal picker follows keyboard focus, without taking focus from its destination.
-document.addEventListener('focusin', event => { if (event.target instanceof Node && !host.contains(event.target)) dismiss(); });
-const pickerVisibility = new IntersectionObserver(entries => { if (entries.some(entry => !entry.isIntersecting) && !panel.hidden) dismiss(); });
-pickerVisibility.observe(trigger);
-trigger.onclick = () => { if (!panel.hidden) return close(); panel.hidden = false; positionPanel(); trigger.setAttribute('aria-expanded', 'true'); search.value = ''; render(); (modelsPane.hidden ? codexTab : search).focus(); };
-search.oninput = render;
-panel.onkeydown = event => { if (event.isComposing || event.keyCode === 229) return; if (event.key === 'Escape') { event.preventDefault(); close(); } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && (document.activeElement === search || list.contains(document.activeElement))) { const buttons = Array.from(list.querySelectorAll('button')); if (!buttons.length) return; event.preventDefault(); const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : index < 0 ? 0 : -1) + buttons.length) % buttons.length].focus(); } else if (event.key === 'Enter' && document.activeElement === search) { event.preventDefault(); (list.querySelector('.model-row button') as HTMLButtonElement | null)?.click(); } };
-document.addEventListener('click', event => { if (!event.composedPath().includes(host)) { dismiss(); } });
-let openCodeProject: string | undefined;
-let openCodeGeneration = 0;
-let openCodePreferencesLoaded = false;
-async function initialize(id: ProviderId, projectId?: string, existingPreferences?: CodexPreferences): Promise<void> {
+function loadPreferences(id: Provider): Promise<Preferences | undefined> {
   const state = states[id];
-  const generation = id === 'opencode' ? ++openCodeGeneration : 0;
-  let discovered: PickerModel[] | undefined; let discoveryError = '';
-  const discovery = (async () => {
-    try {
-      if (id === 'codex') {
-        const result = await api.discoverCodexModels(); if (result.ok === false) throw new Error(result.error);
-        discovered = result.models.map(m => ({id:m.model,label:m.displayName,description:m.description,efforts:m.supportedReasoningEfforts.map(e=>e.effort).filter((value): value is ReasoningEffort => supportedEfforts.has(value))}));
-      } else {
-        const result = await api.discoverOpenCodeModels(projectId); if (result.ok === false) throw new Error(result.error);
-        discovered = result.models.map(m => ({id:m.id,label:m.name,description:({opencode:'OpenCode',lmstudio:'LM Studio'} as Record<string,string>)[m.id.split('/')[0].toLowerCase()] ?? m.id.split('/')[0],efforts:m.variants}));
-      }
-    } catch (error) { discoveryError = error instanceof Error ? error.message : 'Discovery failed'; }
-  })();
-  let loaded: CodexPreferences | undefined;
-  const revision = state.revision;
-  try { loaded = existingPreferences ?? (id === 'opencode' && openCodePreferencesLoaded ? state.preferences : await (id === 'codex' ? api.codexPreferencesLoad() : api.openCodePreferencesLoad())); } catch {}
-  await discovery;
-  if (id === 'opencode' && generation !== openCodeGeneration) return;
-  state.loadFailed = !loaded; if (loaded && state.revision === revision) state.preferences = loaded;
-  if (id === 'opencode' && loaded) openCodePreferencesLoaded = true;
-  state.status = discovered ? 'ready' : 'error'; state.error = discoveryError; if (discovered) state.models = discovered;
-  if (id === 'opencode' && !state.loadFailed && state.status === 'ready') {
+  if (state.preferences) return Promise.resolve(state.preferences);
+  if (state.loadingPreferences) return state.loadingPreferences;
+  const read = id === 'codex' ? () => api.codexPreferencesLoad() : () => api.openCodePreferencesLoad();
+  state.loadFailed = false;
+  state.loadingPreferences = Promise.resolve().then(read).then(value => {
+    state.preferences = value;
+    return value;
+  }).catch(() => {
+    state.loadFailed = true;
+    return undefined;
+  }).finally(() => {state.loadingPreferences = undefined;});
+  return state.loadingPreferences;
+}
+function distinguishNames(models: Model[]): Model[] {
+  const nameCounts = new Map<string, number>();
+  const sourceCounts = new Map<string, number>();
+  for (const model of models) {
+    const key = JSON.stringify([model.label, model.source]);
+    nameCounts.set(model.label, (nameCounts.get(model.label) ?? 0) + 1);
+    sourceCounts.set(key, (sourceCounts.get(key) ?? 0) + 1);
+  }
+  for (const model of models) {
+    if (nameCounts.get(model.label) === 1) continue;
+    const key = JSON.stringify([model.label, model.source]);
+    model.disambiguator = model.source && sourceCounts.get(key) === 1 ? model.source : model.id;
+  }
+  return models;
+}
+
+async function initialize(id: Provider, request: number): Promise<void> {
+  const state = states[id];
+  const [, catalog] = await Promise.allSettled([loadPreferences(id), discover(id)]);
+  if (id === 'opencode' && request !== generation) return;
+  state.status = catalog.status === 'fulfilled' ? 'ready' : 'error';
+  state.models = catalog.status === 'fulfilled' ? distinguishNames(catalog.value) : [];
+  state.error = catalog.status === 'rejected' && catalog.reason instanceof Error ? catalog.reason.message : undefined;
+
+  if (id === 'opencode' && state.preferences && state.status === 'ready') {
+    const {preferences} = state;
     let modified = false;
-    if (!state.preferences.model && state.models.length) { state.preferences.model = [...state.models].sort(compareVersions)[0].id; modified = true; }
-    const selected = state.models.find(m => m.id === state.preferences.model);
-    if (selected && (!state.preferences.reasoningEffort || !selected.efforts.includes(state.preferences.reasoningEffort))) { const fallback = preferredEffort(selected); if (fallback !== state.preferences.reasoningEffort) { state.preferences.reasoningEffort = fallback; modified = true; } }
+    if (!preferences.model && state.models.length) {
+      const version = (model: Model) => (model.label.match(/\d+(?:\.\d+)*/)?.[0] ?? model.id.match(/\d+(?:\.\d+)*/)?.[0] ?? '0');
+      preferences.model = [...state.models].sort((a, b) => numeric.compare(version(b), version(a)) || numeric.compare(a.label, b.label))[0].id;
+      modified = true;
+    }
+    const model = selectedModel(id);
+    if (model && !model.efforts.includes(preferences.reasoningEffort ?? '')) {
+      const fallback = preferredEffort(model);
+      if (preferences.reasoningEffort !== fallback) {
+        preferences.reasoningEffort = fallback;
+        modified = true;
+      }
+    }
     if (modified) changed(id);
   }
-  trigger.disabled = false; render();
+  render();
 }
-states.codex.initialized = initialize('codex');
-states.opencode.initialized = initialize('opencode');
-window.addEventListener('picker-project', (event: CustomEvent<string>) => { if (event.detail === openCodeProject) return; openCodeProject = event.detail; states.opencode.status = 'loading'; states.opencode.initialized = initialize('opencode', openCodeProject); render(); });
-(window as unknown as Window & { codexPickerReady: () => Promise<void> }).codexPickerReady = async () => {
-  const state = activeState(); await state.initialized;
-  if (state.loadFailed) throw new Error('Could not load model preferences. Restart to retry.');
-  if (state.savePromise) await state.savePromise;
-  if (state.saveError || state.savedRevision < state.revision) throw new Error('Could not save model preferences. Retry saving before sending.');
-  if (activeId() === 'opencode' && !state.preferences.model) throw new Error('Select an available model before sending.');
-};
+function startDiscovery(id: Provider): void {
+  const state = states[id];
+  state.status = 'loading';
+  state.loadFailed = false;
+  if (id === 'opencode') catalogProject = project;
+  state.initialized = initialize(id, id === 'opencode' ? ++generation : 0);
+  render();
+}
+function syncProviders(): void {
+  if (!pending()) {
+    const available = new Set(providers.filter(installed));
+    const previous = detected;
+    detected = available;
+    for (const id of available) {
+      if (!previous.has(id) || !states[id].initialized || (id === 'opencode' && catalogProject !== project)) {
+        startDiscovery(id);
+      }
+    }
+  }
+  render();
+}
+provider.addEventListener('providerstate', syncProviders);
+provider.addEventListener('change', render);
+window.addEventListener('picker-project', (event: CustomEvent<string>) => {
+  if (event.detail === project) return;
+  project = event.detail;
+  if (states.opencode.initialized && installed('opencode')) startDiscovery('opencode');
+});
+syncProviders();
 
+pickerWindow.codexPickerReady = async (id = activeId()) => {
+  if (!id || !installed(id)) throw new Error('Choose an available provider before sending.');
+  const state = states[id];
+  const initialized = state.initialized;
+  await initialized;
+  if (id === 'opencode' && initialized !== state.initialized) {
+    throw new Error('The OpenCode catalog changed. Try sending again from this project.');
+  }
+  const issue = sendIssue(id);
+  if (issue) throw new Error(`Open the model picker and ${issue.message[0].toLowerCase()}${issue.message.slice(1)} before sending.`);
+  if (!state.preferences) throw new Error('Open the model picker and retry loading preferences.');
+  const {model: modelId, reasoningEffort, fastMode} = state.preferences;
+  const revision = state.selectionRevision;
+  while (state.savedRevision < revision && state.write) {
+    if (!await state.write) break;
+  }
+  if (state.savedRevision < revision) throw new Error('Open the model picker and retry saving before sending.');
+  return {model: modelId, reasoningEffort, ...(id === 'codex' && fastMode !== undefined ? {fastMode} : {})};
+};
 })();
