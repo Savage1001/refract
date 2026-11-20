@@ -64,7 +64,7 @@ async function compile(projectDir, options: { executable?: string; rootFile?: st
 \expandafter\input\expandafter{\refractroot}
 `,'utf8');
   }
-  const args = ['-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', '-recorder', '-synctex=1', '-jobname=main', `-output-directory=${outputDir}`, options.draftMode ? './.refract-build/refract-internal/draft.tex' : `./${rootFile}`];
+  const args = ['-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-no-shell-escape', '-recorder', '-synctex=1', '-jobname=main', `-output-directory=${outputDir}`, options.draftMode ? './.refract-build/refract-internal/draft.tex' : `./${rootFile}`];
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${path.dirname(executable)}${path.delimiter}${process.env.PATH || ''}` };
   env.BIBINPUTS = `${projectDir}${path.sep}//${path.delimiter}${process.env.BIBINPUTS || ''}`;
   // TinyTeX releases can contain paths from their build machine. Generate a
