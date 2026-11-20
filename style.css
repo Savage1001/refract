@@ -212,7 +212,13 @@ h2 {
 }
 
 body:has(#projects:not([hidden])) .app-titlebar {
-  background:var(--canvas);
+  background:inherit;
+}
+
+@media(prefers-color-scheme:dark) {
+  body:has(#projects:not([hidden])) {
+    background:var(--sidebar);
+  }
 }
 
 /* Project navigation. */
