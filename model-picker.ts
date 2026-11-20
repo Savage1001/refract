@@ -65,7 +65,6 @@ let scope: Scope = 'all';
 let firstProvider: Provider = 'codex';
 let project: string | undefined;
 let generation = 0;
-let catalogProject: string | undefined;
 let detected = new Set<Provider>();
 let resultKey: string | undefined;
 let detailsOpen = false;
@@ -190,15 +189,17 @@ function openRecovery(): void {
   const id = issue ? activeId() : saveFailure();
   if (!id) return;
   if (panel.hidden) toggle();
-  if ((issue && issue.area === 'settings') || (!issue && id === activeId())) {
+  if ((issue && issue.area === 'settings') || (!issue && id === activeId() && installed(id))) {
     detailsOpen = true;
     updateDetailsVisibility();
     (settings.querySelector<HTMLElement>('.model-retry:enabled,select:enabled') ?? settingsToggle).focus();
   } else {
-    scope = id;
+    scope = !issue && !installed(id) ? 'favorites' : id;
     resetResults();
     render();
-    (list.querySelector<HTMLElement>('.model-retry:enabled') ?? search).focus();
+    const retry = Array.from(list.querySelectorAll<HTMLElement>('.model-retry:enabled'));
+    const action = !issue ? retry.find(control => control.dataset.focusKey === `${id}:save`) : retry[0];
+    (action ?? search).focus();
   }
 }
 notice.hidden = true;
@@ -431,7 +432,7 @@ function renderResults(): void {
   if (pending()) {
     list.append(statusBlock('Checking providers…', 'Looking for Codex and OpenCode.'));
     announce('Checking providers.');
-    return;
+    if (scope !== 'favorites') return;
   }
   const detectionFailed = provider.dataset.pickerStatus === 'error';
   const allMissing = scope === 'all' && !providers.some(installed);
@@ -447,7 +448,7 @@ function renderResults(): void {
   }
   const ordered = firstProvider === 'opencode' ? ['opencode', 'codex'] as const : providers;
   const visibleProviders = scope === 'all' || scope === 'favorites'
-    ? ordered.filter(id => installed(id) || (scope === 'favorites' && (states[id].preferences?.favorites.length || states[id].loadFailed || states[id].loadingPreferences)))
+    ? ordered.filter(id => installed(id) || (scope === 'favorites' && (states[id].preferences?.favorites.length || states[id].saveError || states[id].loadFailed || states[id].loadingPreferences)))
     : [scope];
 
   let count = 0;
@@ -457,18 +458,20 @@ function renderResults(): void {
     const preferences = state.preferences;
     const ready = state.status === 'ready' && installed(id) && Boolean(preferences);
     const catalog = ready ? state.models : [];
-    const availableModels = new Set(catalog);
+    const availableIds = new Set(catalog.map(model => model.id));
     let models = [...catalog].sort((a, b) => numeric.compare(a.label, b.label) || numeric.compare(a.id, b.id));
     if (scope === 'favorites') {
       const byId = new Map(models.map(model => [model.id, model]));
-      models = (preferences?.favorites ?? []).map(key => byId.get(key) ?? {
-        id: key, label: key.split('/').at(-1)!, source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []
-      });
+      models = distinguishNames((preferences?.favorites ?? []).map(key => {
+        const known = byId.get(key);
+        if (known) return {...known};
+        return {id: key, label: key.split('/').at(-1)!, source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []};
+      }));
     } else if (id === 'codex' && preferences && installed(id) && !state.loadFailed) {
       models.unshift(cliDefault);
     }
     models = models.filter(model => matchesQuery(model, id, terms));
-    const status = state.saveError && id !== activeId()
+    const status = state.saveError && (id !== activeId() || !installed(id))
       ? statusBlock('Settings weren’t saved', 'Retry to save your latest choices.',
         retryButton('Retry saving', `${id}:save`, () => {void save(id); render();}))
       : providerStatus(id);
@@ -480,7 +483,7 @@ function renderResults(): void {
     heading.id = `model-group-${id}`;
     group.setAttribute('aria-labelledby', heading.id);
     group.append(heading);
-    for (const model of models) group.append(modelRow(id, model, model.id === null || availableModels.has(model)));
+    for (const model of models) group.append(modelRow(id, model, model.id === null || availableIds.has(model.id)));
     count += models.length;
     if (status) {
       group.append(status);
@@ -805,7 +808,7 @@ function distinguishNames(models: Model[]): Model[] {
   for (const model of models) {
     if (nameCounts.get(model.label) === 1) continue;
     const key = JSON.stringify([model.label, model.source]);
-    model.disambiguator = model.source && sourceCounts.get(key) === 1 ? model.source : model.id;
+    model.disambiguator ??= model.source && sourceCounts.get(key) === 1 ? model.source : model.id;
   }
   return models;
 }
@@ -813,7 +816,7 @@ function distinguishNames(models: Model[]): Model[] {
 async function initialize(id: Provider, request: number): Promise<void> {
   const state = states[id];
   const [, catalog] = await Promise.allSettled([loadPreferences(id), discover(id)]);
-  if (id === 'opencode' && request !== generation) return;
+  if (id === 'opencode' && (request !== generation || !installed(id))) return;
   state.status = catalog.status === 'fulfilled' ? 'ready' : 'error';
   state.models = catalog.status === 'fulfilled' ? distinguishNames(catalog.value) : [];
   state.error = catalog.status === 'rejected' && catalog.reason instanceof Error ? catalog.reason.message : undefined;
@@ -842,17 +845,22 @@ function startDiscovery(id: Provider): void {
   const state = states[id];
   state.status = 'loading';
   state.loadFailed = false;
-  if (id === 'opencode') catalogProject = project;
   state.initialized = initialize(id, id === 'opencode' ? ++generation : 0);
   render();
 }
+function invalidateOpenCodeCatalog(): void {
+  generation++;
+  states.opencode.initialized = undefined;
+  states.opencode.status = 'loading';
+}
 function syncProviders(): void {
+  if (pending() && states.opencode.status === 'loading' && states.opencode.initialized) invalidateOpenCodeCatalog();
   if (!pending()) {
     const available = new Set(providers.filter(installed));
     const previous = detected;
     detected = available;
     for (const id of available) {
-      if (!previous.has(id) || !states[id].initialized || (id === 'opencode' && catalogProject !== project)) {
+      if (!previous.has(id) || !states[id].initialized) {
         startDiscovery(id);
       }
     }
@@ -864,7 +872,9 @@ provider.addEventListener('change', render);
 window.addEventListener('picker-project', (event: CustomEvent<string>) => {
   if (event.detail === project) return;
   project = event.detail;
-  if (states.opencode.initialized && installed('opencode')) startDiscovery('opencode');
+  invalidateOpenCodeCatalog();
+  if (!pending() && installed('opencode')) startDiscovery('opencode');
+  else render();
 });
 syncProviders();
 

@@ -819,6 +819,7 @@ function discoverChatProviders(preferred: string | null, handoff: string | null)
   providerAvailable = false;
   provider.disabled = true;
   publish('loading');
+  if (active?.id) window.dispatchEvent(new CustomEvent('picker-project', {detail:active.id}));
   void store.discoverProviders().then((available: {codex: boolean; opencode: boolean}) => {
     if (request !== providerDiscovery) return;
     provider.replaceChildren();
@@ -845,7 +846,6 @@ $('#chat-provider').addEventListener('picker-retry-providers', () => {
   discoverChatProviders(staged ?? (value || dataset.handoff || null), dataset.handoff || null);
 });
 function renderChat(chat) {
-  if (active?.id) window.dispatchEvent(new CustomEvent('picker-project', {detail:active.id}));
   const saved = chat.provider || (chat.sessionId || chat.messages.length ? 'codex' : null);
   const staged = active && readChatDraft(draftKey(active.id,currentChat)).provider;
   discoverChatProviders(staged ?? saved, saved);

@@ -10,7 +10,7 @@ const {test} = nodeTest;
 const {chromium} = playwright;
 
 type ModelSelection = Omit<CodexPreferences, 'favorites'>;
-type Mode = 'normal' | 'empty' | 'slow' | 'fail-load' | 'fail-discovery' | 'fail-save' | 'no-opencode' | 'provider-check-failed';
+type Mode = 'normal' | 'empty' | 'slow' | 'fail-load' | 'fail-discovery' | 'fail-save' | 'no-opencode' | 'provider-check-failed' | 'offline-duplicates' | 'empty-opencode';
 interface PickerFixture extends Window {
   codexPickerReady(): Promise<ModelSelection>;
   ready?: Promise<ModelSelection>;
@@ -43,7 +43,7 @@ async function picker(t: TestContext, mode: Mode = 'normal'): Promise<Page> {
   page.setDefaultTimeout(5000);
   await page.route(`${root}/**`, async route => {
     const asset = new URL(route.request().url()).pathname;
-    if (asset === '/' && mode === 'provider-check-failed') {
+    if (asset === '/' && (mode === 'provider-check-failed' || mode === 'offline-duplicates')) {
       const unavailable = markup.replace(/<select id="chat-provider">[^<]*(?:<option[^>]*>[^<]*<\/option>)*<\/select>/,
         '<select id="chat-provider" data-picker-status="error"></select>');
       await route.fulfill({contentType: 'text/html', body: unavailable});
@@ -77,6 +77,7 @@ async function picker(t: TestContext, mode: Mode = 'normal'): Promise<Page> {
       discoverCodexModels: async () => ({ok: true, models: [model('gpt-6.2', 'GPT-6.2', ['low', 'high']), model('research', 'Research', [])]}),
       discoverOpenCodeModels: async () => {
         if (w.failDiscovery) throw new Error('OpenCode catalog is offline');
+        if (mode === 'empty-opencode') return {ok: true, models: []};
         return {ok: true, models: catalog};
       },
       codexPreferencesLoad: async () => {
@@ -84,7 +85,12 @@ async function picker(t: TestContext, mode: Mode = 'normal'): Promise<Page> {
         if (mode === 'slow') await new Promise<void>(resolve => w.releasePreferences = resolve);
         return mode === 'empty' ? initial() : {model: 'gpt-6.2', reasoningEffort: 'low', favorites: ['gpt-6.2']};
       },
-      openCodePreferencesLoad: async () => ({model: 'opencode/gpt-6.2', reasoningEffort: 'balanced', favorites: ['opencode/gpt-6.2', 'lmstudio/legacy']}),
+      openCodePreferencesLoad: async () => mode === 'empty-opencode' ? initial() : {
+        model: 'opencode/gpt-6.2',
+        reasoningEffort: 'balanced',
+        favorites: mode === 'offline-duplicates'
+          ? ['lmstudio/vendor-a/shared', 'lmstudio/vendor-b/shared'] : ['opencode/gpt-6.2', 'lmstudio/legacy']
+      },
       codexPreferencesSave: (value: CodexPreferences) => save('codex', value),
       openCodePreferencesSave: (value: CodexPreferences) => save('opencode', value)
     });
@@ -401,4 +407,60 @@ test('send stops waiting once the selection write finishes, even with a favorite
   });
   assert.deepEqual(selection, {model: 'gpt-6.2', reasoningEffort: 'high'});
   await page.evaluate(() => (window as unknown as PickerFixture).releaseSave?.());
+});
+test('same-name offline favorites stay distinguishable and the last failed removal can be retried', async t => {
+  const page = await picker(t, 'offline-duplicates');
+  await choice(page, 'Favorite models').click();
+  const openCode = providerRows(page, 'OpenCode');
+  const stars = openCode.getByRole('button', {name: 'Remove shared from favorites', exact: true});
+  await stars.last().waitFor();
+  assert.deepEqual(await stars.evaluateAll(controls => controls.map(control => control.getAttribute('aria-description'))), [
+    'OpenCode, lmstudio/vendor-a/shared', 'OpenCode, lmstudio/vendor-b/shared'
+  ]);
+  assert.ok(await openCode.getByText('lmstudio/vendor-a/shared · Unavailable', {exact: true}).isVisible());
+  assert.ok(await openCode.getByText('lmstudio/vendor-b/shared · Unavailable', {exact: true}).isVisible());
+  await stars.first().click();
+  await page.evaluate(() => (window as unknown as PickerFixture).failSave = true);
+  await stars.first().click();
+  const retry = choice(page, 'Retry saving');
+  await retry.waitFor();
+  await choice(page, 'Done').click();
+  await choice(page, 'OpenCode settings weren’t saved').click();
+  assert.ok(await retry.evaluate(el => document.activeElement === el));
+  await page.evaluate(() => (window as unknown as PickerFixture).failSave = false);
+  await page.keyboard.press('Enter');
+  await retry.waitFor({state: 'hidden'});
+  const saved = await page.evaluate(() => (window as unknown as PickerFixture).saves.at(-1));
+  assert.deepEqual(saved?.value.favorites, []);
+});
+
+test('a removed provider cannot save an old project default while its catalog is in flight', async t => {
+  const page = await picker(t, 'empty-opencode');
+  await choice(page, 'OpenCode models').click();
+  await page.getByText('No models available', {exact: true}).waitFor();
+  await page.evaluate(() => {
+    const w = window as unknown as PickerFixture;
+    w.store.discoverOpenCodeModels = project => project === 'first'
+      ? new Promise(resolve => w.releaseCatalog = resolve)
+      : Promise.resolve({ok: true, models: [{id: 'lmstudio/second', name: 'Second project model', variants: []}]});
+    window.dispatchEvent(new CustomEvent('picker-project', {detail: 'first'}));
+    const select = document.querySelector<HTMLSelectElement>('#chat-provider')!;
+    const option = Array.from(select.options).find(option => option.value === 'opencode')!;
+    select.dataset.pickerStatus = 'loading';
+    select.dispatchEvent(new Event('providerstate'));
+    option.disabled = true;
+    select.dataset.pickerStatus = 'ready';
+    select.dispatchEvent(new Event('providerstate'));
+    window.dispatchEvent(new CustomEvent('picker-project', {detail: 'second'}));
+    w.releaseCatalog({ok: true, models: [{id: 'lmstudio/first', name: 'First project model', variants: []}]});
+  });
+  assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).saves), []);
+  await page.evaluate(() => {
+    const select = document.querySelector<HTMLSelectElement>('#chat-provider')!;
+    Array.from(select.options).find(option => option.value === 'opencode')!.disabled = false;
+    select.dispatchEvent(new Event('providerstate'));
+  });
+  await choice(page, 'Second project model').waitFor();
+  await page.waitForFunction(() => (window as unknown as PickerFixture).saves.length > 0);
+  assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).saves.map(write => write.value.model)), ['lmstudio/second']);
 });
