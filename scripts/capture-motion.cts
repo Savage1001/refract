@@ -96,27 +96,21 @@ const scenes: Scene[] = [
       const {files} = (window as unknown as {fixture:{files:Record<string,string>}}).fixture;
       files['z-results.tex'] = '% Results';
       files['z-review.tex'] = '% Review notes';
-      for (let index = 0; index < 4; index++) files[`sections/notes-${index}.tex`] = '% Nested notes';
+      for (let index = 0; index < 5; index++) files[`sections/notes-${index}.tex`] = '% Nested notes';
     });
     await open(page);
     const folder = page.locator('#file-list summary').first();
     const point = await folder.evaluate((summary:HTMLElement) => {
       const first = document.querySelector('#file-list button[title="z-results.tex"]')!;
-      const second = document.querySelector('#file-list button[title="z-review.tex"]')!;
-      summary.click();
-      for (const file of [first, second]) {
-        const animation = file.parentElement!.getAnimations().find(motion => motion.id === 'refract-motion')!;
-        animation.currentTime = 0;
-        animation.playbackRate = .3;
-      }
-      const {left,top,width,height} = first.getBoundingClientRect();
-      return {x:left+width/2,y:top+height/2};
+      const {left,width,bottom} = first.getBoundingClientRect();
+      window.addEventListener('pointermove', () => summary.click(), {capture:true, once:true});
+      return {x:left+width/2,y:bottom-7};
     });
     await page.mouse.move(point.x, point.y);
     await page.mouse.down();
     await pause(page, 170);
     await page.mouse.up();
-    await page.waitForFunction(() => (document.getElementById('source') as HTMLTextAreaElement).value === '% Results');
+    await page.waitForFunction(() => ['% Results', '% Review notes'].includes((document.getElementById('source') as HTMLTextAreaElement).value));
     await pause(page);
     await folder.press('Enter');
     await pause(page);
@@ -137,7 +131,7 @@ const scenes: Scene[] = [
     await click(page, '.file-alternatives summary');
     await click(page, '.file-alternatives summary');
     await page.keyboard.press('Escape');
-  }],
+  }, 'dark', undefined, {width:1040,height:720}],
   ['09-sidebar-tabs-and-preview', async page => {
     await page.evaluate(() => {
       const w = window as unknown as {

@@ -409,7 +409,13 @@ function settleFolderRows(): void {
 document.addEventListener('pointerdown', event => {
   if (!(event.target instanceof Element) || !event.target.closest('#file-list .file-tree-row')) return;
   if (!fileTreePresses.size) {
-    for (const animation of folderRowMotions) if (isMoving(animation)) animation.pause();
+    for (const animation of folderRowMotions) {
+      if (!isMoving(animation)) continue;
+      const hitTime = animation.currentTime;
+      animation.pause();
+      // A pending pause can otherwise advance one more compositor frame.
+      animation.currentTime = hitTime;
+    }
   }
   fileTreePresses.add(event.pointerId);
 }, {capture:true});

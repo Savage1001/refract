@@ -364,6 +364,67 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
   }
 });
 
+test('normal-speed file row edge presses keep the pointer-down frame and open the same file', {timeout:20000}, async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi('dark', undefined, {viewport:{width:1040,height:720}});
+  try {
+    await page.evaluate(() => {
+      const {files} = (window as unknown as {fixture:{files:Record<string,string>}}).fixture;
+      files['z-first.tex'] = '% First moving file';
+      files['z-second.tex'] = '% Second moving file';
+      for (let index = 0; index < 5; index++) files[`sections/notes-${index}.tex`] = '% Nested notes';
+    });
+    await openProject(page);
+    const folder = page.locator('#file-list summary').first();
+    let movingPresses = 0;
+    let pressesAfterFirstFrame = 0;
+    for (let trial = 0; trial < 24; trial++) {
+      const point = await folder.evaluate((summary:HTMLElement, distance) => {
+        if (!(summary.parentElement as HTMLDetailsElement).open) summary.click();
+        const first = document.querySelector<HTMLButtonElement>('#file-list button[title="z-first.tex"]')!;
+        const {left,width,bottom} = first.getBoundingClientRect();
+        const list = document.getElementById('file-list')!;
+        const read = (event:PointerEvent) => {
+          if (!(event.target instanceof Element)) return;
+          const file = event.target.closest<HTMLButtonElement>('button[data-path]');
+          const motion = file?.parentElement?.getAnimations().find(animation => animation.id === 'refract-motion');
+          list.dataset[`${event.type}File`] = file?.dataset.path ?? '';
+          list.dataset[`${event.type}Time`] = String(motion?.currentTime ?? '');
+          list.dataset[`${event.type}Speed`] = String(motion?.playbackRate ?? '');
+        };
+        // Window capture samples the live frame before the renderer's document listener.
+        window.addEventListener('pointerdown', read, {capture:true, once:true});
+        window.addEventListener('pointerup', read, {capture:true, once:true});
+        window.addEventListener('pointermove', () => summary.click(), {capture:true, once:true});
+        return {x:Math.floor(left + width / 2), y:Math.floor(bottom - distance)};
+      }, 3 + trial % 8);
+      await page.mouse.move(point.x, point.y);
+      await page.waitForTimeout(trial % 9);
+      await page.mouse.down();
+      await page.waitForTimeout(30);
+      await page.mouse.up();
+      const {down, up, downTime, upTime, speed} = await page.locator('#file-list').evaluate(list => {
+        const values = (list as HTMLElement).dataset;
+        return {down:values.pointerdownFile, up:values.pointerupFile, downTime:values.pointerdownTime,
+          upTime:values.pointerupTime, speed:values.pointerdownSpeed};
+      });
+      if (down !== 'z-first.tex' && down !== 'z-second.tex') continue;
+      assert.equal(speed, '1');
+      assert.equal(up, down);
+      assert.ok(downTime);
+      assert.equal(upTime, downTime, 'The group must freeze at the pointer-down frame');
+      movingPresses++;
+      if (Number(downTime) > 0) pressesAfterFirstFrame++;
+      await page.waitForFunction(path => document.querySelector('#file-list button.active-file')?.getAttribute('data-path') === path, down);
+      assert.equal(await page.locator('#source').inputValue(), down === 'z-first.tex' ? '% First moving file' : '% Second moving file');
+    }
+    assert.ok(movingPresses >= 12, `Only ${movingPresses} presses landed on the moving files`);
+    assert.ok(pressesAfterFirstFrame > 0, 'Exercise a press after the rows have started moving');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('keyboard focus stays fully visible as assistant replies and build disclosures appear', {timeout:20000}, async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
