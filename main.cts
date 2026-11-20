@@ -1,6 +1,6 @@
 const { UpdateService } = require('./src/updates.cjs');
 const { texBin } = require('./src/tex-toolchain.cjs');
-const { app, BrowserWindow, ipcMain, MessageChannelMain, dialog, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, MessageChannelMain, dialog, shell, nativeTheme, safeStorage } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { ProjectStore } = require('./src/project-store.cjs');
@@ -10,9 +10,13 @@ const { startAssistantTools } = require('./src/assistant-tools.cjs');
 const crypto = require('node:crypto');
 const synctex = require('./src/synctex.cjs');
 const { ChatService } = require('./src/chat.cjs');
-const {runWarmCodex,closeCodexRuntimes,closeCodexWorkspace} = require('./src/codex-runtime.cjs');
+const {runWarmCodex,closeCodexRuntimes,closeCodexWorkspace,closeIdleAccountRuntimes} = require('./src/codex-runtime.cjs');
 const {AssistantPerformance} = require('./src/assistant-performance.cjs');
 const codexModels: typeof import('./src/codex-models.cjs') = require('./src/codex-models.cjs');
+const { CodexAccount } = require('./src/codex-account.cjs') as typeof import('./src/codex-account.cjs');
+const { ManagedCodex } = require('./src/managed-codex.cjs') as typeof import('./src/managed-codex.cjs');
+const { SignInRequired } = require('./src/chatgpt-sign-in.cjs') as typeof import('./src/chatgpt-sign-in.cjs');
+const { accountCodexLaunch } = require('./src/codex-launch.cjs') as typeof import('./src/codex-launch.cjs');
 const { CodexPreferencesStore } = require('./src/codex-preferences.cjs');
 const { importProject, exportProject } = require('./src/archive.cjs');
 const { Versions } = require('./src/versions.cjs');
@@ -45,6 +49,7 @@ let installUpdateAfterShutdown: (() => void) | undefined;
 let updateShutdownFailed = (error: unknown) => {};
 let mainWindow: any = null;
 let waitForAssistants = async () => {};
+let cancelCodexSetup = async () => {};
 let cancelCompilations = () => {};
 let waitForCompilations = async () => {};
 let acceptingAssistantOperations = true;
@@ -68,6 +73,7 @@ function beginShutdown() {
     await shutdownStage('compilations', waitForCompilations);
     acceptingAssistantOperations=false;
     await shutdownStage('assistant operations', waitForAssistants);
+    await shutdownStage('Codex account setup', cancelCodexSetup);
     await shutdownStage('Codex runtimes', closeCodexRuntimes);
     for(;;) {
       flushSnapshots();const pending=writes;
@@ -119,7 +125,38 @@ app.whenReady().then(async () => {
     beginShutdown();
   });
   ipcMain.handle('updates:track', (_, track: unknown) => updates.setTrack(track));
-  ipcMain.handle('providers:discover', () => require('./src/providers.cjs').discoverProviders());
+  const accountRoot = path.join(app.getPath('userData'), 'codex-account');
+  const codexAccount = new CodexAccount(accountRoot, new ManagedCodex(path.join(accountRoot, 'runtime')), safeStorage, url => shell.openExternal(url));
+  await codexAccount.load();
+  cancelCodexSetup = () => codexAccount.cancel();
+  let accountTurns = 0;
+  const requireSettingsAvailable = () => {
+    if (shuttingDown) throw new Error('Application is shutting down');
+  };
+  ipcMain.handle('codex-account:status', () => codexAccount.status());
+  ipcMain.handle('codex-account:select', async (_, mode: unknown) => {
+    requireSettingsAvailable();
+    await codexAccount.select(mode);
+    if (mode === 'cli') await closeIdleAccountRuntimes();
+  });
+  ipcMain.handle('codex-account:sign-in', (_, register: unknown) => {
+    requireSettingsAvailable();
+    if (typeof register !== 'boolean') throw new Error('Invalid ChatGPT sign-in request');
+    return codexAccount.signIn(register);
+  });
+  ipcMain.handle('codex-account:cancel', () => codexAccount.cancel());
+  ipcMain.handle('codex-account:sign-out', async () => {
+    requireSettingsAvailable();
+    if (accountTurns) throw new Error('Wait for the Codex response to finish before signing out.');
+    await codexAccount.signOut();
+    await closeIdleAccountRuntimes();
+  });
+  ipcMain.handle('providers:discover', async () => {
+    if (codexAccount.mode === 'cli') return require('./src/providers.cjs').discoverProviders();
+    const status = await codexAccount.status();
+    const available = await require('./src/providers.cjs').discoverProviders(status.installed && status.signedIn);
+    return { ...available, codexSetupRequired: !available.codex };
+  });
   const store = new ProjectStore(path.join(app.getPath('userData'), 'projects'));
   const cleanupDeletedProjects=()=>{
     const operation=writes.catch(()=>{}).then(()=>store.listDeletedProjects());
@@ -133,12 +170,14 @@ app.whenReady().then(async () => {
   const assistantPerformance = new Map<string,import('./src/assistant-performance.cjs').PerformanceReport>();
   ipcMain.handle('assistant:performance',(_,id)=>assistantPerformance.get(id) ?? null);
   const codexPreferences = new CodexPreferencesStore(path.join(app.getPath('userData'), 'codex-preferences.json'));
+  const accountPreferences = new CodexPreferencesStore(path.join(app.getPath('userData'), 'codex-account-preferences.json'));
+  const currentCodexPreferences = () => codexAccount.mode === 'account' ? accountPreferences : codexPreferences;
   const openCodePreferences = new CodexPreferencesStore(path.join(app.getPath('userData'), 'opencode-preferences.json'), true);
   ipcMain.handle('opencode-preferences:load', () => openCodePreferences.load());
   ipcMain.handle('opencode-preferences:save', (_, value: unknown) => openCodePreferences.save(value));
   ipcMain.handle('opencode:discover-models', async (_, projectId?: string) => { return require('./src/opencode.cjs').discoverOpenCodeModels(undefined, projectId ? store.projectDir(projectId) : undefined); });
-  ipcMain.handle('codex-preferences:load', () => codexPreferences.load());
-  ipcMain.handle('codex-preferences:save', (_, value: unknown) => codexPreferences.save(value));
+  ipcMain.handle('codex-preferences:load', () => currentCodexPreferences().load());
+  ipcMain.handle('codex-preferences:save', (_, value: unknown) => currentCodexPreferences().save(value));
   const versions = new Versions(store);
   const comments = new Comments(store);
   const compilations = new Map<string, Promise<any>>();
@@ -217,8 +256,13 @@ app.whenReady().then(async () => {
     await shell.openExternal(url.href);
   });
   ipcMain.handle('codex:discover-models', async (): Promise<import('./src/codex-models.cjs').ModelDiscoveryResult> => {
-    try { return await codexModels.discoverCodexModels(); }
-    catch { return { ok: false, error: 'Codex model discovery failed' }; }
+    try {
+      if (codexAccount.mode === 'cli') return await codexModels.discoverCodexModels();
+      const connection = await codexAccount.connection();
+      return await codexModels.discoverCodexModels({ cwd: connection.home, launch: accountCodexLaunch(connection, connection.home) });
+    } catch (error) {
+      return { ok: false, error: error instanceof SignInRequired ? error.message : 'Codex model discovery failed' };
+    }
   });
   ipcMain.handle('projects:list', () => store.list());
   ipcMain.handle('projects:create', (_, name) => store.create(name));
@@ -451,9 +495,13 @@ app.whenReady().then(async () => {
     if(deletingProjects.has(id)) throw new Error('Project deletion is in progress');
     clearTimeout(snapshotTimers.get(id));snapshotTimers.delete(id);
     const metrics = new AssistantPerformance();
+    const accountMode = provider === 'codex' && codexAccount.mode === 'account';
+    if (accountMode) accountTurns++;
     try {return await assistant.run(id,async signal=>{
-      const preferences = provider === 'codex' ? await codexPreferences.load() : await openCodePreferences.load();
+      const preferences = await (provider === 'codex' ? accountMode ? accountPreferences : codexPreferences : openCodePreferences).load();
       const project = await store.destinationDir(id);
+      const launch = accountMode ? accountCodexLaunch(await codexAccount.connection(), project) : undefined;
+      signal.throwIfAborted();
       const bridge = await startAssistantTools(store, id, async (force=false) => {
         await require('./src/document-images.cjs').materializeDocumentImages(store,id);
         const options = await configuredBuild(store,id,texBin(),signal);
@@ -463,9 +511,10 @@ app.whenReady().then(async () => {
       }, name => lookupPackage(name,project,texBin(),signal),{performance:metrics,history:()=>chats.load(id,chatId)});
       try {return await chats.send(id,prompt,chatId,attachments,signal,status=>{
         if(!event.sender.isDestroyed())event.sender.send('chat:progress',{projectId:id,chatId,status});
-      }, {model: preferences.model ?? undefined, reasoningEffort: preferences.reasoningEffort ?? undefined, ...(provider === 'codex' ? {fastMode: preferences.fastMode} : {}), tools:bridge.connection, performance:metrics}, provider,bridge.instructions);}
+      }, {model: preferences.model ?? undefined, reasoningEffort: preferences.reasoningEffort ?? undefined, ...(provider === 'codex' ? {fastMode: preferences.fastMode} : {}), tools:bridge.connection, performance:metrics, launch}, provider,bridge.instructions);}
       finally {await bridge.close();}
     },metrics);} finally {
+      if (accountMode) accountTurns--;
       if(assistantPerformance.size>=50)assistantPerformance.delete(assistantPerformance.keys().next().value);
       const report=metrics.report();assistantPerformance.set(id,report);
     }

@@ -15,6 +15,24 @@ test('sessions are bound to the active project workspace', async t => {
  assert.equal(calls[0].session,null); assert.equal(calls[1].session,'new-session');
  for (const call of calls) { assert.equal(call.cwd,store.projectDir(project.id)); assert.ok(call.prompt.includes(call.cwd)); }
 });
+test('switching Codex connections carries history into a new thread', async t => {
+ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-chat-connection-'));
+ t.after(() => fs.rm(root,{recursive:true,force:true}));
+ const store = new ProjectStore(root), project = await store.create('Paper');
+ const calls: {session: string | null; prompt: string}[] = [];
+ const chats = new ChatService(store, async (_cwd,session,prompt) => {
+  calls.push({session,prompt});
+  return {sessionId:session ?? `thread-${calls.length}`,text:'reply'};
+ });
+ const account = { launch: {command:'unused',args:[],accountKey:'fixture',revision:1} };
+ await chats.send(project.id,'CLI question');
+ await chats.send(project.id,'Account question','default',[],undefined,undefined,account);
+ await chats.send(project.id,'Account followup','default',[],undefined,undefined,account);
+ await chats.send(project.id,'Back to CLI');
+ assert.deepEqual(calls.map(call=>call.session),[null,null,'thread-2',null]);
+ assert.match(calls[1].prompt,/CLI question/);
+ assert.match(calls[3].prompt,/Account followup/);
+});
 test('chat and session survive a restart and are isolated by project', async t => {
  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-chat-')); t.after(() => fs.rm(root,{recursive:true,force:true}));
  const store = new ProjectStore(root); const p = await store.create('One'), q = await store.create('Two');

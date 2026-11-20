@@ -1,6 +1,7 @@
 import cp = require('node:child_process');
 import path = require('node:path');
 import events = require('node:events');
+import type { CodexLaunch } from './codex-launch.cjs';
 import type chatTypes = require('./chat.cjs');
 interface NotificationParams extends Record<string,unknown> {
   threadId?:string;turn?:{id:string;status?:string;error?:{message:string}};item?:{id:string;type:string;text?:string};
@@ -21,9 +22,9 @@ class CodexRuntime extends events.EventEmitter {
   private idle?: NodeJS.Timeout;
   private stopping?: Promise<boolean>;
   private readonly exited: Promise<void>;
-  constructor(readonly cwd: string, command = 'node', args = [path.join(process.env.APPDATA || '', 'npm/node_modules/@openai/codex/bin/codex.js'),'app-server','--config','allow_login_shell=false','--config','thread_unload_delay_secs=0']) {
+  constructor(readonly cwd: string, command = 'node', args = [path.join(process.env.APPDATA || '', 'npm/node_modules/@openai/codex/bin/codex.js'),'app-server','--config','allow_login_shell=false','--config','thread_unload_delay_secs=0'], env?: NodeJS.ProcessEnv) {
     super();
-    this.child = cp.spawn(command,args,{cwd,windowsHide:true,shell:false,stdio:'pipe'});
+    this.child = cp.spawn(command,args,{cwd,windowsHide:true,shell:false,stdio:'pipe',env});
     this.exited=new Promise(resolve=>this.child.once('close',()=>resolve()));
     this.child.stdin.on('error',()=>this.fail(new Error('Codex connection closed')));
     this.child.stderr.on('data',()=>{}); // Provider diagnostics can contain prompts or capabilities.
@@ -41,7 +42,7 @@ class CodexRuntime extends events.EventEmitter {
         this.receive(message);pending='';
       }
     });
-    this.initialized=this.request('initialize',{clientInfo:{name:'refract',title:'Refract',version:'0.2.1'}}).then(()=>{this.send({method:'initialized',params:{}});});
+    this.initialized=this.request('initialize',{clientInfo:{name:env ? 'Refract' : 'refract',title:'Refract',version:'0.2.1'}}).then(()=>{this.send({method:'initialized',params:{}});});
     void this.initialized.catch(error=>this.fail(error));
   }
   get available() {return !this.closed;}
@@ -148,17 +149,34 @@ class CodexRuntime extends events.EventEmitter {
   }
 }
 const runtimes=new Map<string,CodexRuntime>();
+const runtimeRevisions=new WeakMap<CodexRuntime,number>();
 async function runWarmCodex(cwd:string,sessionId:string|null,prompt:string,images:string[]=[],signal?:AbortSignal,onProgress?:(s:string)=>void,onSession?:(s:string)=>void,options?:chatTypes.CodexOptions) {
   if(signal?.aborted)throw new Error('Assistant operation cancelled.');
-  const key=path.resolve(cwd);let runtime=runtimes.get(key);
+  cwd=path.resolve(cwd);
+  const launch: CodexLaunch | undefined=options?.launch;
+  const key=launch?.accountKey ? cwd+'\0'+launch.accountKey : cwd;
+  let runtime=runtimes.get(key);
+  if(runtime?.available && launch && launch.revision!==runtimeRevisions.get(runtime)) {
+    if(runtime.running)throw new Error('A Codex turn is already running in this workspace');
+    await runtime.close();
+    runtime=undefined;
+  }
   if(!runtime?.available){
     if(runtimes.size>=3){const idle=[...runtimes.values()].find(item=>!item.running);if(idle)void idle.close().catch(()=>{});}
-    runtime=new CodexRuntime(key);runtimes.set(key,runtime);
+    runtime=new CodexRuntime(cwd,launch?.command,launch?.args,launch?.env);
+    runtimes.set(key,runtime);
+    if(launch)runtimeRevisions.set(runtime,launch.revision);
     const current=runtime;runtime.once('stopped',()=>{if(runtimes.get(key)===current)runtimes.delete(key);});
   }else options?.performance?.count('providerReuses');
   try{return await runtime.run(sessionId,prompt,images,signal,onProgress,onSession,options);}
   finally {const idle=[...runtimes.values()].filter(item=>!item.running);await Promise.all(idle.slice(0,Math.max(0,idle.length-3)).map(item=>item.close()));}
 }
-async function closeCodexWorkspace(cwd:string) {await runtimes.get(path.resolve(cwd))?.close();}
+async function closeCodexWorkspace(cwd:string) {
+  cwd=path.resolve(cwd);
+  await Promise.all([...runtimes].filter(([key])=>key===cwd || key.startsWith(cwd+'\0')).map(([,runtime])=>runtime.close()));
+}
+async function closeIdleAccountRuntimes() {
+  await Promise.all([...runtimes].filter(([key,runtime])=>key.includes('\0') && !runtime.running).map(([,runtime])=>runtime.close()));
+}
 async function closeCodexRuntimes() {await Promise.all([...runtimes.values()].map(runtime=>runtime.close()));runtimes.clear();}
-export = {CodexRuntime,runWarmCodex,closeCodexRuntimes,closeCodexWorkspace};
+export = {CodexRuntime,runWarmCodex,closeCodexRuntimes,closeCodexWorkspace,closeIdleAccountRuntimes};

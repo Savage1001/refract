@@ -4,7 +4,7 @@
 
 # Refract
 
-Refract is a Windows Electron workspace for local LaTeX writing, inspired by OpenAI Prism. Projects, editing, compilation, and displayed chat history are local. The assistant uses an installed Codex or OpenCode CLI, which may require network access and authentication.
+Refract is a Windows Electron workspace for local LaTeX writing, inspired by OpenAI Prism. Projects, editing, compilation, and displayed chat history are local. For the assistant, connect a ChatGPT account or use a separately installed Codex or OpenCode CLI.
 
 ## Local execution
 
@@ -14,7 +14,9 @@ Projects can compile and use assistants immediately, including imported and dupl
 
 The application is under development and does not yet have full visual or feature parity with Prism. It supports local project creation, file editing, project ZIP import/export, PDF compilation and preview, and saved Codex chats. Project PDFs and SVGs can be previewed, while unsupported binary files are kept out of the text editor. Individual file previews are limited to 32 MiB. ZIP import preserves empty folders and lets you choose a root when an archive contains multiple LaTeX documents. See [TODO.md](TODO.md) for remaining Prism parity and verification work.
 
-Install and configure the Codex CLI or OpenCode CLI separately. Refract detects available CLIs when opening a chat. Switch providers in a chat at any time; Refract carries the conversation and attachment paths into a new provider session. Use New chat to start a separate conversation. Existing chats use Codex. OpenCode uses its own configured default model and credentials; configure them in OpenCode before starting a chat. If a chat's provider is unavailable, install it and reopen the chat to resume. Image support depends on the selected model.
+On the home screen, open **Settings** and set **Codex connection** to **ChatGPT account**. Refract downloads and verifies the Codex runtime on first use. Once the download finishes, choose **Continue with ChatGPT** and approve Refract?s access to your ChatGPT plan in your browser. Refract reuses the installed runtime. ChatGPT manages [plan usage and limits](https://chatgpt.com/settings/usage).
+
+**Codex CLI** is the default connection. Install and authenticate that CLI separately to use it. OpenCode uses its own separately configured CLI, default model, and credentials. Switch providers or Codex connections to continue a conversation with its saved messages and attachment paths. Use **New chat** to start a separate conversation. Image support depends on the selected model.
 
 Selected UTF-8 text attachments (`.txt`, `.md`, `.tex`, `.bib`, and `.csv`) include a quoted preview in the assistant request, up to 16 KiB per file and 32 KiB in total. This lets small text attachments work without starting a provider shell. Previews explicitly mark truncation; larger files, binary documents, and any remaining content require the provider's file tools. Full attachment copies and their paths remain available. Preview text is not added to Refract's displayed chat history; the provider receives it as part of the request.
 
@@ -30,7 +32,7 @@ Refract does not currently provide voice conversations. It uses Codex's app-serv
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution and verification guidance. Refract is available under the [MIT License](LICENSE); third-party components have their own licenses.
 
-Install Node.js 22.12 or newer and Codex CLI, then run:
+Install Node.js 22.12 or newer, then run:
 
 ```powershell
 npm ci
@@ -39,7 +41,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-tex.ps1
 npm start
 ```
 
-Starting with 0.3.1-pre-release-2, the Windows installer automatically downloads checksum-verified TinyTeX and SyncTeX into `%LOCALAPPDATA%\Refract\dependencies` (internet access required). Refract discovers the complete toolchain automatically; no separate TeX installation or environment changes are required. Existing complete installations are reused, and uninstall preserves them. Setup failures return a nonzero installer exit code and write `setup-error.log` in that directory; rerun the installer to retry. For a custom, separately installed TeX Live or TinyTeX distribution, set `REFRACT_TEX_BIN` to its absolute Windows executable directory and restart Refract. This override takes priority over managed TeX. Additional document-specific packages can be installed separately. Codex and OpenCode remain optional, separately installed and authenticated integrations.
+Starting with 0.3.1-pre-release-2, the Windows installer automatically downloads checksum-verified TinyTeX and SyncTeX into `%LOCALAPPDATA%\Refract\dependencies` (internet access required). Refract discovers the complete toolchain automatically; no separate TeX installation or environment changes are required. Existing complete installations are reused, and uninstall preserves them. Setup failures return a nonzero installer exit code and write `setup-error.log` in that directory; rerun the installer to retry. For a custom, separately installed TeX Live or TinyTeX distribution, set `REFRACT_TEX_BIN` to its absolute Windows executable directory and restart Refract. This override takes priority over managed TeX. Additional document-specific packages can be installed separately. The Codex CLI and OpenCode CLI remain optional, separately installed and authenticated integrations.
 
 Refract packages contain no TeX distribution or replacement SyncTeX binary. Compilation remains local and can work offline with already installed packages. Electron and application dependencies retain their own notices. See [the distribution boundary and historical cleanup requirements](docs/third-party-review.md).
 

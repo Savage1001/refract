@@ -1,3 +1,4 @@
+import type { CodexLaunch } from './codex-launch.cjs';
 const { modelId } = require('./codex-preferences.cjs');
 import childProcess = require('node:child_process');
 const { spawn } = childProcess;
@@ -12,16 +13,17 @@ export type ModelDiscoveryResult = { ok: true; models: CodexModel[] } | { ok: fa
 export interface CodexDiscoveryApi { discoverCodexModels(): Promise<ModelDiscoveryResult> }
 
 /** Query the installed CLI. Its catalog may be cached and is not an entitlement check. */
-function discoverCodexModels(options: { script?: string; timeoutMs?: number } = {}): Promise<ModelDiscoveryResult> {
+function discoverCodexModels(options: { script?: string; timeoutMs?: number; launch?: CodexLaunch; cwd?: string } = {}): Promise<ModelDiscoveryResult> {
   return new Promise(resolve => {
     const script = options.script ?? join(process.env.APPDATA || '', 'npm', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
-    const child = spawn('node', [script, 'app-server'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(options.launch?.command ?? 'node', options.launch?.args ?? [script, 'app-server'], { cwd: options.cwd, env: options.launch?.env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let done = false, initialized = false, cursor: string | null = null;
     const models: CodexModel[] = [];
     const seen = new Set<string>();
     const finish = (result: ModelDiscoveryResult) => { if (done) return; done = true; clearTimeout(timer); child.kill(); resolve(result); };
     const timer = setTimeout(() => finish({ ok: false, error: 'Codex model discovery timed out' }), options.timeoutMs ?? 15000);
     const send = (value: unknown) => child.stdin.write(JSON.stringify(value) + '\n');
+    child.stderr.resume();
     child.on('error', () => finish({ ok: false, error: 'Could not start Codex model discovery' }));
     child.stdin.on('error', () => finish({ ok: false, error: 'Codex model discovery connection failed' }));
     child.on('close', () => finish({ ok: false, error: 'Codex model discovery exited unexpectedly' }));
@@ -47,7 +49,7 @@ function discoverCodexModels(options: { script?: string; timeoutMs?: number } = 
         else finish({ ok: true, models });
       }
     });
-    send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'refract', title: 'Refract', version: '0.1.1' } } });
+    send({ id: 1, method: 'initialize', params: { clientInfo: { name: options.launch ? 'Refract' : 'refract', title: 'Refract', version: '0.1.1' } } });
   });
 }
 

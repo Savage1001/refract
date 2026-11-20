@@ -214,10 +214,11 @@ panel.onkeydown = event => { if (event.isComposing || event.keyCode === 229) ret
 document.addEventListener('click', event => { if (!event.composedPath().includes(host)) { dismiss(); } });
 let openCodeProject: string | undefined;
 let openCodeGeneration = 0;
+let codexGeneration = 0;
 let openCodePreferencesLoaded = false;
 async function initialize(id: ProviderId, projectId?: string, existingPreferences?: CodexPreferences): Promise<void> {
   const state = states[id];
-  const generation = id === 'opencode' ? ++openCodeGeneration : 0;
+  const generation = id === 'opencode' ? ++openCodeGeneration : ++codexGeneration;
   let discovered: PickerModel[] | undefined; let discoveryError = '';
   const discovery = (async () => {
     try {
@@ -234,7 +235,7 @@ async function initialize(id: ProviderId, projectId?: string, existingPreference
   const revision = state.revision;
   try { loaded = existingPreferences ?? (id === 'opencode' && openCodePreferencesLoaded ? state.preferences : await (id === 'codex' ? api.codexPreferencesLoad() : api.openCodePreferencesLoad())); } catch {}
   await discovery;
-  if (id === 'opencode' && generation !== openCodeGeneration) return;
+  if (generation !== (id === 'opencode' ? openCodeGeneration : codexGeneration)) return;
   state.loadFailed = !loaded; if (loaded && state.revision === revision) state.preferences = loaded;
   if (id === 'opencode' && loaded) openCodePreferencesLoaded = true;
   state.status = discovered ? 'ready' : 'error'; state.error = discoveryError; if (discovered) state.models = discovered;
@@ -248,6 +249,13 @@ async function initialize(id: ProviderId, projectId?: string, existingPreference
   trigger.disabled = false; render();
 }
 states.codex.initialized = initialize('codex');
+window.addEventListener('codex-connection-changed', () => {
+  const state = states.codex;
+  state.status = 'loading';
+  state.models = [];
+  state.initialized = initialize('codex');
+  render();
+});
 states.opencode.initialized = initialize('opencode');
 window.addEventListener('picker-project', (event: CustomEvent<string>) => { if (event.detail === openCodeProject) return; openCodeProject = event.detail; states.opencode.status = 'loading'; states.opencode.initialized = initialize('opencode', openCodeProject); render(); });
 (window as unknown as Window & { codexPickerReady: () => Promise<void> }).codexPickerReady = async () => {
