@@ -6,6 +6,12 @@ const os = require('node:os') as typeof import('node:os');
 const path = require('node:path') as typeof import('node:path');
 export {};
 
+async function resizeDesktop(app: import('playwright').ElectronApplication, page: import('playwright').Page, width: number, height: number): Promise<void> {
+ // Resize the native window so Electron updates its window-controls overlay geometry.
+ await app.evaluate(({BrowserWindow}, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), {width, height});
+ await page.waitForFunction(size => Math.abs(window.innerWidth - size.width) <= 2 && Math.abs(window.innerHeight - size.height) <= 2, {width, height});
+}
+
 async function chooseView(page: import('playwright').Page, view:'split'|'editor'|'pdf'):Promise<void> {
  // Hidden Electron windows do not reliably deliver animation frames after viewport emulation.
  await page.evaluate(()=>window.dispatchEvent(new Event('resize')));
@@ -87,14 +93,14 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
    const bounds = await page.locator('.model-panel').boundingBox();
    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 1440);
    await page.keyboard.press('Escape');
-   await page.setViewportSize({ width: 1000, height: 740 });
+   await resizeDesktop(app, page, 1000, 740);
    await capture(`${mode}-compact`);
    await chooseView(page,'pdf');
    await capture(`${mode}-compact-preview`);
    await page.locator('#pane-editor').click();
-   await page.setViewportSize({ width: 900, height: 650 });
+   await resizeDesktop(app, page, 900, 650);
    await capture(`${mode}-short`);
-   await page.setViewportSize({ width: 1440, height: 900 });
+   await resizeDesktop(app, page, 1440, 900);
    await chooseView(page,'split');
    await page.locator('#home').click();
    assert.equal(await page.locator('#project-navigation').isHidden(), true);
@@ -148,7 +154,6 @@ test('workspace layout transitions always reveal and focus the requested editor'
   await page.locator('#new').click();
   await page.locator('#source').waitFor({state:'visible'});
   const focusEditor = () => chooseView(page,'editor');
-  const split = () => chooseView(page, page.viewportSize()!.width<=1200?'editor':'split');
   const verifyEditor = async (): Promise<void> => {
    assert.equal(await page.locator('#source').isVisible(), true);
    assert.equal(await page.locator('#pane-editor').evaluate(el => el === document.activeElement), true);
@@ -157,7 +162,8 @@ test('workspace layout transitions always reveal and focus the requested editor'
   for (const colorScheme of ['light','dark'] as const) {
    await page.emulateMedia({colorScheme});
    for (const width of [1440,1000]) {
-    await page.setViewportSize({width,height:900});
+    await resizeDesktop(app, page, width, 900);
+    const split = () => chooseView(page, width <= 1200 ? 'editor' : 'split');
     await chooseView(page,'pdf');
     assert.equal(await page.locator('#source').isVisible(), false);
     await focusEditor(); await verifyEditor();
