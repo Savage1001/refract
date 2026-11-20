@@ -8,29 +8,82 @@ function actionIcon(name:ActionIcon):SVGSVGElement {
 }
 declare const store: any;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-const layoutMotionId = 'layout-fade';
+const uiMotionId = 'refract-motion';
 
-// Commit geometry before fading the live content so pointer and keyboard input
-// always reach the current layout. Only opacity changes on animation frames.
-function playLayoutMotion(surface: Element, from = .82): void {
-  if (reducedMotion.matches || document.visibilityState !== 'visible') return;
+function motionEnabled(): boolean {
+  return !reducedMotion.matches && document.visibilityState === 'visible';
+}
+
+function stopMotion(surface: Element): void {
+  surface.getAnimations().find(animation => animation.id === uiMotionId)?.cancel();
+}
+
+function playMotion(surface: Element, keyframes: Keyframe[], duration = '--motion-layout-ms'): Animation {
   const style = getComputedStyle(surface);
-  const opacity = Math.min(Number(style.opacity), from);
-  surface.getAnimations().find(animation => animation.id === layoutMotionId)?.cancel();
-  surface.animate([{opacity}, {opacity:1}], {
-    id: layoutMotionId,
-    duration: Number(style.getPropertyValue('--motion-layout-ms')),
+  stopMotion(surface);
+  return surface.animate(keyframes, {
+    id: uiMotionId,
+    duration: Number(style.getPropertyValue(duration)),
     easing: style.getPropertyValue('--motion-ease').trim()
   });
 }
 
+// Commit geometry before fading the live content so pointer and keyboard input
+// always reach the current layout. Only opacity changes on animation frames.
+function playLayoutMotion(surface: Element, from = .82): void {
+  if (!motionEnabled() || !surface.checkVisibility()) return;
+  const opacity = Math.min(Number(getComputedStyle(surface).opacity), from);
+  playMotion(surface, [{opacity}, {opacity:1}]);
+}
+
+function stopUiMotion(): void {
+  for (const animation of document.getAnimations()) {
+    if (animation.id === uiMotionId) animation.cancel();
+  }
+}
+
 reducedMotion.addEventListener('change', () => {
-  if (reducedMotion.matches) {
-    for (const animation of document.getAnimations()) {
-      if (animation.id === layoutMotionId) animation.cancel();
+  if (reducedMotion.matches) stopUiMotion();
+});
+
+const exitProperties = ['--exit-left', '--exit-top', '--exit-width', '--exit-height', '--exit-display'] as const;
+
+function clearSurfaceExit(surface: HTMLElement): void {
+  surface.classList.remove('motion-exit');
+  for (const property of exitProperties) surface.style.removeProperty(property);
+}
+
+function showSurface(surface: HTMLElement): void {
+  stopMotion(surface);
+  clearSurfaceExit(surface);
+  surface.hidden = false;
+}
+
+// Pull outgoing controls out of the layout immediately. The painted exit
+// keeps its old bounds and is inert, even when another surface slides under it.
+function hideSurfaces(...surfaces: HTMLElement[]): void {
+  const animate = motionEnabled();
+  const exits = surfaces.filter(surface => !surface.hidden).map(surface => ({
+    surface,
+    bounds: animate && surface.checkVisibility() ? surface.getBoundingClientRect() : undefined,
+    display: animate ? getComputedStyle(surface).display : ''
+  }));
+  for (const {surface, bounds, display} of exits) {
+    if (bounds?.height && bounds.width) {
+      const values = [`${bounds.left}px`, `${bounds.top}px`, `${bounds.width}px`, `${bounds.height}px`, display];
+      for (const [index, property] of exitProperties.entries()) surface.style.setProperty(property, values[index]);
+      surface.classList.add('motion-exit');
+      surface.hidden = true;
+      const animation = playMotion(surface, [{opacity:1}, {opacity:0}], '--motion-control-ms');
+      const finish = () => {
+        if (!surface.getAnimations().some(item => item.id === uiMotionId)) clearSurfaceExit(surface);
+      };
+      void animation.finished.then(finish, finish);
+    } else {
+      surface.hidden = true;
     }
   }
-});
+}
 
 let projects = [], active = null, currentFile = 'main.tex', opening = 0, projectOpening = 0, currentChat = 'default';
 let revision = 0, compileTimer = null, compileRunning = false, compileQueued = false;
@@ -614,6 +667,7 @@ $('#home').onclick = async () => {
   saveEditorView(); saveChatDraft(); ++chatOpening; chatLoading = false; ++opening;
   active = null; suspendPickerForProject(); clearFilePreview(); closeLayoutTools();
   releasePdf(pdfDocument); pdfDocument = null; pdfRenderRevision++;
+  stopUiMotion();
   $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true;
   const focusProject = (projectId = id) => {
     const previous = Array.from(document.querySelectorAll<HTMLButtonElement>('.project-open')).find(button => button.dataset.projectId === projectId);
@@ -662,8 +716,20 @@ $('#source').addEventListener('click', updateActiveLine);
 $('#source').addEventListener('keyup', updateActiveLine);
 $('#search').oninput = renderProjects;
 $('#clear-search').onclick = () => { $('#search').value = ''; renderProjects(); $('#search').focus(); };
-$('#files-tab').onclick = () => { $('#file-search').hidden = false; void runProjectSearch(); $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true'); $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = false; $('#outline').hidden = false; $('#chat-list').hidden = true; };
-$('#chats-tab').onclick = () => { $('#file-search').hidden = true; ++searchRequest; clearTimeout(searchTimer); $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true'); $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = true; $('#outline').hidden = true; $('#chat-list').hidden = false; };
+$('#files-tab').onclick = () => {
+  hideSurfaces($('#chat-list'));
+  showSurface($('#file-search')); showSurface($('#file-list')); showSurface($('#outline'));
+  void runProjectSearch();
+  $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true');
+  $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false');
+};
+$('#chats-tab').onclick = () => {
+  hideSurfaces($('#file-search'), $('#file-list'), $('#outline'));
+  showSurface($('#chat-list'));
+  ++searchRequest; clearTimeout(searchTimer);
+  $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true');
+  $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false');
+};
 store.list().then(p => { projects = p; renderProjects(); }).catch(error => report('load projects', error));
 let compiledProject = null, compiledPdf: string | null = null, compileLog = '';
 type PdfDocument = import('pdfjs-dist').PDFDocumentProxy;
@@ -996,11 +1062,13 @@ async function compilePreview(force=false) {
     }
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
     const readingPage = Math.min(pdfDocument ? pdfPage : requestedPdfPage, doc.numPages);
+    const firstPreview = pdfDocument === null;
     const previouslyFocused = Array.from(pdfArea.querySelectorAll('.pdf-pages canvas')).indexOf(document.activeElement);
     previewStatus.hidden = true; previewError?.remove(); previewError = undefined;
     compiledProject = id; compiledPdf = result.pdf;
     releasePdf(pdfDocument);
     $('#pdf-area').replaceChildren(container);pdfDocument=doc;pdfPageCount=doc.numPages;pdfPage=readingPage;changePdfZoom(pdfZoom,pdfFitMode);if(pdfFitMode==='page') fitPdfPage();goToPdfPage(readingPage);
+    if (firstPreview && !workspaceShell.getAnimations().some(animation => animation.id === uiMotionId)) playLayoutMotion(container);
     if (previouslyFocused >= 0) container.querySelectorAll('canvas')[Math.min(previouslyFocused, doc.numPages - 1)]?.focus({preventScroll:true});
     $('#download').disabled = false; $('#compile').textContent = 'Compiled';
   } catch (error) {
@@ -1239,8 +1307,9 @@ async function sendChat() {
             if(currentChat===chatId) {
               const request=chatOpening, refreshed=chat || await store.chatLoad(id,chatId);
               if(active?.id===id && currentChat===chatId && request===chatOpening) {
-                renderChat(refreshed, true);
-                if (chat?.messages?.at(-1)?.role === 'assistant') chatAnnouncement.textContent = 'Assistant response ready.';
+                const replyArrived = chat?.messages?.at(-1)?.role === 'assistant';
+                renderChat(refreshed, replyArrived);
+                if (replyArrived) chatAnnouncement.textContent = 'Assistant response ready.';
               }
             }
             await refreshChats();revision++;scheduleCompile();
@@ -1447,9 +1516,9 @@ function openFind() {
   if (document.activeElement===sourceEditor && selected && !selected.includes('\n')) findInput.value=selected;
   if (!displayedPaneLayout().editor) revealSource();
   findAnchor=sourceEditor.selectionStart;
-  findPanel.hidden=false;findInput.focus();findInput.select();refreshFind();
+  showSurface(findPanel);findInput.focus();findInput.select();refreshFind();
 }
-function closeFind() {findPanel.hidden=true;sourceEditor.focus();}
+function closeFind() {hideSurfaces(findPanel);sourceEditor.focus();}
 function selectFindMatch(position:number) {
   sourceEditor.setSelectionRange(position,position+findInput.value.length);
   // Measure using the editor's actual font and tab stops, including long lines.
@@ -1669,12 +1738,33 @@ expandChat.onclick = () => {
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
 $('#toggle-agent').onclick = () => togglePane('agent');
+const sidebar = document.getElementById('project-navigation')!;
+const sidebarEdge = document.createElement('span');
+sidebarEdge.className = 'sidebar-motion-edge';
+sidebarEdge.setAttribute('aria-hidden', 'true');
+sidebar.append(sidebarEdge);
 $('#collapse').onclick = () => {
-  const collapsed = $('.sidebar').classList.toggle('collapsed');
+  const animate = motionEnabled();
+  const start = animate ? sidebarEdge.getBoundingClientRect().left : 0;
+  stopMotion(sidebarEdge);
+  const collapsed = sidebar.classList.toggle('collapsed');
   $('#collapse').setAttribute('aria-expanded', String(!collapsed));
   $('#collapse').title = $('#collapse').ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  if (animate) {
+    const offset = start - sidebarEdge.getBoundingClientRect().left;
+    if (Math.abs(offset) > .5) playMotion(sidebarEdge, [{translate:`${offset}px 0`}, {translate:'0'}]);
+  }
 };
-$('#outline-toggle').onclick = () => { const list = $('#outline-list'); list.hidden = !list.hidden; $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden)); };
+$('#outline-toggle').onclick = () => {
+  const list = $('#outline-list');
+  if (list.hidden) {
+    showSurface(list);
+    playLayoutMotion(list);
+  } else {
+    hideSurfaces(list);
+  }
+  $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden));
+};
 function setProjectView(view: 'grid' | 'list', persist = true): void {
   $('#list').classList.toggle('grid', view === 'grid');
   for (const choice of ['grid', 'list'] as const) {
@@ -1875,7 +1965,7 @@ toolsButton.onclick = () => {
   toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
-  if (compactWorkspace.matches) playLayoutMotion(workspaceShell);
+  playLayoutMotion(compactWorkspace.matches ? workspaceShell : $(showingTools ? '#tools-panel' : '#pdf-content'));
 };
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 let toolsExpansion: 'manual' | 'comparison' | 'logs' | null = null;
@@ -2566,10 +2656,11 @@ function resizeHandle(id: string, axis: "x" | "y", apply: (delta: number) => voi
     }
   });
 }
-const sidebarResize = document.querySelector<HTMLElement>(".sidebar")!;
+const sidebarResize = sidebar;
 const workspaceResize = document.getElementById("workspace")!;
 const editorResize = document.querySelector<HTMLElement>(".editor-pane")!;
 const chatResize = document.getElementById("chat")!;
+document.getElementById('sidebar-resize')!.addEventListener('pointerdown', () => stopMotion(sidebarEdge));
 resizeHandle("sidebar-resize", "x", delta => {
   sidebarResize.style.setProperty("--sidebar-width", `${Math.max(150, Math.min(Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth + delta))}px`);
 });

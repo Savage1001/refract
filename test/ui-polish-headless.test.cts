@@ -279,7 +279,7 @@ test('headless project search has its own row and retains content search', {time
    assert.equal(await search.inputValue(),'');
    assert.equal(await search.evaluate(el=>el===document.activeElement),true);
    await page.locator('#chats-tab').click();
-   assert.equal(await search.isVisible(),false);
+   await search.waitFor({state:'hidden'});
    await page.locator('#files-tab').click();
    assert.equal(await search.isVisible(),true);
    await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.setProperty('--sidebar-width','150px'));

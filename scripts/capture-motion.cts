@@ -45,7 +45,9 @@ const scenes: Scene[] = [
     await click(page, '#list-view');
   }],
   ['04-dialog-and-backdrop', async page => {
-    await click(page, '#settings');
+    await page.locator('#settings').focus();
+    await page.keyboard.press('Enter');
+    await pause(page);
     await page.keyboard.press('Escape');
     await pause(page);
     await click(page, '#deleted-projects');
@@ -73,8 +75,12 @@ const scenes: Scene[] = [
   }, 'dark'],
   ['08-file-tree-outline-and-disclosures', async page => {
     await open(page);
-    await click(page, '#file-list summary');
-    await click(page, '#file-list summary');
+    const folder = page.locator('#file-list summary').first();
+    await folder.press('Enter');
+    await pause(page);
+    await folder.press('Enter');
+    await page.keyboard.press('Tab');
+    await pause(page);
     await click(page, '#outline-toggle');
     await click(page, '#outline-toggle');
     await click(page, '#add-file');
@@ -86,16 +92,22 @@ const scenes: Scene[] = [
   }],
   ['09-sidebar-tabs-and-preview', async page => {
     await page.evaluate(() => {
-      const w = window as unknown as {store:{openFile:(id:string,name:string)=>Promise<unknown>}};
+      const w = window as unknown as {
+        store:{openFile:(id:string,name:string)=>Promise<unknown>};
+        fixture:{files:Record<string,string>};
+      };
+      const image = 'figures/spectral-curve.svg';
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="220"><rect width="320" height="220" rx="12" fill="#dde8f6"/><path d="M32 182 L32 36 M32 182 L286 182 M38 161 Q112 164 152 101 T280 52" fill="none" stroke="#234b7c" stroke-width="4"/></svg>';
+      w.fixture.files[image] = svg;
       const openFile = w.store.openFile;
-      w.store.openFile = (id, name) => name.endsWith('abstract.tex') ? Promise.resolve({
-        kind:'image', data:'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="320" height="220"%3E%3Crect width="320" height="220" rx="12" fill="%23dde8f6"/%3E%3Cpath d="M32 182 L32 36 M32 182 L286 182 M38 161 Q112 164 152 101 T280 52" fill="none" stroke="%23234b7c" stroke-width="4"/%3E%3C/svg%3E'
+      w.store.openFile = (id, name) => name === image ? Promise.resolve({
+        kind:'image', data:`data:image/svg+xml,${encodeURIComponent(svg)}`
       }) : openFile(id, name);
     });
     await open(page);
     await click(page, '#chats-tab');
     await click(page, '#files-tab');
-    await click(page, '#file-list button[title="sections/abstract.tex"]');
+    await click(page, '#file-list button[title="figures/spectral-curve.svg"]');
   }],
   ['10-find-and-command-completions', async page => {
     await open(page);
@@ -121,7 +133,9 @@ const scenes: Scene[] = [
   }, 'dark'],
   ['12-model-picker', async page => {
     await open(page);
-    await click(page, '.model-trigger');
+    await page.locator('.model-trigger').focus();
+    await page.keyboard.press('Enter');
+    await pause(page);
     await page.getByRole('searchbox', {name:'Search models'}).fill('Research');
     await pause(page);
     await page.keyboard.press('Escape');
@@ -236,12 +250,26 @@ async function record([name, run, theme, reducedMotion, viewport]: Scene): Promi
       await document.fonts.ready;
       const dot = document.createElement('span');
       dot.style.cssText = 'position:fixed;z-index:1000;pointer-events:none;width:12px;height:12px;border:2px solid white;border-radius:50%;background:#265ede;box-shadow:0 0 0 1px #1b2743;transform:translate(5px,5px);display:none;';
-      document.body.append(dot);
+      const keyCue = document.createElement('div');
+      keyCue.popover = 'manual';
+      keyCue.setAttribute('aria-hidden', 'true');
+      keyCue.style.cssText = 'position:fixed;inset:auto 16px 16px auto;margin:0;pointer-events:none;color:white;background:#182236;border:1px solid #647da6;border-radius:6px;padding:7px 12px;font:bold 18px system-ui;';
+      document.body.append(dot, keyCue);
       document.addEventListener('pointermove', event => {
         dot.style.display = 'block';
         dot.style.left = `${event.clientX}px`;
         dot.style.top = `${event.clientY}px`;
       });
+      let cueTimer: number | undefined;
+      document.addEventListener('keydown', event => {
+        if (!event.ctrlKey && !['Escape','Enter','Tab','F3'].includes(event.key)) return;
+        if (['Control','Shift','Alt','Meta'].includes(event.key)) return;
+        const key = event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+        keyCue.textContent = [event.ctrlKey && 'Ctrl', event.shiftKey && 'Shift', key].filter(Boolean).join(' + ');
+        if (!keyCue.matches(':popover-open')) keyCue.showPopover();
+        clearTimeout(cueTimer);
+        cueTimer = window.setTimeout(() => keyCue.hidePopover(), 650);
+      }, true);
     });
     await page.locator(project).first().waitFor();
     await pause(page, 400);
