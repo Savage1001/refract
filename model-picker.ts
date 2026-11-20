@@ -68,6 +68,7 @@ let generation = 0;
 let detected = new Set<Provider>();
 let resultKey: string | undefined;
 let detailsOpen = false;
+let searchAllOnInput = true;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', content?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -75,7 +76,7 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', 
   if (content) node.textContent = content;
   return node;
 }
-function button(className: string, label: string, onClick: () => void): HTMLButtonElement {
+function button(className: string, label: string, onClick: (event: MouseEvent) => void): HTMLButtonElement {
   const control = element('button', className, label);
   control.type = 'button';
   control.onclick = onClick;
@@ -128,24 +129,25 @@ const panel = element('div', 'model-panel');
 panel.id = 'model-picker-panel';
 panel.hidden = true;
 panel.setAttribute('role', 'dialog');
-panel.setAttribute('aria-labelledby', 'model-picker-title');
-const header = element('div', 'model-header');
-const title = element('h2', '', 'Choose a model');
-title.id = 'model-picker-title';
-header.append(title, button('model-done', 'Done', close));
+panel.setAttribute('aria-label', 'Choose a model');
+const done = button('model-done', '×', close);
+done.setAttribute('aria-label', 'Close model picker');
+done.title = 'Close model picker (Esc)';
 const searchBar = element('div', 'model-search');
 const search = element('input');
 search.type = 'search';
 search.placeholder = 'Search models';
 search.setAttribute('aria-label', 'Search models');
 search.setAttribute('aria-controls', 'model-picker-results');
-searchBar.append(search);
+searchBar.append(element('span', 'model-search-icon'), search);
 const filters = element('div', 'model-filters');
 filters.setAttribute('role', 'group');
 filters.setAttribute('aria-label', 'Filter models');
-const filterButtons = (['all', 'favorites', ...providers] as const).map(id => {
-  const control = button('model-filter', labels[id], () => {
+const filterButtons = (['favorites', ...providers, 'all'] as const).map(id => {
+  const control = button('model-filter', id === 'favorites' ? '★' : id === 'all' ? '▦' : '', event => {
     scope = id;
+    searchAllOnInput = false;
+    detailsOpen = false;
     resetResults();
     if (id === 'favorites') {
       for (const provider of providers) {
@@ -154,12 +156,27 @@ const filterButtons = (['all', 'favorites', ...providers] as const).map(id => {
       }
     }
     render();
+    if (event.detail > 0) search.focus({preventScroll: true});
   });
-  if (id === 'codex' || id === 'opencode') control.prepend(providerLogo(id));
+  control.dataset.scope = id;
+  control.title = labels[id];
+  control.setAttribute('aria-label', labels[id]);
+  if (id === 'codex' || id === 'opencode') control.append(providerLogo(id));
   if (id === 'favorites') control.setAttribute('aria-label', 'Favorite models');
   if (id === 'codex' || id === 'opencode') control.setAttribute('aria-label', `${labels[id]} models`);
   filters.append(control);
   return {id, control};
+});
+
+filters.addEventListener('keydown', event => {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  const index = filterButtons.findIndex(({control}) => control === document.activeElement);
+  if (index < 0) return;
+  event.preventDefault();
+  const count = filterButtons.length;
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 :
+    (index + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+  filterButtons[next].control.focus();
 });
 
 const body = element('div', 'model-content');
@@ -170,14 +187,21 @@ list.setAttribute('aria-label', 'Model results');
 const settings = element('section', 'model-settings');
 settings.setAttribute('aria-label', 'Current model settings');
 settings.id = 'model-picker-settings';
-const settingsToggle = button('model-settings-toggle', 'Model settings', () => {
+const settingsToggle = button('model-settings-toggle', 'Settings', () => {
   detailsOpen = !detailsOpen;
   updateDetailsVisibility();
+  if (detailsOpen) settings.querySelector<HTMLElement>('[tabindex="0"], .model-retry:enabled')?.focus();
+  else search.focus();
 });
 settingsToggle.setAttribute('aria-controls', settings.id);
 const settingsGroup = element('div', 'model-settings-group');
-settingsGroup.append(settingsToggle, settings);
-body.append(list, settingsGroup);
+settingsGroup.append(settings);
+const catalogPane = element('div', 'model-catalog');
+catalogPane.append(searchBar, list);
+body.append(filters, catalogPane, settingsGroup);
+const footer = element('div', 'model-footer');
+const speedSlot = element('div', 'model-speed-slot');
+footer.append(speedSlot, settingsToggle, done);
 const announcements = element('span', 'model-announcement');
 announcements.setAttribute('role', 'status');
 const selectionAnnouncement = element('span', 'model-announcement');
@@ -192,9 +216,10 @@ function openRecovery(): void {
   if ((issue && issue.area === 'settings') || (!issue && id === activeId() && installed(id))) {
     detailsOpen = true;
     updateDetailsVisibility();
-    (settings.querySelector<HTMLElement>('.model-retry:enabled,select:enabled') ?? settingsToggle).focus();
+    (settings.querySelector<HTMLElement>('.model-retry:enabled,[role=radio]:enabled') ?? settingsToggle).focus();
   } else {
     scope = !issue && !installed(id) ? 'favorites' : id;
+    searchAllOnInput = false;
     resetResults();
     render();
     const retry = Array.from(list.querySelectorAll<HTMLElement>('.model-retry:enabled'));
@@ -203,7 +228,7 @@ function openRecovery(): void {
   }
 }
 notice.hidden = true;
-panel.append(header, searchBar, filters, body, announcements, selectionAnnouncement);
+panel.append(body, footer, announcements, selectionAnnouncement);
 host.append(trigger, panel, notice);
 
 function save(id: Provider): Promise<void> {
@@ -374,16 +399,22 @@ function modelRow(id: Provider, model: Model, available: boolean): HTMLElement {
   choice.dataset.focusKey = `model:${key}`;
   choice.setAttribute('aria-pressed', String(current));
   choice.disabled = !available || !canSelect(id);
-  const marker = element('span', 'model-check', current ? '✓' : '');
-  marker.setAttribute('aria-hidden', 'true');
+  choice.dataset.shortcutEligible = String(model.id !== null);
   const lines = element('span', 'model-row-copy');
-  lines.append(element('span', 'model-row-name', model.label));
+  const line = element('span', 'model-row-line');
+  line.append(element('span', 'model-row-name', model.label));
+  if (current) {
+    const marker = element('span', 'model-check', '✓');
+    marker.setAttribute('aria-hidden', 'true');
+    line.append(marker);
+  }
+  lines.append(line);
   const detail = model.disambiguator ?? (model.source !== labels[id] ? model.source : '');
   const secondary = [detail, !available ? 'Unavailable' : ''].filter(Boolean).join(' · ');
-  if (secondary) lines.append(element('span', 'model-row-source', secondary));
+  if (secondary && (model.disambiguator || !available)) lines.append(element('span', 'model-row-source', secondary));
   choice.setAttribute('aria-label', model.label);
-  choice.title = [model.label, model.id && model.id !== model.label ? model.id : '', model.description].filter(Boolean).join('\n');
-  choice.append(marker, lines);
+  choice.title = [model.label, model.source !== labels[id] ? model.source : '', model.id && model.id !== model.label ? model.id : '', model.description].filter(Boolean).join('\n');
+  choice.append(providerLogo(id), lines);
   const description = [labels[id] === secondary ? '' : labels[id], secondary];
   if (provider.dataset.handoff && provider.dataset.handoff !== id && available && canSelect(id)) {
     const handoff = element('span', 'model-handoff', 'Handoff');
@@ -421,8 +452,7 @@ function emptySearch(): HTMLElement {
   return statusBlock('No matching models', 'Try another name or provider.',
     retryButton('Clear search', 'search:clear', () => {
       search.value = '';
-      resetResults();
-      render();
+      search.dispatchEvent(new Event('input'));
       search.focus();
     }));
 }
@@ -459,7 +489,8 @@ function renderResults(): void {
     const ready = state.status === 'ready' && installed(id) && Boolean(preferences);
     const catalog = ready ? state.models : [];
     const availableIds = new Set(catalog.map(model => model.id));
-    let models = [...catalog].sort((a, b) => numeric.compare(a.label, b.label) || numeric.compare(a.id, b.id));
+    let models = [...catalog];
+    if (id === 'opencode') models.sort((a, b) => numeric.compare(a.label, b.label) || numeric.compare(a.id, b.id));
     if (scope === 'favorites') {
       const byId = new Map(models.map(model => [model.id, model]));
       models = distinguishNames((preferences?.favorites ?? []).map(key => {
@@ -468,7 +499,7 @@ function renderResults(): void {
         return {id: key, label: key.split('/').at(-1)!, source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []};
       }));
     } else if (id === 'codex' && preferences && installed(id) && !state.loadFailed) {
-      models.unshift(cliDefault);
+      models.push(cliDefault);
     }
     models = models.filter(model => matchesQuery(model, id, terms));
     const status = state.saveError && (id !== activeId() || !installed(id))
@@ -495,6 +526,7 @@ function renderResults(): void {
     if (terms.length) list.append(emptySearch());
     else if (scope === 'favorites' && !hasStatus) list.append(statusBlock('No favorites yet', 'Use the star beside a model to find it here.'));
   }
+  bindResultShortcuts();
   syncResultTabStop();
   const loading = visibleProviders.some(id => installed(id) && states[id].status === 'loading');
   const resultText = count ? `${count} ${count === 1 ? 'model' : 'models'} in ${labels[scope]}` :
@@ -504,35 +536,33 @@ function renderResults(): void {
 
 function renderSettings(): void {
   settings.replaceChildren();
+  speedSlot.replaceChildren();
   const id = activeId();
   const state = id && states[id];
   const model = id && selectedModel(id);
   const preferences = state?.preferences;
-  const current = element('div', 'model-current');
-  current.append(element('h3', '', 'Current selection'));
-  settings.append(current);
+  const heading = element('div', 'model-settings-heading');
+  const headingLabel = id === 'opencode' ? 'Variant' : 'Reasoning';
+  heading.append(element('h3', '', headingLabel));
+  settings.append(heading);
   if (!id || !installed(id) || pending()) {
-    current.append(element('p', '', 'Choose an available model to configure it here.'));
+    settings.append(element('p', 'model-setting-description', 'Choose an available model to configure it here.'));
     return;
   }
-  const providerLine = element('div', 'model-current-provider', labels[id]);
-  providerLine.prepend(providerLogo(id));
-  current.append(providerLine);
-  if (!model) {
-    current.append(element('strong', '', preferences?.model?.split('/').at(-1) ?? 'No model selected'));
-    current.append(element('p', '', state.status === 'loading' ? 'Checking model availability.' :
+
+  const current = element('strong', 'model-settings-model', model?.label ?? preferences?.model?.split('/').at(-1) ?? 'No model selected');
+  current.title = model ? [model.label, model.disambiguator ?? model.source, model.description].filter(Boolean).join('\n') : current.textContent;
+  heading.append(current);
+  const identity = model?.disambiguator ?? model?.source;
+  if (identity && identity !== labels[id]) settings.append(element('p', 'model-settings-identity', identity));
+  if (!model || (model.id !== null && state.status === 'loading')) {
+    settings.append(element('p', 'model-setting-description', state.status === 'loading' ? 'Checking model availability.' :
       state.loadFailed ? 'Retry loading preferences in the model list.' : 'Choose an available model to continue.'));
-  } else {
-    current.append(element('strong', '', model.label));
-    const identity = model.disambiguator ?? model.source;
-    if (identity && identity !== labels[id]) current.append(element('p', '', identity));
-    if (model.description) current.append(element('p', '', model.description));
-    if (model.id !== null && state.status === 'loading') current.append(element('p', '', 'Checking model availability.'));
   }
   if (provider.dataset.handoff && provider.dataset.handoff !== id) {
-    current.append(element('p', 'model-handoff-note', 'Your next message will hand off this conversation to the selected provider.'));
+    settings.append(element('p', 'model-handoff-note', 'Your next message will hand off this conversation to the selected provider.'));
   }
-  if (busy()) current.append(element('p', '', 'Settings are paused while a reply is in progress.'));
+  if (busy()) settings.append(element('p', 'model-setting-description', 'Settings are paused while a reply is in progress.'));
   if (state.saveError) {
     const retry = retryButton('Retry saving', `${id}:save`, () => {void save(id); render();});
     retry.disabled = busy();
@@ -541,33 +571,54 @@ function renderSettings(): void {
   if (!preferences) return;
 
   if (model?.efforts.length) {
-    const reasoning = element('div', 'model-setting');
-    const title = id === 'codex' ? 'Reasoning effort' : 'Model variant';
-    const label = element('label', 'model-setting-title', title);
-    const select = element('select');
-    select.id = 'model-effort';
-    label.htmlFor = select.id;
-    select.dataset.focusKey = 'settings:effort';
-    const description = element('p', 'model-setting-description', id === 'codex' ?
-      'Higher effort can help with harder tasks and may take longer.' : 'Variants are defined by the model provider.');
-    description.id = 'model-effort-help';
-    select.setAttribute('aria-describedby', description.id);
-    if (id === 'codex') select.add(new Option(model.defaultEffort ? `Default (${effortLabel(model.defaultEffort)})` : 'Model default', ''));
-    for (const value of model.efforts) select.add(new Option(effortLabel(value), value));
-    if (preferences.reasoningEffort && !model.efforts.includes(preferences.reasoningEffort)) {
-      const stale = new Option(`${effortLabel(preferences.reasoningEffort)} (unavailable)`, preferences.reasoningEffort);
-      stale.disabled = true;
-      select.add(stale);
+    const group = element('div', 'model-efforts');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', id === 'codex' ? 'Reasoning effort' : 'Model variant');
+    const options = id === 'codex' ? [...model.efforts, ''] : [...model.efforts];
+    if (preferences.reasoningEffort && !options.includes(preferences.reasoningEffort)) options.push(preferences.reasoningEffort);
+    for (const value of options) {
+      const supported = !value || model.efforts.includes(value);
+      const label = value ? effortLabel(value) : 'Use model default';
+      const control = button('model-effort', supported ? label : `${label} (unavailable)`, () => {
+        if ((preferences.reasoningEffort ?? '') === value) return;
+        preferences.reasoningEffort = value || null;
+        changed(id);
+        render();
+      });
+      const checked = (preferences.reasoningEffort ?? '') === value;
+      control.dataset.focusKey = `settings:effort:${value}`;
+      control.setAttribute('role', 'radio');
+      control.setAttribute('aria-checked', String(checked));
+      control.disabled = !supported || !canSelect(id) || state.status !== 'ready';
+      control.tabIndex = -1;
+      if (value && value === model.defaultEffort) {
+        control.setAttribute('aria-description', 'Model default');
+        const tag = element('span', 'model-effort-default', 'Default');
+        tag.setAttribute('aria-hidden', 'true');
+        control.append(tag);
+      }
+      if (checked) {
+        const mark = element('span', 'model-effort-mark', '✓');
+        mark.setAttribute('aria-hidden', 'true');
+        control.append(mark);
+      }
+      group.append(control);
     }
-    select.value = preferences.reasoningEffort ?? '';
-    select.disabled = !canSelect(id) || state.status !== 'ready';
-    select.onchange = () => {
-      preferences.reasoningEffort = select.value || null;
-      changed(id);
-      render();
+    const tabStop = group.querySelector<HTMLButtonElement>('[aria-checked=true]:enabled') ?? group.querySelector<HTMLButtonElement>('button:enabled');
+    if (tabStop) tabStop.tabIndex = 0;
+    group.onkeydown = event => {
+      if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      const controls = Array.from(group.querySelectorAll<HTMLButtonElement>('button:enabled'));
+      const index = controls.indexOf(document.activeElement as HTMLButtonElement);
+      if (index < 0) return;
+      event.preventDefault();
+      const direction = ['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : -1;
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? controls.length - 1 :
+        (index + direction + controls.length) % controls.length;
+      controls[next].focus();
+      controls[next].click();
     };
-    reasoning.append(label, select, description);
-    settings.append(reasoning);
+    settings.append(group);
   } else if (model && model.id !== null && preferences.reasoningEffort) {
     const reset = retryButton('Use default reasoning', 'settings:reset-effort', () => {
       preferences.reasoningEffort = null;
@@ -576,15 +627,16 @@ function renderSettings(): void {
     });
     reset.disabled = !canSelect(id);
     settings.append(statusBlock('Reasoning effort unavailable', 'This model uses its default reasoning.', reset));
-  } else if (model && model.id !== null) {
-    settings.append(element('p', 'model-setting-description', id === 'codex' ? 'This model uses its default reasoning.' : 'This model offers no variants.'));
+  } else if (model) {
+    const message = model.id === null ? model.description :
+      id === 'codex' ? 'This model uses its default reasoning.' : 'This model offers no variants.';
+    settings.append(element('p', 'model-setting-description', message));
   }
   if (id === 'codex') {
-    const speedSetting = element('div', 'model-setting');
-    const speedLabel = element('div', 'model-setting-title', 'Response speed');
     const speed = element('div', 'model-speed');
     speed.setAttribute('role', 'group');
     speed.setAttribute('aria-label', 'Codex speed');
+    speed.setAttribute('aria-description', 'Inherit uses the CLI setting. Fast may use more of your limit.');
     for (const [enabled, label] of [[undefined, 'Inherit'], [false, 'Standard'], [true, 'Fast']] as const) {
       const control = button('', label, () => {
         if (preferences.fastMode === enabled) return;
@@ -596,22 +648,25 @@ function renderSettings(): void {
       control.dataset.focusKey = `settings:speed:${label}`;
       control.disabled = !canSelect(id);
       control.setAttribute('aria-pressed', String(preferences.fastMode === enabled));
+      if (label === 'Fast') {
+        control.title = 'Fast may use more of your limit.';
+        const bolt = element('span', 'model-speed-bolt', '⚡︎');
+        bolt.setAttribute('aria-hidden', 'true');
+        control.prepend(bolt);
+      } else if (label === 'Inherit') control.title = 'Use the Codex CLI speed setting.';
       speed.append(control);
     }
-    const hint = element('p', 'model-setting-description', 'Inherit uses the CLI setting. Fast may use more of your limit.');
-    hint.id = 'model-speed-help';
-    speed.setAttribute('aria-describedby', hint.id);
-    speedSetting.append(speedLabel, speed, hint);
-    settings.append(speedSetting);
+    speedSlot.append(speed);
   }
 }
-
 function updateDetailsVisibility(): void {
   const compact = panel.classList.contains('model-panel-compact');
   settings.hidden = compact && !detailsOpen;
   panel.classList.toggle('model-panel-details', compact && detailsOpen);
   settingsToggle.setAttribute('aria-expanded', String(!settings.hidden));
-  settingsToggle.textContent = settings.hidden ? 'Show current model settings' : 'Back to models';
+  const setting = activeId() === 'opencode' ? 'Variant' : 'Reasoning';
+  settingsToggle.textContent = settings.hidden ? setting : 'Models';
+  settingsToggle.setAttribute('aria-label', settings.hidden ? 'Show ' + setting.toLowerCase() + ' settings' : 'Back to models');
 }
 
 function render(): void {
@@ -623,6 +678,11 @@ function render(): void {
   const favoriteIndex = oldStars.findIndex(star => star === focused);
   const listTop = list.scrollTop;
   const settingsTop = settingsGroup.scrollTop;
+  panel.dataset.scope = scope;
+  const searchLabel = searchAllOnInput || scope === 'all' ? 'Search all models' :
+    scope === 'favorites' ? 'Search favorites' : `Search ${labels[scope]} models`;
+  search.placeholder = searchLabel;
+  search.setAttribute('aria-label', searchLabel);
   for (const {id, control} of filterButtons) control.setAttribute('aria-pressed', String(id === scope));
   renderResults();
   renderSettings();
@@ -641,6 +701,15 @@ function render(): void {
 }
 function resultButtons(): HTMLButtonElement[] {
   return Array.from(list.querySelectorAll<HTMLButtonElement>('.model-choice:enabled'));
+}
+function bindResultShortcuts(): void {
+  resultButtons().filter(choice => choice.dataset.shortcutEligible === 'true').slice(0, 9).forEach((choice, index) => {
+    const shortcut = index + 1;
+    choice.setAttribute('aria-keyshortcuts', `Control+${shortcut}`);
+    const badge = element('kbd', 'model-shortcut', `Ctrl+${shortcut}`);
+    badge.setAttribute('aria-hidden', 'true');
+    choice.parentElement!.append(badge);
+  });
 }
 function syncResultTabStop(): void {
   const choices = resultButtons();
@@ -661,7 +730,7 @@ function positionPanel(): void {
   const anchor = trigger.getBoundingClientRect();
   const margin = 10;
   const gap = 8;
-  const width = Math.min(604, innerWidth - margin * 2);
+  const width = Math.min(554, innerWidth - margin * 2);
   const above = anchor.top - margin - gap;
   const below = innerHeight - anchor.bottom - margin - gap;
   const overlay = Math.max(above, below) < 310;
@@ -675,11 +744,12 @@ function positionPanel(): void {
     if (compact && focusInSettings) detailsOpen = true;
     updateDetailsVisibility();
     if (!compact && toggleFocused) {
-      (settings.querySelector<HTMLElement>('select:enabled,button:enabled') ?? search).focus();
+      (settings.querySelector<HTMLElement>('[role=radio][aria-checked=true]:enabled') ??
+        settings.querySelector<HTMLElement>('button:enabled') ?? search).focus();
     }
   }
   panel.style.width = `${width}px`;
-  const maxHeight = `${Math.max(0, Math.min(490, available))}px`;
+  const maxHeight = `${Math.max(0, Math.min(414, available))}px`;
   panel.style.maxHeight = maxHeight;
   panel.style.setProperty('--picker-height', maxHeight);
   panel.style.left = `${Math.max(margin, Math.min(anchor.right - width, innerWidth - width - margin))}px`;
@@ -709,7 +779,8 @@ function toggle(): void {
   if (!panel.hidden) return close();
   panel.hidden = false;
   trigger.setAttribute('aria-expanded', 'true');
-  scope = 'all';
+  scope = activeId() ?? 'all';
+  searchAllOnInput = true;
   firstProvider = activeId() ?? 'codex';
   detailsOpen = false;
   search.value = '';
@@ -719,7 +790,11 @@ function toggle(): void {
   followAnchor();
   search.focus({preventScroll: true});
 }
-search.oninput = () => {resetResults(); render();};
+search.oninput = () => {
+  if (searchAllOnInput) scope = search.value.trim() ? 'all' : activeId() ?? 'all';
+  resetResults();
+  render();
+};
 list.addEventListener('focusin', event => {
   const choice = (event.target as HTMLElement).closest('.model-row')?.querySelector<HTMLButtonElement>('.model-choice:enabled');
   if (choice) {
@@ -733,6 +808,16 @@ host.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     event.preventDefault();
     close();
+    return;
+  }
+  if (event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey && /^[1-9]$/.test(event.key)
+      && !panel.classList.contains('model-panel-details')) {
+    const control = list.querySelector<HTMLButtonElement>(`[aria-keyshortcuts="Control+${event.key}"]:enabled`);
+    if (control) {
+      event.preventDefault();
+      control.focus();
+      control.click();
+    }
     return;
   }
   const focused = document.activeElement as HTMLElement;

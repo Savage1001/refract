@@ -103,12 +103,13 @@ async function picker(t: TestContext, mode: Mode = 'normal'): Promise<Page> {
 const providerRows = (page: Page, name: string) => page.getByRole('region', {name, exact: true});
 const trigger = (page: Page) => page.locator('.model-trigger');
 const choice = (page: Page, name: string) => page.getByRole('button', {name, exact: true});
-const search = (page: Page) => page.getByRole('searchbox', {name: 'Search models'});
+const search = (page: Page) => page.getByRole('searchbox', {name: /^Search (?:.+ models|favorites)$/});
+const reasoning = (page: Page, name: string) => page.getByRole('radiogroup', {name: 'Reasoning effort'}).getByRole('radio', {name, exact: true});
 const activeProvider = (page: Page) => page.locator('#chat-provider').inputValue();
 
 test('browsing, cross-provider search and Escape preserve the send target', async t => {
   const page = await picker(t);
-  await providerRows(page, 'OpenCode').getByRole('button', {name: 'GPT-6.2', exact: true}).waitFor();
+  assert.equal(await choice(page, 'Codex models').getAttribute('aria-pressed'), 'true');
   await choice(page, 'OpenCode models').click();
   assert.equal(await activeProvider(page), 'codex');
   await page.keyboard.press('Escape');
@@ -121,9 +122,10 @@ test('browsing, cross-provider search and Escape preserve the send target', asyn
   assert.equal(await activeProvider(page), 'codex');
   assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'GPT-6.2');
   await search(page).fill('10 studio');
+  assert.match(await choice(page, 'Model 10').getAttribute('title') ?? '', /LM Studio/);
   await search(page).press('Enter');
   assert.equal(await activeProvider(page), 'opencode');
-  assert.equal(await page.getByLabel('Model variant').inputValue(), 'high');
+  assert.equal(await page.getByRole('radiogroup', {name: 'Model variant'}).getByRole('radio', {name: 'High', exact: true}).getAttribute('aria-checked'), 'true');
   assert.match(await trigger(page).getAttribute('aria-label') ?? '', /OpenCode.*Model 10.*High/);
   assert.equal(await page.locator('.model-panel').isVisible(), true);
   await page.locator('#outside').click();
@@ -161,8 +163,6 @@ test('keyboard navigation keeps model choices and favorite actions distinct', as
   assert.match(await trigger(page).getAttribute('aria-label') ?? '', /GPT-6.2/);
   await choice(page, 'Clear search').click();
   await search(page).press('ArrowDown');
-  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'CLI default');
-  await page.keyboard.press('ArrowDown');
   assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'GPT-6.2');
   await page.keyboard.press('ArrowRight');
   assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Remove GPT-6.2 from favorites');
@@ -170,7 +170,7 @@ test('keyboard navigation keeps model choices and favorite actions distinct', as
   assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Add GPT-6.2 to favorites');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('End');
-  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Research');
+  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'CLI default');
   await page.keyboard.press('Escape');
   assert.ok(await trigger(page).evaluate(el => document.activeElement === el));
 });
@@ -180,10 +180,11 @@ test('Codex model, advertised default effort, and speed save independently', asy
   await choice(page, 'Codex models').click();
   assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).codexPickerReady()), {model: null, reasoningEffort: null});
   await choice(page, 'GPT-6.2').click();
-  const effort = page.getByLabel('Reasoning effort');
-  assert.equal(await effort.locator('option:checked').textContent(), 'Default (Low)');
+  const effort = reasoning(page, 'High');
+  assert.equal(await reasoning(page, 'Use model default').getAttribute('aria-checked'), 'true');
+  assert.equal(await reasoning(page, 'Low').getAttribute('aria-description'), 'Model default');
   await effort.focus();
-  await effort.selectOption('high');
+  await effort.click();
   assert.ok(await effort.evaluate(el => document.activeElement === el));
   assert.equal(await choice(page, 'Inherit').getAttribute('aria-pressed'), 'true');
   await choice(page, 'Standard').click();
@@ -200,6 +201,7 @@ test('Codex model, advertised default effort, and speed save independently', asy
 
 test('slow Codex preference loading cannot overwrite saved choices', async t => {
   const page = await picker(t, 'slow');
+  await choice(page, 'OpenCode models').click();
   await providerRows(page, 'OpenCode').getByRole('button', {name: 'GPT-6.2', exact: true}).waitFor();
   assert.equal(await choice(page, 'Fast').count(), 0);
   assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).saves), []);
@@ -257,18 +259,18 @@ test('scoped OpenCode loading ignores obsolete results and blocks stale selectio
 test('a send waits for persistence and captures its own immutable selection', async t => {
   const page = await picker(t);
   await page.evaluate(() => (window as unknown as PickerFixture).holdSave = true);
-  const effort = page.getByLabel('Reasoning effort');
+  const effort = reasoning(page, 'High');
   await effort.focus();
-  await effort.selectOption('high');
+  await effort.click();
   await page.evaluate(() => {const w = window as unknown as PickerFixture; w.ready = w.codexPickerReady();});
-  await effort.selectOption('low');
+  await reasoning(page, 'Low').click();
   await page.evaluate(() => {const w = window as unknown as PickerFixture; w.holdSave = false; w.releaseSave?.();});
   assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).ready), {model: 'gpt-6.2', reasoningEffort: 'high'});
 });
 
 test('save failures stay actionable and retry writes the latest choices', async t => {
   const page = await picker(t, 'fail-save');
-  await page.getByLabel('Reasoning effort').selectOption('high');
+  await reasoning(page, 'High').click();
   await choice(page, 'Retry saving').waitFor();
   await assert.rejects(page.evaluate(() => (window as unknown as PickerFixture).codexPickerReady()), /retry saving/);
   await page.evaluate(() => (window as unknown as PickerFixture).failSave = false);
@@ -289,19 +291,19 @@ test('picker fits narrow and short viewports and tracks layout changes', async t
   await page.waitForFunction(x => document.querySelector('.model-panel')!.getBoundingClientRect().x < x - 100, before.x);
   for (const [width, height] of [[450, 420], [340, 300]]) {
     await page.setViewportSize({width, height});
-    await choice(page, 'Show current model settings').waitFor();
+    await choice(page, 'Show reasoning settings').waitFor();
     await bounds(width, height);
-    await choice(page, 'Show current model settings').click();
+    await choice(page, 'Show reasoning settings').click();
     await page.getByLabel('Reasoning effort').waitFor();
     assert.equal(await search(page).isVisible(), false);
     await choice(page, 'Back to models').click();
     assert.ok(await search(page).isVisible());
   }
-  await choice(page, 'Show current model settings').focus();
+  await choice(page, 'Show reasoning settings').focus();
   await page.setViewportSize({width: 800, height: 600});
-  await page.waitForFunction(() => document.activeElement?.id === 'model-effort');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'radio');
   await page.emulateMedia({forcedColors: 'active'});
-  assert.equal(await choice(page, 'All models').evaluate(el => getComputedStyle(el).outlineStyle), 'solid');
+  assert.equal(await choice(page, 'Codex models').evaluate(el => getComputedStyle(el).outlineStyle), 'solid');
 });
 
 test('saved favorites remain manageable when a provider is missing at startup', async t => {
@@ -326,6 +328,7 @@ test('a failed favorites-only write does not block an unchanged send', async t =
 
 test('search retains its empty state when another provider fails', async t => {
   const page = await picker(t, 'fail-discovery');
+  await choice(page, 'All models').click();
   await choice(page, 'Retry model discovery').waitFor();
   await search(page).fill('no matching model expected');
   assert.ok(await page.getByText('No matching models', {exact: true}).filter({visible: true}).count());
@@ -336,6 +339,7 @@ test('search retains its empty state when another provider fails', async t => {
 
 test('the collapsed trigger disambiguates OpenCode models with identical names', async t => {
   const page = await picker(t);
+  await choice(page, 'OpenCode models').click();
   await providerRows(page, 'OpenCode').getByRole('button', {name: 'GPT-6.2', exact: true}).waitFor();
   await page.evaluate(() => {
     const w = window as unknown as PickerFixture;
@@ -393,7 +397,7 @@ test('OpenCode reloads the current project after being unavailable', async t => 
 test('send stops waiting once the selection write finishes, even with a favorite save queued', async t => {
   const page = await picker(t);
   await page.evaluate(() => (window as unknown as PickerFixture).holdSave = true);
-  await page.getByLabel('Reasoning effort').selectOption('high');
+  await reasoning(page, 'High').click();
   await choice(page, 'Add Research to favorites').click();
   await page.evaluate(() => {
     const w = window as unknown as PickerFixture;
@@ -424,7 +428,7 @@ test('same-name offline favorites stay distinguishable and the last failed remov
   await stars.first().click();
   const retry = choice(page, 'Retry saving');
   await retry.waitFor();
-  await choice(page, 'Done').click();
+  await choice(page, 'Close model picker').click();
   await choice(page, 'OpenCode settings weren’t saved').click();
   assert.ok(await retry.evaluate(el => document.activeElement === el));
   await page.evaluate(() => (window as unknown as PickerFixture).failSave = false);
@@ -463,4 +467,35 @@ test('a removed provider cannot save an old project default while its catalog is
   await choice(page, 'Second project model').waitFor();
   await page.waitForFunction(() => (window as unknown as PickerFixture).saves.length > 0);
   assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).saves.map(write => write.value.model)), ['lmstudio/second']);
+});
+test('numbered shortcuts select the visible models and reasoning rows support arrow keys', async t => {
+  const page = await picker(t);
+  const codex = choice(page, 'Codex models');
+  const openCode = choice(page, 'OpenCode models');
+  assert.equal(await search(page).getAttribute('placeholder'), 'Search all models');
+  await codex.focus();
+  await page.keyboard.press('Enter');
+  assert.ok(await codex.evaluate(el => el === document.activeElement));
+  assert.equal(await search(page).getAttribute('aria-label'), 'Search Codex models');
+  await page.keyboard.press('ArrowDown');
+  assert.ok(await openCode.evaluate(el => el === document.activeElement));
+  await page.keyboard.press('Enter');
+  assert.ok(await openCode.evaluate(el => el === document.activeElement));
+  assert.equal(await search(page).getAttribute('aria-label'), 'Search OpenCode models');
+  assert.equal(await activeProvider(page), 'codex');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Enter');
+  const first = choice(page, 'GPT-6.2');
+  await first.waitFor();
+  assert.equal(await first.getAttribute('aria-keyshortcuts'), 'Control+1');
+  const low = reasoning(page, 'Low');
+  await low.focus();
+  await page.keyboard.press('ArrowDown');
+  const high = reasoning(page, 'High');
+  assert.equal(await high.getAttribute('aria-checked'), 'true');
+  assert.ok(await high.evaluate(el => el === document.activeElement));
+  await search(page).focus();
+  await search(page).press('Control+2');
+  assert.equal(await choice(page, 'Research').getAttribute('aria-pressed'), 'true');
+  assert.equal(await activeProvider(page), 'codex');
 });

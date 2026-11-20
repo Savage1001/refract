@@ -12,17 +12,24 @@ async function openPicker(page: Page): Promise<void> {
     const model = (id: string, label: string, description: string, levels: string[]) => ({
       id, model: id, displayName: label, description,
       supportedReasoningEfforts: levels.map(effort => ({effort, description: ''})),
-      defaultReasoningEffort: 'medium', isDefault: false
+      defaultReasoningEffort: levels[0], isDefault: false
     });
+    const efforts = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
     w.store.discoverCodexModels = async () => ({ok: true, models: [
-      model('gpt-6.2-sol', 'GPT-6.2 Sol', 'For everyday writing, research, and coding.', ['low', 'medium', 'high', 'xhigh']),
-      model('gpt-6.2-astra', 'GPT-6.2 Astra', 'For complex work and multi-step reasoning.', ['medium', 'high', 'xhigh']),
-      model('gpt-6.1-sol', 'GPT-6.1 Sol', 'For drafting and routine tasks.', ['low', 'medium', 'high'])
+      model('gpt-6.2-sol', 'GPT-6.2 Sol', 'For everyday writing, research, and coding.', efforts),
+      model('gpt-6.2-astra', 'GPT-6.2 Astra', 'For complex work and multi-step reasoning.', efforts),
+      model('gpt-6.1-sol', 'GPT-6.1 Sol', 'For drafting and routine tasks.', efforts),
+      model('gpt-6.1-terra', 'GPT-6.1 Terra', '', efforts),
+      model('gpt-6-luna', 'GPT-6 Luna', '', efforts)
     ]});
-    w.store.codexPreferencesLoad = async () => ({model: 'gpt-6.2-sol', reasoningEffort: 'high', favorites: ['gpt-6.2-sol']});
+    w.store.codexPreferencesLoad = async () => ({model: 'gpt-6.2-sol', reasoningEffort: 'high', favorites: [], fastMode: false});
     w.store.discoverOpenCodeModels = async () => ({ok: true, models: [
       {id: 'lmstudio/qwen-3.5-9b', name: 'Qwen 3.5 9B', variants: ['high', 'max']},
-      {id: 'opencode/deepseek-v4-flash', name: 'DeepSeek V4 Flash', variants: ['low', 'high']},
+      {id: 'opencode/deepseek-v4-flash', name: 'DeepSeek V4 Flash Free', variants: ['low', 'high']},
+      {id: 'opencode/beam-free', name: 'Beam Free', variants: []},
+      {id: 'opencode/big-pickle', name: 'Big Pickle', variants: []},
+      {id: 'opencode/flint-free', name: 'Flint Free', variants: []},
+      {id: 'opencode/longcat-free', name: 'LongCat Free', variants: []},
       {id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', variants: ['low', 'medium', 'high']}
     ]});
     w.store.openCodePreferencesLoad = async () => ({model: 'lmstudio/qwen-3.5-9b', reasoningEffort: 'high', favorites: ['lmstudio/qwen-3.5-9b']});
@@ -32,7 +39,7 @@ async function openPicker(page: Page): Promise<void> {
   await page.getByText('Compiled', {exact: true}).waitFor();
   await page.waitForFunction(() => document.querySelector('.model-trigger-label')?.textContent === 'GPT-6.2 Sol');
   await page.locator('.model-trigger').click();
-  await page.getByRole('button', {name: 'Qwen 3.5 9B', exact: true}).waitFor();
+  await page.getByRole('radio', {name: 'High', exact: true}).waitFor();
   await page.evaluate(() => document.fonts.ready);
 }
 
@@ -45,6 +52,12 @@ async function main(): Promise<void> {
       if (theme === 'light') {
         await page.screenshot({path: path.join(output, 'codex-light.png')});
       } else {
+        await page.locator('.model-panel').screenshot({path: path.join(output, 'codex-dark.png')});
+        await page.getByRole('button', {name: 'OpenCode models'}).click();
+        await page.getByRole('button', {name: 'Qwen 3.5 9B', exact: true}).waitFor();
+        await page.locator('.model-panel').screenshot({path: path.join(output, 'opencode-dark.png')});
+        await page.getByRole('button', {name: 'Codex models'}).click();
+        await page.getByRole('button', {name: 'Add GPT-6.2 Sol to favorites', exact: true}).click();
         await page.getByRole('button', {name: 'OpenCode models'}).click();
         await page.getByRole('button', {name: 'Qwen 3.5 9B', exact: true}).click();
         await page.getByRole('button', {name: 'Favorite models'}).click();
@@ -52,7 +65,7 @@ async function main(): Promise<void> {
         await page.keyboard.press('Escape');
         await page.setViewportSize({width: 445, height: 650});
         await page.locator('.model-trigger').click();
-        await page.getByRole('searchbox', {name: 'Search models'}).fill('qwen');
+        await page.getByRole('searchbox', {name: /^Search (?:.+ models|favorites)$/}).fill('qwen');
         await page.locator('.model-panel').screenshot({path: path.join(output, 'search-compact.png')});
       }
       if (errors.length) throw new Error(errors.join('\n'));

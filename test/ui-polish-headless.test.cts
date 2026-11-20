@@ -54,7 +54,7 @@ test('headless composition confirmation cannot send or select, and ordinary Ente
   await openProject(page); const input=page.locator('#chat-input');await input.fill('Research question');
   await input.dispatchEvent('keydown',{key:'Enter',isComposing:true});await input.dispatchEvent('keydown',{key:'Enter',keyCode:229});
   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.chatSend ?? 0),0);
-  await page.locator('.model-trigger').click();const search=page.getByLabel('Search models');await search.fill('Codex Research');
+  await page.locator('.model-trigger').click();const search=page.getByRole('searchbox',{name:/^Search .*models$/});await search.fill('Codex Research');
   await search.dispatchEvent('keydown',{key:'Enter',isComposing:true});assert.equal(await page.locator('.model-panel').isVisible(),true);
   assert.equal(await page.locator('.model-trigger-label').textContent(),'CLI default');
   await search.press('Enter');assert.equal(await page.locator('.model-trigger-label').textContent(),'Research model');await page.keyboard.press('Escape');
@@ -111,8 +111,8 @@ test('headless selected states, picker dismissal, and default-choice styling agr
    assert.equal(await fallback.evaluate(el=>getComputedStyle(el).padding),await choice.evaluate(el=>getComputedStyle(el).padding));
    const favorite=catalog.locator('.model-favorite');
    await favorite.click();assert.equal(await favorite.evaluate(el=>el===document.activeElement),true);
-   await choice.click();const effort=page.getByLabel('Reasoning effort');await effort.focus();await effort.selectOption('high');assert.equal(await effort.evaluate(el=>el===document.activeElement),true);
-   await page.getByRole('button',{name:'Fast',exact:true}).focus();await page.keyboard.press('Tab');assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');
+   await choice.click();const effort=page.getByRole('radio',{name:'High',exact:true});await effort.click();assert.equal(await effort.evaluate(el=>el===document.activeElement),true);
+   await page.getByRole('button',{name:'Close model picker',exact:true}).focus();await page.keyboard.press('Tab');assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');
    await page.locator('.model-trigger').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').evaluate(el=>el===document.activeElement),true);
    await page.locator('.model-trigger').click();await page.locator('#source').click({position:{x:10,y:10}});assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('#source').evaluate(el=>el===document.activeElement),true);
    await page.locator('.model-trigger').click();await page.locator('#pane-editor').click();await page.locator('#pane-agent').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');await page.locator('#pane-editor').click();await page.locator('#pane-agent').click();
@@ -309,7 +309,7 @@ test('headless provider detection recovers and sends the explicit picker snapsho
   await page.getByRole('button',{name:'Check providers'}).click();
   const codex=page.getByRole('region',{name:'Codex',exact:true});
   await codex.getByRole('button',{name:'Research model',exact:true}).click();
-  await page.getByLabel('Reasoning effort').selectOption('high');
+  await page.getByRole('radio',{name:'High',exact:true}).click();
   await page.getByRole('button',{name:'Fast',exact:true}).click();
   await page.getByRole('button',{name:'OpenCode models'}).click();
   await page.keyboard.press('Escape');
