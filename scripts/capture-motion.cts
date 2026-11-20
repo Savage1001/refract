@@ -107,6 +107,10 @@ const scenes: Scene[] = [
     await open(page);
     await click(page, '#chats-tab');
     await click(page, '#files-tab');
+    await page.locator('#chats-tab').click();
+    await pause(page, 45);
+    await page.locator('#files-tab').click();
+    await pause(page);
     await click(page, '#file-list button[title="figures/spectral-curve.svg"]');
   }],
   ['10-find-and-command-completions', async page => {
@@ -175,6 +179,7 @@ const scenes: Scene[] = [
     await click(page, '.expand-tools');
     await click(page, '#tool-versions');
     await click(page, '.version-comparison summary');
+    await click(page, '#tool-info');
     await click(page, '#tools');
   }],
   ['16-update-progress', async page => {
@@ -212,13 +217,28 @@ const scenes: Scene[] = [
     await page.locator('#grid-view').click();
     await page.locator('#list-view').click();
     await pause(page);
-    await open(page);
+    const interruptedPreview = await page.evaluate(() => new Promise<boolean>(resolve => {
+      const preview = document.getElementById('pane-preview')!;
+      const observer = new MutationObserver(() => {
+        const pdf = document.querySelector('.pdf-pages');
+        if (!pdf) return;
+        observer.disconnect();
+        const started = pdf.getAnimations().some(animation => animation.id === 'refract-motion');
+        requestAnimationFrame(() => {
+          const {left,top,width,height} = preview.getBoundingClientRect();
+          preview.dispatchEvent(new PointerEvent('pointermove', {bubbles:true,clientX:left + width / 2,clientY:top + height / 2}));
+          preview.click();
+          window.setTimeout(() => { preview.click(); resolve(started); }, 45);
+        });
+      });
+      observer.observe(document.getElementById('pdf-area')!, {childList:true});
+      document.querySelector<HTMLButtonElement>('#list .project-open')!.click();
+    }));
+    assert.equal(interruptedPreview, true, 'Capture must interrupt the first PDF reveal');
+    await pause(page);
     const collapse = page.locator('#collapse');
     await collapse.click();
     await collapse.click();
-    await pause(page);
-    await page.locator('#pane-preview').click();
-    await page.locator('#pane-preview').click();
     await pause(page);
   }],
   ['20-content-search-results', async page => {

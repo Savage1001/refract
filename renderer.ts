@@ -9,37 +9,49 @@ function actionIcon(name:ActionIcon):SVGSVGElement {
 declare const store: any;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const uiMotionId = 'refract-motion';
+const activeMotion = new Map<Element, Animation>();
 
 function motionEnabled(): boolean {
   return !reducedMotion.matches && document.visibilityState === 'visible';
 }
 
 function stopMotion(surface: Element): void {
-  surface.getAnimations().find(animation => animation.id === uiMotionId)?.cancel();
+  activeMotion.get(surface)?.cancel();
 }
 
-function playMotion(surface: Element, keyframes: Keyframe[], duration = '--motion-layout-ms'): Animation {
-  const style = getComputedStyle(surface);
-  stopMotion(surface);
-  return surface.animate(keyframes, {
+function motionTiming(duration = '--motion-layout-ms'): KeyframeAnimationOptions {
+  const style = getComputedStyle(document.documentElement);
+  return {
     id: uiMotionId,
     duration: Number(style.getPropertyValue(duration)),
     easing: style.getPropertyValue('--motion-ease').trim()
-  });
+  };
+}
+
+function playMotion(surface: Element, keyframes: Keyframe[], timing = motionTiming(), onFinish?: () => void): Animation {
+  stopMotion(surface);
+  const animation = surface.animate(keyframes, timing);
+  activeMotion.set(surface, animation);
+  const finish = () => {
+    if (activeMotion.get(surface) !== animation) return;
+    activeMotion.delete(surface);
+    onFinish?.();
+  };
+  void animation.finished.then(finish, finish);
+  return animation;
 }
 
 // Commit geometry before fading the live content so pointer and keyboard input
 // always reach the current layout. Only opacity changes on animation frames.
-function playLayoutMotion(surface: Element, from = .82): void {
+function playLayoutMotion(surface: Element, from = .82, previous?: Animation): Animation | undefined {
   if (!motionEnabled() || !surface.checkVisibility()) return;
   const opacity = Math.min(Number(getComputedStyle(surface).opacity), from);
-  playMotion(surface, [{opacity}, {opacity:1}]);
+  previous?.cancel();
+  return playMotion(surface, [{opacity}, {opacity:1}]);
 }
 
 function stopUiMotion(): void {
-  for (const animation of document.getAnimations()) {
-    if (animation.id === uiMotionId) animation.cancel();
-  }
+  for (const animation of activeMotion.values()) animation.cancel();
 }
 
 reducedMotion.addEventListener('change', () => {
@@ -47,6 +59,16 @@ reducedMotion.addEventListener('change', () => {
 });
 
 const exitProperties = ['--exit-left', '--exit-top', '--exit-width', '--exit-height', '--exit-display'] as const;
+let workspaceMotion: Animation | undefined;
+
+function playWorkspaceMotion(surface: Element, interrupt = true): void {
+  if (!interrupt && workspaceMotion && (workspaceMotion.pending || workspaceMotion.playState === 'running')) return;
+  const next = playLayoutMotion(surface, .82, workspaceMotion);
+  if (!next) return;
+  workspaceMotion = next;
+  const clear = () => { if (workspaceMotion === next) workspaceMotion = undefined; };
+  void next.finished.then(clear, clear);
+}
 
 function clearSurfaceExit(surface: HTMLElement): void {
   surface.classList.remove('motion-exit');
@@ -59,29 +81,35 @@ function showSurface(surface: HTMLElement): void {
   surface.hidden = false;
 }
 
-// Pull outgoing controls out of the layout immediately. The painted exit
-// keeps its old bounds and is inert, even when another surface slides under it.
-function hideSurfaces(...surfaces: HTMLElement[]): void {
+// Sample both sides before writing styles so reversals continue from the
+// current frame and outgoing controls leave the layout in one batch.
+function swapSurfaces(show: HTMLElement[], hide: HTMLElement[]): void {
   const animate = motionEnabled();
-  const exits = surfaces.filter(surface => !surface.hidden).map(surface => ({
-    surface,
-    bounds: animate && surface.checkVisibility() ? surface.getBoundingClientRect() : undefined,
-    display: animate ? getComputedStyle(surface).display : ''
+  const timing = animate ? motionTiming('--motion-control-ms') : undefined;
+  const entries = show.filter(surface => surface.hidden).map(surface => ({
+    surface, opacity: animate && surface.classList.contains('motion-exit') ? Number(getComputedStyle(surface).opacity) : .8
   }));
+  const exits = hide.filter(surface => !surface.hidden).map(surface => {
+    const style = animate ? getComputedStyle(surface) : undefined;
+    return {surface, opacity:Number(style?.opacity ?? '1'), display:style?.display,
+      bounds:style && surface.checkVisibility() ? surface.getBoundingClientRect() : undefined};
+  });
   for (const {surface, bounds, display} of exits) {
-    if (bounds?.height && bounds.width) {
+    if (bounds?.height && bounds.width && display) {
       const values = [`${bounds.left}px`, `${bounds.top}px`, `${bounds.width}px`, `${bounds.height}px`, display];
       for (const [index, property] of exitProperties.entries()) surface.style.setProperty(property, values[index]);
       surface.classList.add('motion-exit');
-      surface.hidden = true;
-      const animation = playMotion(surface, [{opacity:1}, {opacity:0}], '--motion-control-ms');
-      const finish = () => {
-        if (!surface.getAnimations().some(item => item.id === uiMotionId)) clearSurfaceExit(surface);
-      };
-      void animation.finished.then(finish, finish);
-    } else {
-      surface.hidden = true;
     }
+    surface.hidden = true;
+  }
+  for (const {surface} of entries) showSurface(surface);
+  if (!timing) return;
+  for (const {surface, opacity} of exits) {
+    if (surface.classList.contains('motion-exit'))
+      playMotion(surface, [{opacity}, {opacity:0}], timing, () => clearSurfaceExit(surface));
+  }
+  for (const {surface, opacity} of entries) {
+    playMotion(surface, [{opacity}, {opacity:1}], timing);
   }
 }
 
@@ -717,15 +745,13 @@ $('#source').addEventListener('keyup', updateActiveLine);
 $('#search').oninput = renderProjects;
 $('#clear-search').onclick = () => { $('#search').value = ''; renderProjects(); $('#search').focus(); };
 $('#files-tab').onclick = () => {
-  hideSurfaces($('#chat-list'));
-  showSurface($('#file-search')); showSurface($('#file-list')); showSurface($('#outline'));
+  swapSurfaces([$('#file-search'), $('#file-list'), $('#outline')], [$('#chat-list')]);
   void runProjectSearch();
   $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true');
   $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false');
 };
 $('#chats-tab').onclick = () => {
-  hideSurfaces($('#file-search'), $('#file-list'), $('#outline'));
-  showSurface($('#chat-list'));
+  swapSurfaces([$('#chat-list')], [$('#file-search'), $('#file-list'), $('#outline')]);
   ++searchRequest; clearTimeout(searchTimer);
   $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true');
   $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false');
@@ -922,7 +948,8 @@ window.addEventListener('resize',()=>{if(pdfDocument){if(pdfFitMode==='page') fi
 updatePdfControls();
 const pendingDraftSaves=new Set<string>();
 const versionFileOptions = new WeakMap<HTMLButtonElement, readonly string[]>();
-let showingTools = false, selectedTool = 'logs';
+type ToolTab = 'info' | 'comments' | 'versions' | 'logs';
+let showingTools = false, selectedTool: ToolTab = 'logs';
 let updateBuildOutput: (() => void) | undefined;
 function defaultBuildOutputView() { return {expanded:false, query:'', issuesOnly:false, wrap:true}; }
 let buildOutputView = defaultBuildOutputView();
@@ -1068,7 +1095,7 @@ async function compilePreview(force=false) {
     compiledProject = id; compiledPdf = result.pdf;
     releasePdf(pdfDocument);
     $('#pdf-area').replaceChildren(container);pdfDocument=doc;pdfPageCount=doc.numPages;pdfPage=readingPage;changePdfZoom(pdfZoom,pdfFitMode);if(pdfFitMode==='page') fitPdfPage();goToPdfPage(readingPage);
-    if (firstPreview && !workspaceShell.getAnimations().some(animation => animation.id === uiMotionId)) playLayoutMotion(container);
+    if (firstPreview) playWorkspaceMotion(container, false);
     if (previouslyFocused >= 0) container.querySelectorAll('canvas')[Math.min(previouslyFocused, doc.numPages - 1)]?.focus({preventScroll:true});
     $('#download').disabled = false; $('#compile').textContent = 'Compiled';
   } catch (error) {
@@ -1518,7 +1545,7 @@ function openFind() {
   findAnchor=sourceEditor.selectionStart;
   showSurface(findPanel);findInput.focus();findInput.select();refreshFind();
 }
-function closeFind() {hideSurfaces(findPanel);sourceEditor.focus();}
+function closeFind() {swapSurfaces([], [findPanel]);sourceEditor.focus();}
 function selectFindMatch(position:number) {
   sourceEditor.setSelectionRange(position,position+findInput.value.length);
   // Measure using the editor's actual font and tab stops, including long lines.
@@ -1733,7 +1760,7 @@ const expandChat = document.createElement('button'); expandChat.type = 'button';
 expandChat.onclick = () => {
   const expanded=!$('.editor-pane').classList.contains('chat-expanded');
   closeLayoutTools();paneLayout={...paneLayout,agent:true,editor:!expanded};applyPaneLayout();
-  playLayoutMotion(workspaceShell);
+  playWorkspaceMotion(workspaceShell);
 };
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
@@ -1757,12 +1784,7 @@ $('#collapse').onclick = () => {
 };
 $('#outline-toggle').onclick = () => {
   const list = $('#outline-list');
-  if (list.hidden) {
-    showSurface(list);
-    playLayoutMotion(list);
-  } else {
-    hideSurfaces(list);
-  }
+  if (list.hidden) swapSurfaces([list], []); else swapSurfaces([], [list]);
   $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden));
 };
 function setProjectView(view: 'grid' | 'list', persist = true): void {
@@ -1850,7 +1872,7 @@ $('#attach').onclick = async () => {
     }
   }
 };
-function renderToolPanel() {
+function renderToolPanel(animateContent = false) {
   const body = $('#tool-body'); body.classList.remove('has-open-comparison'); body.replaceChildren();
   updateBuildOutput = undefined;
   if (toolsExpansion !== 'manual') setToolsExpansion(null);
@@ -1858,8 +1880,8 @@ function renderToolPanel() {
   $('#tool-versions').classList.toggle('active', selectedTool === 'versions'); $('#tool-versions').setAttribute('aria-pressed',String(selectedTool === 'versions'));
   $('#tool-comments').classList.toggle('active', selectedTool === 'comments'); $('#tool-comments').setAttribute('aria-pressed',String(selectedTool === 'comments'));
   $('#tool-logs').classList.toggle('active', selectedTool === 'logs'); $('#tool-logs').setAttribute('aria-pressed',String(selectedTool === 'logs'));
-  if (selectedTool === 'versions') { renderVersions(); return; }
-  if (selectedTool === 'comments') { renderComments(); return; }
+  if (selectedTool === 'versions') { void renderVersions(animateContent); return; }
+  if (selectedTool === 'comments') { void renderComments(undefined, animateContent); return; }
   if (selectedTool === 'logs') {
     const label = document.createElement('div'); label.textContent = 'Build output'; label.className = 'tool-heading';
     const log = document.createElement('pre'); log.className = 'tool-log';
@@ -1955,6 +1977,7 @@ function renderToolPanel() {
 
     engineLabel.className = 'engine-setting'; const engineHint = document.createElement('small'); engineHint.id='engine-hint'; engineHint.textContent='Choose the compiler used to build this project.'; engine.setAttribute('aria-describedby',engineHint.id); engineLabel.append(engine,engineHint); body.append(title, facts, engineLabel, draftLabel);
   }
+  if (animateContent) playWorkspaceMotion(body);
 }
 const toolsButton = document.querySelector<HTMLButtonElement>('#tools')!;
 toolsButton.append(actionIcon('wrench'));
@@ -1965,7 +1988,7 @@ toolsButton.onclick = () => {
   toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
-  playLayoutMotion(compactWorkspace.matches ? workspaceShell : $(showingTools ? '#tools-panel' : '#pdf-content'));
+  playWorkspaceMotion(compactWorkspace.matches ? workspaceShell : $(showingTools ? '#tools-panel' : '#pdf-content'));
 };
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 let toolsExpansion: 'manual' | 'comparison' | 'logs' | null = null;
@@ -1977,11 +2000,16 @@ function setToolsExpansion(value: typeof toolsExpansion): void {
 }
 expandTools.onclick = () => {
   setToolsExpansion(toolsExpansion ? null : 'manual');
-  playLayoutMotion(workspaceShell);
+  playWorkspaceMotion(workspaceShell);
 };
 $('.tool-tabs').append(expandTools);
-$('#tool-info').onclick = () => { selectedTool = 'info'; renderToolPanel(); };
-$('#tool-logs').onclick = () => { selectedTool = 'logs'; renderToolPanel(); };
+for (const tab of ['info','logs','versions','comments'] as const) {
+  $(`#tool-${tab}`).onclick = () => {
+    const changed = selectedTool !== tab;
+    selectedTool = tab;
+    renderToolPanel(changed);
+  };
+}
 
 // Compare ordered lines so repeated or moved lines are not mistaken for unchanged text.
 function comparisonLines(previous: string, current: string): [{text:string;changed:boolean}[], {text:string;changed:boolean}[]] {
@@ -1997,11 +2025,12 @@ function comparisonLines(previous: string, current: string): [{text:string;chang
   }
   return [oldRows,newRows];
 }
-async function renderVersions() {
-  if (!active) return; const id = active.id;
+let versionRenderRequest = 0;
+async function renderVersions(animateContent = false) {
+  if (!active) return; const id = active.id, request = ++versionRenderRequest;
   try {
     const versions = await store.versionList(id);
-    if (active?.id !== id || !showingTools || selectedTool !== 'versions') return;
+    if (active?.id !== id || !showingTools || selectedTool !== 'versions' || request !== versionRenderRequest) return;
     const body = document.getElementById('tool-body')!, heading = document.createElement('div');
     const focused = document.activeElement instanceof HTMLElement && body.contains(document.activeElement) ? document.activeElement.dataset.versionFocus : undefined;
     body.classList.remove('has-open-comparison'); heading.className = 'tool-heading'; heading.textContent = 'Versions'; body.replaceChildren(heading);
@@ -2104,16 +2133,16 @@ async function renderVersions() {
       const replacement = Array.from(body.querySelectorAll<HTMLButtonElement>('button[data-version-focus]')).find(button => button.dataset.versionFocus === focused && !button.disabled);
       (replacement ?? $('#tool-versions')).focus();
     }
+    if (animateContent) playWorkspaceMotion(body);
   } catch (error) { report('load versions', error); }
 }
-$('#tool-versions').onclick = () => { selectedTool = 'versions'; renderToolPanel(); };
 interface CommentRecord { id:string; file:string; quote:string; text:string; resolved:boolean; created?:string; anchor?:{status:string}; replies?:{text:string}[] }
 interface CommentDraftState { text:string; search:string; replies:Map<string,string>; expanded:Set<string> }
 interface CommentFocusRestore { key:string; moved:boolean }
 const commentDraftStates = new Map<string,CommentDraftState>();
 const pendingCommentActions = new Set<string>();
 let commentRenderRequest = 0;
-async function renderComments(restoreFocus?:CommentFocusRestore) {
+async function renderComments(restoreFocus?:CommentFocusRestore, animateContent = false) {
   if (!active) return; const id:string = active.id, request = ++commentRenderRequest;
   let drafts = commentDraftStates.get(id);
   if (!drafts) { drafts = {text:'',search:'',replies:new Map(),expanded:new Set()}; commentDraftStates.set(id,drafts); }
@@ -2212,9 +2241,9 @@ async function renderComments(restoreFocus?:CommentFocusRestore) {
     };
     body.replaceChildren(heading,search,text,add,list); display();
     if (focusedKey) Array.from(body.querySelectorAll<HTMLElement>('[data-comment-focus]')).find(control => control.dataset.commentFocus === focusedKey)?.focus({preventScroll:true});
+    if (animateContent) playWorkspaceMotion(body);
   } catch (error) { report('load comments',error); }
 }
-$('#tool-comments').onclick = () => { selectedTool = 'comments'; renderToolPanel(); };
 
 $('#source').addEventListener('select', () => { if (!active) return; const editor = $('#source'); commentSelection = {id: active.id, file: currentFile, start:editor.selectionStart, end:editor.selectionEnd, quote: editor.value.slice(editor.selectionStart, editor.selectionEnd)}; });
 
@@ -2546,7 +2575,7 @@ function togglePane(name:PaneName):void {
     if (!paneLayout.agent && !paneLayout.editor && !paneLayout.preview) paneLayout.editor = true;
   }
   applyPaneLayout();
-  playLayoutMotion(workspaceShell);
+  playWorkspaceMotion(workspaceShell);
 }
 function revealSource(): void {
   if (!displayedPaneLayout().editor) {

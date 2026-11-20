@@ -40,7 +40,10 @@ test('overlay fades leave the app immediately interactive and preserve focus on 
     await trigger.focus();
     await page.keyboard.press('Enter');
     const search = page.getByRole('searchbox', {name:'Search models'});
-    assert.equal(await search.evaluate(input => input === document.activeElement), true);
+    assert.deepEqual(await search.evaluate(input => {
+      const outline = getComputedStyle(input.closest('.model-search')!);
+      return {focused:input === document.activeElement, visible:outline.outlineStyle === 'solid' && outline.outlineWidth === '2px'};
+    }), {focused:true, visible:true});
     assert.ok(await picker.evaluate(panel => Number(getComputedStyle(panel).opacity) >= .77));
     await picker.evaluate(async panel => {
       await Promise.allSettled(panel.getAnimations().map(animation => animation.finished));
@@ -207,7 +210,22 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     assert.equal(files.hidden, true);
     assert.equal(files.inert, 'inert');
     assert.equal(files.chatsVisible, true);
-    await page.locator('#files-tab').click();
+    const reversal = await page.evaluate(() => {
+      const files = document.getElementById('file-list')!;
+      const chats = document.getElementById('chat-list')!;
+      for (const item of [files, chats]) {
+        item.getAnimations().find(animation => animation.id === 'refract-motion')!.currentTime = 45;
+      }
+      const before = [files,chats].map(item => Number(getComputedStyle(item).opacity));
+      document.getElementById('files-tab')!.click();
+      const after = [files,chats].map(item => {
+        const effect = item.getAnimations().find(animation => animation.id === 'refract-motion')!.effect as KeyframeEffect;
+        return Number(effect.getKeyframes()[0].opacity);
+      });
+      return {before,after};
+    });
+    assert.deepEqual(reversal.after, reversal.before);
+    assert.ok(reversal.before[0] < .9);
     assert.equal(await page.locator('#file-list').isVisible(), true);
     assert.deepEqual(errors, []);
   } finally {
@@ -215,24 +233,53 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
   }
 });
 
-test('an existing PDF does not replay its entry fade when the preview pane reopens', async () => {
+test('a pane change takes over an unfinished PDF reveal and leaves one live fade', {timeout:15000}, async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    await page.locator(project).first().waitFor();
+    const reveal = await page.evaluate(() => new Promise<{initial:number; reversed:number[]}>(resolve => {
+      const animations = (selector: string) => document.querySelector(selector)!.getAnimations()
+        .filter(animation => animation.id === 'refract-motion').length;
+      const observer = new MutationObserver(() => {
+        if (!document.querySelector('.pdf-pages')) return;
+        observer.disconnect();
+        const initial = animations('.pdf-pages');
+        const preview = document.getElementById('pane-preview')!;
+        preview.click();
+        preview.click();
+        resolve({initial, reversed:['.workspace-shell','#pdf-content','.pdf-pages'].map(animations)});
+      });
+      observer.observe(document.getElementById('pdf-area')!, {childList:true});
+      document.querySelector<HTMLButtonElement>('#list .project-open')!.click();
+    }));
+    assert.deepEqual(reveal, {initial:1, reversed:[1,0,0]});
+    assert.equal(await page.locator('.pdf-pages').isVisible(), true);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Tools tabs give the new body a single entry fade and retain keyboard focus', {timeout:15000}, async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
     await openProject(page);
-    const pdf = page.locator('.pdf-pages');
-    await pdf.waitFor();
-    await pdf.evaluate(async container => {
-      await Promise.allSettled(container.getAnimations().map(animation => animation.finished));
-    });
-    const animations = await page.evaluate(() => {
-      const preview = document.getElementById('pane-preview')!;
-      preview.click();
-      preview.click();
-      return ['.workspace-shell', '#pdf-content', '.pdf-pages'].map(selector =>
-        document.querySelector(selector)!.getAnimations().filter(animation => animation.id === 'refract-motion').length);
-    });
-    assert.deepEqual(animations, [1, 0, 0]);
-    assert.equal(await pdf.isVisible(), true);
+    await page.locator('#tools').click();
+    const result = await page.evaluate(() => new Promise<{pressed:string|null; focused:boolean; animations:number[]}>(resolve => {
+      const body = document.getElementById('tool-body')!;
+      const tab = document.getElementById('tool-comments')!;
+      const observer = new MutationObserver(() => {
+        if (!body.querySelector('.comment-card')) return;
+        observer.disconnect();
+        const animations = ['.workspace-shell','#tools-panel','#tool-body'].map(selector =>
+          document.querySelector(selector)!.getAnimations().filter(animation => animation.id === 'refract-motion').length);
+        resolve({pressed:tab.getAttribute('aria-pressed'), focused:document.activeElement === tab, animations});
+      });
+      observer.observe(body, {childList:true});
+      tab.focus();
+      tab.click();
+    }));
+    assert.deepEqual(result, {pressed:'true', focused:true, animations:[0,0,1]});
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

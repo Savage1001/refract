@@ -2057,8 +2057,13 @@ main {
   .model-panel :is(button,input,select):focus-visible { outline-color:Highlight; }
 }
 .model-panel .model-search input:focus-visible { outline:none; }
+.model-search:has(input:focus-visible) {
+  outline:2px solid var(--picker-focus);
+  outline-offset:1px;
+}
 @media(forced-colors:active) {
   .model-search:focus-within { border-color:Highlight; }
+  .model-search:has(input:focus-visible) { outline-color:Highlight; }
 }
 .model-panel-compact { height:auto; min-height:min(214px,var(--picker-height,214px)); }
 .model-panel-compact .model-content { flex:1 1 auto; grid-template-columns:40px minmax(0,1fr); }
@@ -3311,6 +3316,9 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   background:var(--border);
   pointer-events:none;
 }
+@media (forced-colors:active) {
+  .sidebar-motion-edge { forced-color-adjust:none; background:CanvasText; }
+}
 
 @media (prefers-reduced-motion:no-preference) {
   :root {
@@ -3323,7 +3331,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   }
 
   /* Keep keyboard outlines immediate. Only transition painted control states. */
-  :is(button, summary, input, select, textarea:not(#source), .project-search, .model-search, #list article, .pdf-annotation-link),
+  :is(button, summary, input, select, textarea:not(#source), .project-search, #list article, .pdf-annotation-link),
   :is(button, summary)>:is(.ui-icon, .folder-icon, .fast-icon) {
     transition:background-color var(--motion-control) ease-out,
       border-color var(--motion-control) ease-out, color var(--motion-control) ease-out,
@@ -3473,7 +3481,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 
   /* Native disclosure semantics settle before paint so Enter then Tab can
      always reach the first disclosed control. */
-  :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .compile-error details)[open]::details-content {
+  :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .raw-output, .compile-error details)[open]::details-content {
     animation:motion-surface var(--motion-overlay) var(--motion-ease);
   }
 
@@ -3494,8 +3502,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   }
 
   /* Keep the editor, PDF pages and picker anchors at their true coordinates. */
-  :is(#projects, #workspace, .workspace-topbar, #file-search, #file-list,
-    #outline, #chat-list, .model-catalog, .model-settings-group) {
+  :is(#projects, #workspace, .workspace-topbar, .model-catalog, .model-settings-group) {
     animation:motion-surface var(--motion-overlay) var(--motion-ease);
   }
 
