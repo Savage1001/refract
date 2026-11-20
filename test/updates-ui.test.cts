@@ -8,11 +8,14 @@ test('settings gear appears only at home and offers persisted update tracks', {t
  try {
   await page.getByRole('button',{name:'Settings',exact:true}).click();
   await page.getByText('You are up to date. Checking every 10 minutes.',{exact:true}).waitFor();
-  await page.getByLabel('Update track',{exact:true}).selectOption('beta');
+  const track=page.getByLabel('Update track',{exact:true});
+  assert.deepEqual(await track.locator('option').allTextContents(), ['Stable','Pre-release']);
+  await track.selectOption({label:'Pre-release'});
   await page.waitForFunction(()=>!(document.querySelector('#update-track') as HTMLSelectElement).disabled);
   await page.getByRole('button',{name:'Close',exact:true}).click();
   await page.getByRole('button',{name:'Settings',exact:true}).click();
-  assert.equal(await page.getByLabel('Update track',{exact:true}).inputValue(),'beta');
+  assert.equal(await track.inputValue(),'beta');
+  assert.equal(await track.locator('option:checked').textContent(),'Pre-release');
   await page.evaluate(()=>{(window as unknown as {fixture:{delay:number}}).fixture.delay=300;});
   const check = page.getByRole('button',{name:'Check for updates',exact:true});
   await check.click();
