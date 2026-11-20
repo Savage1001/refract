@@ -20,6 +20,7 @@ test('the desktop app resumes a real Codex conversation after restart', {timeout
   await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});
  });
  app=await launch();let page=await app.firstWindow();
+ await page.evaluate(() => store.codexAccountSelect('cli'));
  await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  await page.locator('#chat-input').fill('Reply with the single word REFRACTFIRST. Do not change any files.');await page.locator('#send').click();
  await page.waitForFunction(()=>document.querySelector('#chat-messages')?.textContent?.includes('REFRACTFIRST') && !(document.querySelector('#send') as HTMLButtonElement).disabled,null,{timeout:90000});
@@ -41,6 +42,7 @@ test('the desktop app sends mixed attachments to real Codex and retains them aft
  await fs.writeFile(note,'The identifier is REFRACTUITEXT.');
  await fs.writeFile(image,redPng());
  const launch=()=>electron.launch(process.env.REFRACT_TEST_PACKAGED==='1' ? {executablePath:path.join(root,'dist','win-unpacked','Refract.exe'),args:[],env} : {args:[root],env});app=await launch();let page=await app.firstWindow();
+ await page.evaluate(() => store.codexAccountSelect('cli'));
  await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  await app.evaluate(({dialog},files)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:files});},[note,image]);
  await page.locator('#attach').click();await page.locator('#attachment-list .draft-attachment').nth(1).waitFor();
@@ -57,7 +59,7 @@ test('real Codex cancellation preserves a partial project edit in version histor
  const env: NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const root: string=path.resolve(__dirname,'../..');let app=null;
  t.after(async()=>{if(app){const page=await app.firstWindow().catch(()=>null);if(page){const stop=page.getByTitle('Stop assistant');if(await stop.isVisible().catch(()=>false))await stop.click().catch(()=>{});}await app.close().catch(()=>{});}const resolved=await fs.realpath(data);if(path.dirname(resolved).toLowerCase()!==tempParent.toLowerCase() || !path.basename(resolved).startsWith('refract-codex-cancel-edit-'))throw new Error(`Unsafe cleanup path: ${resolved}`);await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
- app=await electron.launch({args:[root],env});const page=await app.firstWindow();await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
+ app=await electron.launch({args:[root],env});const page=await app.firstWindow();await page.evaluate(()=>store.codexAccountSelect('cli'));await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  const [id]=(await fs.readdir(path.join(data,'projects'))).filter((name:string)=>/^[0-9a-f-]{36}$/.test(name)),project=path.join(data,'projects',id),file=path.join(project,'main.tex');
  await page.locator('#chat-input').fill('Append the exact line "% REFRACT_CANCEL_PARTIAL" to main.tex, then run a 45 second wait before replying. Do not modify any other files.');await page.locator('#send').click();
  const deadline=Date.now()+90000;let changed=false;

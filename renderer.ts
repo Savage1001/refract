@@ -814,7 +814,7 @@ function refreshChatProvider(saved: string | null): void {
       if(!available[id] && saved!==id)continue;
       const option=document.createElement('option');option.value=id;option.disabled=!available[id];option.textContent=available[id] ? label : `${label} (${id === 'codex' && available.codexSetupRequired ? 'connect in Settings' : 'not installed'})`;provider.append(option);
     }
-    if(!provider.options.length) {const option=document.createElement('option');option.value='';option.textContent='No providers found';provider.append(option);}
+    if(!provider.options.length) {const option=document.createElement('option');option.value='';option.textContent=available.codexSetupRequired ? 'Connect Codex in Settings' : 'No providers found';provider.append(option);}
     if(saved)provider.value=saved;
     provider.disabled=!provider.value;
     providerAvailable=Boolean(available[provider.value]);

@@ -37,7 +37,9 @@ test('desktop wires direct tools into both providers and snapshots confirmed edi
       return original.apply(this,args);
     };
   },compilerAvailable);
-  const page = await app.firstWindow(); await page.locator('#new').click(); await page.locator('#source').waitFor({state:'visible'});
+  const page = await app.firstWindow();
+  await page.evaluate(() => store.codexAccountSelect('cli'));
+  await page.locator('#new').click(); await page.locator('#source').waitFor({state:'visible'});
   const id: string = await page.evaluate(async()=>{const [project]=await store.list();return project.id;});
   for (const provider of ['codex','opencode']) {
     const chat = await page.evaluate(({id,provider})=>store.chatSend(id,'Edit the section','default',[],provider),{id,provider});

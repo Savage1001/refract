@@ -56,7 +56,7 @@ test('headless composition confirmation cannot send or select, and ordinary Ente
   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.chatSend ?? 0),0);
   await page.locator('.model-trigger').click();const search=page.getByLabel('Search models');await search.fill('Research');
   await search.dispatchEvent('keydown',{key:'Enter',isComposing:true});assert.equal(await page.locator('.model-panel').isVisible(),true);
-  assert.equal(await page.locator('.model-trigger').textContent(),'CLI default');
+  assert.equal(await page.locator('.model-trigger').textContent(),'Default model');
   await search.press('Enter');assert.equal(await page.locator('.model-panel').isVisible(),false);
   await input.focus();await input.press('End');await input.press('Shift+Enter');assert.match(await input.inputValue(),/\n$/);
   await input.press('Enter');await page.waitForFunction(()=>(window as unknown as StateWindow).fixture.counters.chatSend===1);

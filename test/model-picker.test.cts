@@ -87,7 +87,7 @@ test('sending waits for the latest preference save and rejects failed saves', {t
 test('orders versions numerically and filters favorites', {timeout:30000}, async t => {
  const page = await picker(t, 'versions'); await page.waitForFunction(() => !(document.querySelector('.model-trigger') as HTMLButtonElement).disabled);
  await page.locator('.model-trigger').click();
- assert.deepEqual(await page.locator('.model-row button:first-child').allTextContents(), ['GPT-5.10','GPT-5.9','GPT-6','GPT-6.1','CLI default']);
+ assert.deepEqual(await page.locator('.model-row button:first-child').allTextContents(), ['GPT-5.10','GPT-5.9','GPT-6','GPT-6.1','Default model']);
  await page.getByLabel('Add GPT-5.9 to favorites').click(); await page.getByLabel('Favorite models').click();
  assert.deepEqual(await page.locator('.model-row button:first-child').allTextContents(), ['GPT-5.9']);
  await page.getByLabel('Codex models').click(); assert.equal(await page.locator('.model-row').count(), 5);
@@ -117,7 +117,7 @@ test('provider tabs respect locked chats and unavailable providers', {timeout:30
 
 test('Codex defaults remain unset and can be restored', {timeout:30000}, async t => {
  const page = await picker(t, 'first'); await page.waitForFunction(() => !(document.querySelector('.model-trigger') as HTMLButtonElement).disabled);
- assert.equal(await page.locator('.model-trigger').textContent(), 'CLI default');
+ assert.equal(await page.locator('.model-trigger').textContent(), 'Default model');
  assert.equal(await page.evaluate(() => (window as any).saves.length), 0);
  await page.evaluate(() => (window as any).codexPickerReady());
  await page.locator('.model-trigger').click(); await page.getByRole('button',{name:'GPT-6.1',exact:true}).click();
@@ -125,7 +125,7 @@ test('Codex defaults remain unset and can be restored', {timeout:30000}, async t
  assert.deepEqual(await page.evaluate(() => (window as any).saves[0]), {model:'GPT-6.1',reasoningEffort:null,favorites:[]});
  await page.locator('.model-trigger').click(); await page.getByRole('button',{name:'High',exact:true}).click();
  await page.getByRole('button',{name:'Default effort'}).click();
- await page.getByRole('button',{name:'CLI default'}).click();
+ await page.getByRole('button',{name:'Default model'}).click();
  await page.waitForFunction(() => (window as any).saves.at(-1)?.model === null);
  assert.deepEqual(await page.evaluate(() => (window as any).saves.at(-1)), {model:null,reasoningEffort:null,favorites:[]});
 });

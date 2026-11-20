@@ -38,7 +38,7 @@ async function replaceFile(file: string, content: string | Buffer): Promise<void
 }
 
 class CodexAccount {
-  mode: CodexMode = 'cli';
+  mode: CodexMode = 'account';
   private phase: CodexAccountStatus['phase'] = 'idle';
   private percent?: number;
   private message?: string;
@@ -56,7 +56,7 @@ class CodexAccount {
   }
 
   async load(): Promise<void> {
-    if (await fs.readFile(this.modeFile, 'utf8').catch(() => '') === 'account') this.mode = 'account';
+    this.mode = await fs.readFile(this.modeFile, 'utf8').catch(() => '') === 'cli' ? 'cli' : 'account';
     if (!this.encryption.isEncryptionAvailable()) return;
     try {
       this.data = JSON.parse(this.encryption.decryptString(await fs.readFile(this.credentialFile)));
@@ -148,7 +148,7 @@ class CodexAccount {
 
   async connection() {
     const executable = await this.runtime.executable();
-    if (!executable) throw new Error('Finish installing Codex in Settings.');
+    if (!executable) throw new SignInRequired('Download the Codex runtime in Refract Settings.');
     // Logout and account changes must not race a new provider process.
     if (this.operation) throw new Error('Finish setting up ChatGPT account mode in Settings.');
     const session = await this.currentSession();

@@ -80,7 +80,8 @@ test.test('account setup downloads once and persists a protected browser sign-in
   };
   const service = new account.CodexAccount(root, runtime, protection, openBrowser);
   await service.load();
-  assert.equal((await service.status()).mode, 'cli');
+  assert.equal((await service.status()).mode, 'account');
+  await assert.rejects(service.connection(), /Download the Codex runtime in Refract Settings/);
   assert.equal(downloads, 0);
   await service.select('account');
   await service.signIn(false);
@@ -98,6 +99,9 @@ test.test('account setup downloads once and persists a protected browser sign-in
   await restarted.signOut();
   assert.equal((await restarted.status()).signedIn, false);
   await restarted.select('cli');
+  const cli = new account.CodexAccount(root, runtime, protection, openBrowser);
+  await cli.load();
+  assert.equal((await cli.status()).mode, 'cli');
   await restarted.select('account');
   assert.equal(downloads, 1);
   await restarted.signIn(false);
@@ -110,7 +114,7 @@ test.test('Codex setup uses the update progress bar style and keeps the download
   try {
     await page.evaluate(() => {
       const store = (window as unknown as { store: Record<string, unknown> }).store;
-      let status: CodexAccountStatus = { mode: 'cli', phase: 'idle', installed: false, signedIn: false };
+      let status: CodexAccountStatus = { mode: 'account', phase: 'idle', installed: false, signedIn: false };
       let install: () => void;
       store.codexAccountStatus = async () => status;
       store.codexAccountSelect = async (mode: 'cli' | 'account') => {
@@ -126,8 +130,8 @@ test.test('Codex setup uses the update progress bar style and keeps the download
     });
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const connection = page.getByLabel('Codex connection');
-    assert.equal(await connection.inputValue(), 'cli');
-    await connection.selectOption('account');
+    assert.equal(await connection.inputValue(), 'account');
+    await page.getByRole('button', { name: 'Download Codex', exact: true }).click();
     const codex = page.getByRole('progressbar', { name: 'Codex runtime download progress' });
     const update = page.getByRole('progressbar', { name: 'Update download progress' });
     await codex.waitFor();
@@ -141,7 +145,8 @@ test.test('Codex setup uses the update progress bar style and keeps the download
     await page.getByText('Signed in as account@example.com').waitFor();
     assert.equal(await codex.isVisible(), false);
     await connection.selectOption('cli');
-    await signIn.waitFor({ state: 'hidden' });
+    await page.locator('#codex-account-settings').waitFor({ state: 'hidden' });
+    assert.equal(await connection.inputValue(), 'cli');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

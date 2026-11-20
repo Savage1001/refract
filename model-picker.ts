@@ -125,7 +125,7 @@ function render(): void {
     tab.disabled = (provider.disabled && provider.value !== id) || !Array.from(provider.options).some(option => option.value === id && !option.disabled);
     tab.setAttribute('aria-pressed', String(!favoritesOnly && provider.value === id));
   }
-  trigger.textContent = state.loadFailed ? 'Model preferences unavailable' : (selected?.label ?? (preferences.model ? `${openCode ? preferences.model.slice(preferences.model.indexOf('/') + 1) : preferences.model} (unavailable)` : (openCode ? 'Loading models...' : 'CLI default'))) + (preferences.reasoningEffort ? ` \u00b7 ${effortLabel(preferences.reasoningEffort)}` : '');
+  trigger.textContent = state.loadFailed ? 'Model preferences unavailable' : (selected?.label ?? (preferences.model ? `${openCode ? preferences.model.slice(preferences.model.indexOf('/') + 1) : preferences.model} (unavailable)` : (openCode ? 'Loading models...' : 'Default model'))) + (preferences.reasoningEffort ? ` \u00b7 ${effortLabel(preferences.reasoningEffort)}` : '');
   if (!openCode && preferences.fastMode) trigger.append(' \u00b7 ', fastIcon(), ' Fast');
   favoritesTab.setAttribute('aria-pressed', String(favoritesOnly));
   effortTitle.textContent = 'Reasoning';
@@ -138,10 +138,10 @@ function render(): void {
     const favorite = document.createElement('button'); favorite.type = 'button'; favorite.className = 'model-favorite'; favorite.dataset.focusKey = `favorite:${model.id}`; const isFavorite = preferences.favorites.includes(model.id); favorite.textContent = isFavorite ? '★' : '☆'; favorite.setAttribute('aria-label', `${isFavorite ? 'Remove' : 'Add'} ${model.label} ${isFavorite ? 'from' : 'to'} favorites`); favorite.onclick = () => { preferences.favorites = isFavorite ? preferences.favorites.filter(id => id !== model.id) : [...preferences.favorites, model.id]; changed(); };
     row.classList.toggle('is-selected', preferences.model === model.id); row.append(button, favorite); list.append(row);
   }
-  if (!openCode && !favoritesOnly && 'cli default'.includes(query)) {
+  if (!openCode && !favoritesOnly && 'default model'.includes(query)) {
     const row = document.createElement('div'); row.className = 'model-row';
     row.classList.toggle('is-selected', preferences.model === null);
-    const button = document.createElement('button'); button.type = 'button'; button.textContent = 'CLI default'; button.dataset.focusKey = 'model:default';
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Default model'; button.dataset.focusKey = 'model:default';
     button.setAttribute('aria-pressed', String(preferences.model === null));
     button.onclick = () => { if (preferences.model !== null || preferences.reasoningEffort !== null) { preferences.model = null; preferences.reasoningEffort = null; changed(); } close(); };
     row.append(button); list.append(row);
