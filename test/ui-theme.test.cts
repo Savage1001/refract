@@ -34,6 +34,8 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
  try {
   const page = await app.firstWindow();
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible())), false);
+  await useFakeCodex(app);
+  await page.reload();
   // Hidden windows must still process frames during layout and focus checks.
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setBackgroundThrottling(false));
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
@@ -80,7 +82,7 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
    await capture(`${mode}-versions`);
    await page.locator('#tools').click();
    await page.locator('.model-trigger').click();
-   await page.locator('.model-choice').filter({hasNotText:'CLI default'}).first().click();
+   await page.getByRole('button',{name:'Fixture model',exact:true}).click();
    await capture(`${mode}-models`);
    const bounds = await page.locator('.model-panel').boundingBox();
    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 1440);

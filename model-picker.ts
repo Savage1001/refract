@@ -5,7 +5,7 @@ type Preferences = import('./src/codex-preferences.cjs').CodexPreferences;
 type Selection = Omit<Preferences, 'favorites'>;
 type Discovery<T> = {ok: true; models: T[]} | {ok: false; error: string};
 interface Model {
-  id: string | null;
+  id: string;
   label: string;
   source?: string;
   description?: string;
@@ -59,7 +59,6 @@ function openCodeSource(id: string): string {
 }
 const effortOrder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const numeric = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
-const cliDefault: Model = {id: null, label: 'CLI default', description: 'Use the model configured in Codex.', efforts: []};
 const newState = (): State => ({models: [], status: 'loading', revision: 0, savedRevision: 0, selectionRevision: 0});
 const states = {codex: newState(), opencode: newState()};
 let scope: Scope = 'all';
@@ -114,17 +113,11 @@ function busy(): boolean { return provider.dataset.pickerStatus === 'busy'; }
 function canSelect(id: Provider): boolean {
   return installed(id) && !pending() && !busy() && (!provider.disabled || activeId() === id);
 }
-function cliDefaultModel(): Model {
-  const {status, models} = states.codex;
-  const advertised = status === 'ready' ? models.find(model => model.isDefault) : undefined;
-  return advertised ? {...cliDefault, efforts: advertised.efforts, defaultEffort: advertised.defaultEffort} : cliDefault;
-}
 function selectedModel(id: Provider): Model | undefined {
   const {preferences, models} = states[id];
-  if (!preferences) return;
-  return preferences.model === null && id === 'codex' ? cliDefaultModel() : models.find(model => model.id === preferences.model);
+  return models.find(model => model.id === preferences?.model);
 }
-function modelKey(id: Provider, model: string | null): string { return JSON.stringify([id, model]); }
+function modelKey(id: Provider, model: string): string { return JSON.stringify([id, model]); }
 
 const trigger = button('model-trigger', '', toggle);
 trigger.setAttribute('aria-haspopup', 'dialog');
@@ -310,10 +303,10 @@ function sendIssue(id = activeId()): SendIssue | undefined {
   if (state.saveError && state.savedRevision < state.selectionRevision)
     return {message: 'Retry saving model settings', area: 'settings'};
   const model = selectedModel(id);
-  if (id === 'opencode' && state.status === 'error')
-    return {message: 'Retry loading OpenCode models', area: 'models'};
+  if (state.status === 'error' && (id === 'opencode' || !state.preferences.model))
+    return {message: `Retry loading ${labels[id]} models`, area: 'models'};
   if (!model && state.status === 'ready') return {message: `Choose an available ${labels[id]} model`, area: 'models'};
-  if (model?.id && state.preferences.reasoningEffort && !model.efforts.includes(state.preferences.reasoningEffort))
+  if (model && state.preferences.reasoningEffort && !model.efforts.includes(state.preferences.reasoningEffort))
     return {message: id === 'codex' ? 'Choose an available reasoning effort' : 'Choose an available model variant', area: 'settings'};
 }
 function publishReadiness(): void {
@@ -408,7 +401,6 @@ function modelRow(id: Provider, model: Model, available: boolean): HTMLElement {
   choice.dataset.focusKey = `model:${key}`;
   choice.setAttribute('aria-pressed', String(current));
   choice.disabled = !available || !canSelect(id);
-  choice.dataset.shortcutEligible = String(model.id !== null);
   const lines = element('span', 'model-row-copy');
   const line = element('span', 'model-row-line');
   line.append(element('span', 'model-row-name', model.label));
@@ -422,7 +414,7 @@ function modelRow(id: Provider, model: Model, available: boolean): HTMLElement {
   const secondary = [detail, !available ? 'Unavailable' : ''].filter(Boolean).join(' · ');
   if (secondary && (model.disambiguator || !available)) lines.append(element('span', 'model-row-source', secondary));
   choice.setAttribute('aria-label', model.label);
-  choice.title = [model.label, model.source !== labels[id] ? model.source : '', model.id && model.id !== model.label ? model.id : '', model.description].filter(Boolean).join('\n');
+  choice.title = [model.label, model.source !== labels[id] ? model.source : '', model.id !== model.label ? model.id : '', model.description].filter(Boolean).join('\n');
   choice.append(providerLogo(id), lines);
   const description = [labels[id] === secondary ? '' : labels[id], secondary];
   if (provider.dataset.handoff && provider.dataset.handoff !== id && available && canSelect(id)) {
@@ -434,7 +426,7 @@ function modelRow(id: Provider, model: Model, available: boolean): HTMLElement {
   choice.setAttribute('aria-description', description.filter(Boolean).join('. '));
   row.append(choice);
 
-  if (model.id !== null && preferences && (available || scope === 'favorites')) {
+  if (preferences && (available || scope === 'favorites')) {
     const modelId = model.id;
     const favored = preferences.favorites.includes(modelId);
     const action = favored ? `Remove ${model.label} from favorites` : `Add ${model.label} to favorites`;
@@ -508,8 +500,6 @@ function renderResults(): void {
         if (known) return {...known};
         return {id: key, label: key.split('/').at(-1)!, source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []};
       }));
-    } else if (id === 'codex' && preferences && installed(id) && !state.loadFailed) {
-      models.push(cliDefaultModel());
     }
     models = models.filter(model => matchesQuery(model, id, terms));
     const status = state.saveError && (id !== activeId() || !installed(id))
@@ -524,7 +514,7 @@ function renderResults(): void {
     heading.id = `model-group-${id}`;
     group.setAttribute('aria-labelledby', heading.id);
     group.append(heading);
-    for (const model of models) group.append(modelRow(id, model, model.id === null || availableIds.has(model.id)));
+    for (const model of models) group.append(modelRow(id, model, availableIds.has(model.id)));
     count += models.length;
     if (status) {
       group.append(status);
@@ -565,7 +555,7 @@ function renderSettings(): void {
   heading.append(current);
   const identity = model?.disambiguator ?? model?.source;
   if (identity && identity !== labels[id]) settings.append(element('p', 'model-settings-identity', identity));
-  if (!model || (model.id !== null && state.status === 'loading')) {
+  if (!model || state.status === 'loading') {
     settings.append(element('p', 'model-setting-description', state.status === 'loading' ? 'Checking model availability.' :
       state.loadFailed ? 'Retry loading preferences in the model list.' : 'Choose an available model to continue.'));
   }
@@ -626,8 +616,7 @@ function renderSettings(): void {
     };
     settings.append(group);
   } else if (model) {
-    const message = model.id === null ? 'Codex uses its configured reasoning.' :
-      id === 'codex' ? 'Reasoning is configured by this model.' : 'This model offers no variants.';
+    const message = id === 'codex' ? 'Reasoning is configured by this model.' : 'This model offers no variants.';
     settings.append(element('p', 'model-setting-description', message));
   }
   if (id === 'codex') {
@@ -706,7 +695,7 @@ function resultButtons(): HTMLButtonElement[] {
   return Array.from(list.querySelectorAll<HTMLButtonElement>('.model-choice:enabled'));
 }
 function bindResultShortcuts(): void {
-  resultButtons().filter(choice => choice.dataset.shortcutEligible === 'true').slice(0, 9).forEach((choice, index) => {
+  resultButtons().slice(0, 9).forEach((choice, index) => {
     const shortcut = index + 1;
     choice.setAttribute('aria-keyshortcuts', `Control+${shortcut}`);
     const badge = element('kbd', 'model-shortcut', `Ctrl+${shortcut}`);
@@ -909,13 +898,18 @@ async function initialize(id: Provider, request: number): Promise<void> {
   if (state.preferences && state.status === 'ready') {
     const {preferences} = state;
     let modified = false;
-    if (id === 'opencode' && !preferences.model && state.models.length) {
-      const version = (model: Model) => (model.label.match(/\d+(?:\.\d+)*/)?.[0] ?? model.id.match(/\d+(?:\.\d+)*/)?.[0] ?? '0');
-      preferences.model = [...state.models].sort((a, b) => numeric.compare(version(b), version(a)) || numeric.compare(a.label, b.label))[0].id;
+    let model = selectedModel(id);
+    if (!preferences.model && state.models.length) {
+      if (id === 'codex') {
+        model = state.models.find(candidate => candidate.isDefault) ?? state.models[0];
+      } else {
+        const version = (model: Model) => (model.label.match(/\d+(?:\.\d+)*/)?.[0] ?? model.id.match(/\d+(?:\.\d+)*/)?.[0] ?? '0');
+        model = [...state.models].sort((a, b) => numeric.compare(version(b), version(a)) || numeric.compare(a.label, b.label))[0];
+      }
+      preferences.model = model.id;
       modified = true;
     }
-    const model = selectedModel(id);
-    if (model && model !== cliDefault && !model.efforts.includes(preferences.reasoningEffort ?? '')) {
+    if (model && !model.efforts.includes(preferences.reasoningEffort ?? '')) {
       const fallback = defaultEffort(model);
       if (preferences.reasoningEffort !== fallback) {
         preferences.reasoningEffort = fallback;
@@ -975,12 +969,11 @@ pickerWindow.codexPickerReady = async (id = activeId()) => {
   if (issue) throw new Error(`Open the model picker and ${issue.message[0].toLowerCase()}${issue.message.slice(1)} before sending.`);
   if (!state.preferences) throw new Error('Open the model picker and retry loading preferences.');
   const {model: modelId, reasoningEffort, fastMode} = state.preferences;
-  const effort = id === 'codex' && modelId === null && !cliDefaultModel().efforts.length ? null : reasoningEffort;
   const revision = state.selectionRevision;
   while (state.savedRevision < revision && state.write) {
     if (!await state.write) break;
   }
   if (state.savedRevision < revision) throw new Error('Open the model picker and retry saving before sending.');
-  return {model: modelId, reasoningEffort: effort, ...(id === 'codex' ? {fastMode: fastMode ?? false} : {})};
+  return {model: modelId, reasoningEffort, ...(id === 'codex' ? {fastMode: fastMode ?? false} : {})};
 };
 })();

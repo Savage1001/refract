@@ -54,10 +54,10 @@ test('headless composition confirmation cannot send or select, and ordinary Ente
   await openProject(page); const input=page.locator('#chat-input');await input.fill('Research question');
   await input.dispatchEvent('keydown',{key:'Enter',isComposing:true});await input.dispatchEvent('keydown',{key:'Enter',keyCode:229});
   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.chatSend ?? 0),0);
-  await page.locator('.model-trigger').click();const search=page.getByRole('searchbox',{name:'Search models'});await search.fill('Codex Research');
+  await page.locator('.model-trigger').click();const search=page.getByRole('searchbox',{name:'Search models'});await search.fill('OpenCode Research');
   await search.dispatchEvent('keydown',{key:'Enter',isComposing:true});assert.equal(await page.locator('.model-panel').isVisible(),true);
-  assert.equal(await page.locator('.model-trigger-label').textContent(),'CLI default');
-  await search.press('Enter');assert.equal(await page.locator('.model-trigger-label').textContent(),'Research model');await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#chat-provider').inputValue(),'codex');
+  await search.press('Enter');assert.equal(await page.locator('#chat-provider').inputValue(),'opencode');await page.keyboard.press('Escape');
   await input.focus();await input.press('End');await input.press('Shift+Enter');assert.match(await input.inputValue(),/\n$/);
   await input.press('Enter');await page.waitForFunction(()=>(window as unknown as StateWindow).fixture.counters.chatSend===1);
   assert.deepEqual(errors,[]);
@@ -92,7 +92,7 @@ test('headless comment actions preserve unrelated drafts and reject duplicate su
  } finally {await browser.close();}
 });
 
-test('headless selected states, picker dismissal, and default-choice styling agree', {timeout:60000}, async()=>{
+test('headless selected states and picker dismissal agree', {timeout:60000}, async()=>{
  const {browser,page,errors}=await fixture.openHeadlessUi();
  try {
   assert.equal(await page.locator('#list-view').getAttribute('aria-pressed'),'true');await page.locator('#grid-view').click();
@@ -106,9 +106,8 @@ test('headless selected states, picker dismissal, and default-choice styling agr
   for(const mode of ['light','dark'] as const) {
    await page.emulateMedia({colorScheme:mode});await page.locator('.model-trigger').click();await page.getByRole('button',{name:'Codex models'}).click();
    const catalog=page.getByRole('region',{name:'Codex',exact:true});
-   const choice=catalog.getByRole('button',{name:'Research model',exact:true}), fallback=catalog.getByRole('button',{name:'CLI default',exact:true});
-   assert.equal(await fallback.evaluate(el=>getComputedStyle(el).fontSize),await choice.evaluate(el=>getComputedStyle(el).fontSize));
-   assert.equal(await fallback.evaluate(el=>getComputedStyle(el).padding),await choice.evaluate(el=>getComputedStyle(el).padding));
+   const choice=catalog.getByRole('button',{name:'Research model',exact:true});
+   assert.equal(await choice.getAttribute('aria-pressed'),'true');
    const favorite=catalog.locator('.model-favorite');
    await favorite.click();assert.equal(await favorite.evaluate(el=>el===document.activeElement),true);
    await choice.click();const effort=page.getByRole('radio',{name:'High',exact:true});await effort.click();assert.equal(await effort.evaluate(el=>el===document.activeElement),true);
