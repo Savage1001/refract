@@ -135,10 +135,10 @@ test('browsing, cross-provider search and Escape preserve the send target', asyn
   assert.equal(await trigger(page).locator('.model-chevron').count(), 0);
   assert.match(await choice(page, 'Favorite models').locator('.model-filter-star').evaluate(el => getComputedStyle(el).maskImage), /favorite-star\.svg/);
   await search(page).fill('6.2');
-  assert.equal(await page.getByRole('button', {name: 'GPT-6.2', exact: true}).count(), 2);
+  assert.equal(await page.getByRole('button', {name: 'GPT 6.2', exact: true}).count(), 2);
   await search(page).press('Enter');
   assert.equal(await activeProvider(page), 'codex');
-  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'GPT-6.2');
+  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'GPT 6.2');
   await search(page).fill('10 studio');
   assert.match(await choice(page, 'Model 10').getAttribute('title') ?? '', /LM Studio/);
   await search(page).press('Enter');
@@ -158,18 +158,18 @@ test('browsing, cross-provider search and Escape preserve the send target', asyn
 test('favorites span providers, distinguish duplicate models, and remove stale entries', async t => {
   const page = await picker(t);
   await choice(page, 'Favorite models').click();
-  assert.equal(await page.getByRole('button', {name: 'GPT-6.2', exact: true}).count(), 2);
+  assert.equal(await page.getByRole('button', {name: 'GPT 6.2', exact: true}).count(), 2);
   const legacy = providerRows(page, 'OpenCode').getByRole('button', {name: 'legacy', exact: true});
   assert.ok(await legacy.isDisabled());
   const legacyStar = choice(page, 'Remove legacy from favorites');
   await legacyStar.focus();
   await page.keyboard.press('Enter');
-  const other = providerRows(page, 'OpenCode').getByRole('button', {name: 'Remove GPT-6.2 from favorites'});
+  const other = providerRows(page, 'OpenCode').getByRole('button', {name: 'Remove GPT 6.2 from favorites'});
   assert.ok(await other.evaluate(el => el === document.activeElement));
   assert.equal(await legacy.count(), 0);
-  await providerRows(page, 'OpenCode').getByRole('button', {name: 'Remove GPT-6.2 from favorites'}).click();
-  assert.equal(await providerRows(page, 'Codex').getByRole('button', {name: 'GPT-6.2', exact: true}).count(), 1);
-  await providerRows(page, 'Codex').getByRole('button', {name: 'Remove GPT-6.2 from favorites'}).click();
+  await providerRows(page, 'OpenCode').getByRole('button', {name: 'Remove GPT 6.2 from favorites'}).click();
+  assert.equal(await providerRows(page, 'Codex').getByRole('button', {name: 'GPT 6.2', exact: true}).count(), 1);
+  await providerRows(page, 'Codex').getByRole('button', {name: 'Remove GPT 6.2 from favorites'}).click();
   assert.ok(await page.getByText('No favorites yet', {exact: true}).filter({visible: true}).count());
   assert.deepEqual((await page.evaluate(() => (window as unknown as PickerFixture).saves)).map(entry => [entry.provider, entry.value.favorites]), [
     ['opencode', ['opencode/gpt-6.2']], ['opencode', []], ['codex', []]
@@ -182,14 +182,14 @@ test('keyboard navigation keeps model choices and favorite actions distinct', as
   await choice(page, 'Research').waitFor();
   await search(page).fill('does not exist');
   await search(page).press('Enter');
-  assert.match(await trigger(page).getAttribute('aria-label') ?? '', /GPT-6.2/);
+  assert.match(await trigger(page).getAttribute('aria-label') ?? '', /GPT 6.2/);
   await choice(page, 'Clear search').click();
   await search(page).press('ArrowDown');
-  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'GPT-6.2');
+  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'GPT 6.2');
   await page.keyboard.press('ArrowRight');
-  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Remove GPT-6.2 from favorites');
+  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Remove GPT 6.2 from favorites');
   await page.keyboard.press('Enter');
-  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Add GPT-6.2 to favorites');
+  assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Add GPT 6.2 to favorites');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('End');
   assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'Research');
@@ -203,7 +203,7 @@ test('Codex defaults to Standard and Low while retaining explicit choices for a 
   assert.deepEqual(await ready(), {model: 'gpt-6.2', reasoningEffort: 'low', fastMode: false});
   assert.equal(await choice(page, 'Standard').getAttribute('aria-pressed'), 'true');
   assert.equal(await choice(page, 'Inherit').count(), 0);
-  await choice(page, 'GPT-6.2').click();
+  await choice(page, 'GPT 6.2').click();
   assert.equal(await reasoning(page, 'Low').getAttribute('aria-checked'), 'true');
   assert.equal(await reasoning(page, 'Low').getAttribute('aria-description'), 'Default reasoning effort');
   assert.equal(await reasoning(page, 'Use model default').count(), 0);
@@ -211,11 +211,11 @@ test('Codex defaults to Standard and Low while retaining explicit choices for a 
   await high.click();
   assert.ok(await high.evaluate(el => document.activeElement === el));
   await choice(page, 'Fast').click();
-  await choice(page, 'GPT-6.2').click();
+  await choice(page, 'GPT 6.2').click();
   assert.deepEqual(await ready(), {model: 'gpt-6.2', reasoningEffort: 'high', fastMode: true});
   await choice(page, 'Research').click();
   assert.deepEqual(await ready(), {model: 'research', reasoningEffort: null, fastMode: true});
-  await choice(page, 'GPT-6.2').click();
+  await choice(page, 'GPT 6.2').click();
   assert.equal(await reasoning(page, 'Low').getAttribute('aria-checked'), 'true');
   await choice(page, 'Standard').click();
   assert.deepEqual(await ready(), {model: 'gpt-6.2', reasoningEffort: 'low', fastMode: false});
@@ -248,7 +248,7 @@ test('Codex replaces legacy unset model preferences with a catalog model', async
   }
   await t.test('the removed entry is absent from search and browsing', async t => {
     const page = await picker(t, 'empty');
-    await choice(page, 'GPT-6.2').waitFor();
+    await choice(page, 'GPT 6.2').waitFor();
     assert.equal(await choice(page, 'CLI default').count(), 0);
     await search(page).fill('CLI default');
     await choice(page, 'Clear search').waitFor();
@@ -261,13 +261,13 @@ test('opening before preferences load still starts in Favorites when the active 
   assert.equal(await choice(page, 'Codex models').getAttribute('aria-pressed'), 'true');
   await page.evaluate(() => (window as unknown as PickerFixture).releasePreferences());
   await page.getByRole('button', {name: 'Favorite models', pressed: true}).waitFor();
-  assert.equal(await providerRows(page, 'Codex').getByRole('button', {name: 'GPT-6.2', exact: true}).getAttribute('aria-pressed'), 'true');
+  assert.equal(await providerRows(page, 'Codex').getByRole('button', {name: 'GPT 6.2', exact: true}).getAttribute('aria-pressed'), 'true');
 });
 
 test('slow Codex preference loading cannot overwrite saved choices', async t => {
   const page = await picker(t, 'slow');
   await choice(page, 'OpenCode models').click();
-  await providerRows(page, 'OpenCode').getByRole('button', {name: 'GPT-6.2', exact: true}).waitFor();
+  await providerRows(page, 'OpenCode').getByRole('button', {name: 'GPT 6.2', exact: true}).waitFor();
   assert.equal(await choice(page, 'Fast').count(), 0);
   assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).saves), []);
   await page.evaluate(() => (window as unknown as PickerFixture).releasePreferences());
@@ -300,7 +300,7 @@ test('failed preference and OpenCode catalog discovery can recover in the picker
 test('scoped OpenCode loading ignores obsolete results and blocks stale selection', async t => {
   const page = await picker(t);
   await choice(page, 'OpenCode models').click();
-  await choice(page, 'GPT-6.2').click();
+  await choice(page, 'GPT 6.2').click();
   await page.evaluate(() => {
     const w = window as unknown as PickerFixture;
     w.store.discoverOpenCodeModels = project => project === 'slow'
@@ -308,7 +308,7 @@ test('scoped OpenCode loading ignores obsolete results and blocks stale selectio
       : Promise.resolve({ok: true, models: [{id: 'lmstudio/replacement', name: 'Replacement', variants: []}]});
     window.dispatchEvent(new CustomEvent('picker-project', {detail: 'slow'}));
   });
-  assert.equal(await choice(page, 'GPT-6.2').count(), 0);
+  assert.equal(await choice(page, 'GPT 6.2').count(), 0);
   await page.evaluate(() => {
     window.dispatchEvent(new CustomEvent('picker-project', {detail: 'latest'}));
     (window as unknown as PickerFixture).releaseCatalog({ok: true, models: [{id: 'old/old', name: 'Obsolete', variants: []}]});
@@ -378,8 +378,8 @@ test('saved favorites remain manageable when a provider is missing at startup', 
   const page = await picker(t, 'no-opencode');
   await choice(page, 'Favorite models').click();
   const openCode = providerRows(page, 'OpenCode');
-  assert.ok(await openCode.getByRole('button', {name: 'gpt-6.2', exact: true}).isDisabled());
-  await openCode.getByRole('button', {name: 'Remove gpt-6.2 from favorites'}).click();
+  assert.ok(await openCode.getByRole('button', {name: 'gpt 6.2', exact: true}).isDisabled());
+  await openCode.getByRole('button', {name: 'Remove gpt 6.2 from favorites'}).click();
   await openCode.getByRole('button', {name: 'Remove legacy from favorites'}).click();
   assert.equal(await openCode.count(), 0);
   assert.equal(await activeProvider(page), 'codex');
@@ -407,7 +407,7 @@ test('search retains its empty state when another provider fails', async t => {
 test('the collapsed trigger disambiguates OpenCode models with identical names', async t => {
   const page = await picker(t);
   await choice(page, 'OpenCode models').click();
-  await providerRows(page, 'OpenCode').getByRole('button', {name: 'GPT-6.2', exact: true}).waitFor();
+  await providerRows(page, 'OpenCode').getByRole('button', {name: 'GPT 6.2', exact: true}).waitFor();
   await page.evaluate(() => {
     const w = window as unknown as PickerFixture;
     w.store.discoverOpenCodeModels = async () => ({ok: true, models: [
@@ -422,7 +422,7 @@ test('the collapsed trigger disambiguates OpenCode models with identical names',
   assert.ok(await page.getByRole('region', {name: 'Current model settings'}).getByText('lmstudio/gpt-6.2-copy', {exact: true}).isVisible());
   assert.ok(await page.getByRole('status').filter({hasText: 'lmstudio/gpt-6.2-copy'}).count());
   await page.keyboard.press('Escape');
-  assert.match(await trigger(page).getAttribute('aria-label') ?? '', /OpenCode.*GPT-6.2.*lmstudio\/gpt-6.2-copy/);
+  assert.match(await trigger(page).getAttribute('aria-label') ?? '', /OpenCode.*GPT 6.2.*lmstudio\/gpt-6.2-copy/);
   assert.match(await trigger(page).innerText(), /lmstudio\/gpt-6.2-copy/);
 });
 test('failed provider detection retains clear search and offline favorites actions', async t => {
@@ -441,7 +441,7 @@ test('failed provider detection retains clear search and offline favorites actio
 test('OpenCode reloads the current project after being unavailable', async t => {
   const page = await picker(t);
   await choice(page, 'OpenCode models').click();
-  await choice(page, 'GPT-6.2').click();
+  await choice(page, 'GPT 6.2').click();
   await page.evaluate(() => {
     const w = window as unknown as PickerFixture;
     const select = document.querySelector<HTMLSelectElement>('#chat-provider')!;
@@ -455,7 +455,7 @@ test('OpenCode reloads the current project after being unavailable', async t => 
     option.disabled = false;
     select.dispatchEvent(new Event('providerstate'));
   });
-  assert.equal(await choice(page, 'GPT-6.2').count(), 0);
+  assert.equal(await choice(page, 'GPT 6.2').count(), 0);
   assert.match(await page.locator('#chat-provider').getAttribute('data-picker-block') ?? '', /Checking OpenCode models/);
   await page.evaluate(() => (window as unknown as PickerFixture).releaseCatalog(null));
   await choice(page, 'Current project model').waitFor();
@@ -547,12 +547,12 @@ test('numbered shortcuts select the visible models and reasoning rows support ar
   assert.ok(await search(page).evaluate(el => el === document.activeElement));
   assert.equal(await activeProvider(page), 'codex');
   await search(page).fill('6.2');
-  assert.equal(await choice(page, 'GPT-6.2').count(), 2);
+  assert.equal(await choice(page, 'GPT 6.2').count(), 2);
   assert.equal(await openCode.isVisible(), false);
   await search(page).clear();
   assert.equal(await openCode.getAttribute('aria-pressed'), 'true');
   await codex.click();
-  const first = choice(page, 'GPT-6.2');
+  const first = choice(page, 'GPT 6.2');
   await first.waitFor();
   assert.equal(await first.getAttribute('aria-keyshortcuts'), 'Control+1');
   const low = reasoning(page, 'Low');
