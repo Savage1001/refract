@@ -167,6 +167,7 @@ async function loadProjectThumbnail(id: string, button: HTMLButtonElement): Prom
   await pending;
   if (button.isConnected) showProjectThumbnail(id, button);
 }
+const pendingProjectActions = new Set<string>();
 function renderProjects() {
   const matches = projects.filter(p => p.name.toLowerCase().includes($('#search').value.toLowerCase()));
   const sort=$('#project-sort').value;
@@ -179,16 +180,50 @@ function renderProjects() {
     const row = document.createElement('article'), name = document.createElement('button'), date = document.createElement('span'), remove=document.createElement('button');
     const projectLabel = document.createElement('span'); projectLabel.className='project-label'; projectLabel.textContent=p.name;
     const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project →'; openHint.setAttribute('aria-hidden','true');
-    name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!remove.disabled) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
-    remove.textContent='Delete';remove.className='project-delete';remove.setAttribute('aria-label',`Delete ${p.name}`);
-    remove.onclick=async event=>{event.stopPropagation();if(!await confirmAction(`Move ${p.name} to Deleted projects?`, 'Delete project'))return;remove.disabled=true;try{await store.trashProject(p.id);projects=await store.list();renderProjects();}catch(error){report('delete project',error);remove.disabled=false;}};
+    name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!pendingProjectActions.has(p.id)) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
+    remove.append(actionIcon('trash'), 'Delete');
+    remove.className = 'project-delete';
+    remove.setAttribute('aria-label', `Delete ${p.name}`);
+
     const actions=document.createElement('details'); actions.className='project-actions';
     const actionLabel=document.createElement('summary'); actionLabel.textContent='Actions'; actionLabel.setAttribute('aria-label',`Actions for ${p.name}`);
     actions.addEventListener('click',event=>event.stopPropagation());
     actions.addEventListener('keydown',event=>{if(event.key==='Escape' && actions.open){event.preventDefault();event.stopPropagation();actions.open=false;actionLabel.focus();}});
     actions.addEventListener('toggle',()=>{if(actions.open) document.querySelectorAll<HTMLDetailsElement>('.project-actions[open]').forEach(other=>{if(other!==actions) other.open=false;});});
     showProjectThumbnail(p.id, name);
-    actions.append(actionLabel,remove); row.append(name, date, actions); row.onclick = () => {if(!remove.disabled) openProject(p);}; queueMicrotask(() => { void loadProjectThumbnail(p.id, name); }); return row;
+    const duplicate = document.createElement('button');
+    duplicate.append(actionIcon('copy'), 'Duplicate');
+    duplicate.setAttribute('aria-label', `Duplicate ${p.name}`);
+    const runAction = async (title: string, label: string, operation: () => Promise<void>, errorAction: string) => {
+      if (pendingProjectActions.has(p.id) || !await confirmAction(title, label)
+          || !actions.isConnected || pendingProjectActions.has(p.id)) return;
+      pendingProjectActions.add(p.id);
+      duplicate.disabled = remove.disabled = true;
+      try {
+        await operation();
+      } catch (error) {
+        report(errorAction, error);
+      } finally {
+        pendingProjectActions.delete(p.id);
+        duplicate.disabled = remove.disabled = false;
+      }
+    };
+    duplicate.onclick = () => runAction(`Duplicate ${p.name}?`, 'Duplicate', async () => {
+      const request = projectOpening;
+      const project = await store.duplicate(p.id);
+      projects = await store.list();
+      renderProjects();
+      if (request === projectOpening) await openProject(project);
+    }, 'duplicate project');
+    remove.onclick = () => runAction(`Move ${p.name} to Deleted projects?`, 'Delete project', async () => {
+      await store.trashProject(p.id);
+      projects = await store.list();
+      renderProjects();
+    }, 'delete project');
+    const menu = document.createElement('div');
+    menu.className = 'project-action-menu';
+    menu.append(duplicate, remove);
+    actions.append(actionLabel,menu); row.append(name, date, actions); row.onclick = () => {if(!pendingProjectActions.has(p.id)) openProject(p);}; queueMicrotask(() => { void loadProjectThumbnail(p.id, name); }); return row;
   }));
 }
 document.addEventListener('click',event=>{if (!(event.target as Element).closest('.project-actions')) document.querySelectorAll<HTMLDetailsElement>('.project-actions[open]').forEach(menu=>{menu.open=false;});});
@@ -1759,13 +1794,6 @@ async function renderTrash(id) {
 $('#deleted-files').onclick=async()=>{if(!active)return;try{await renderTrash(active.id);$('#trash-dialog').showModal();}catch(error){report('load deleted files',error);}};
 $('#trash-close').onclick=()=>$('#trash-dialog').close();
 document.addEventListener('click', event => { if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus(true); });
-$('#duplicate').onclick = async () => {
-  if (!active) return; const id = active.id;
-  if (!await confirmAction(`Duplicate ${active.name}?`, 'Duplicate') || active?.id !== id) return;
-  try { const project = await store.duplicate(id); projects = await store.list(); renderProjects(); await openProject(project); }
-  catch (error) { report('duplicate project', error); }
-};
-
 function clearEditor() {
   findPanel.hidden=true;findCache=undefined;
   saveEditorView();currentFile = ''; document.querySelectorAll('#file-list button').forEach(button => {button.classList.remove('active-file');button.removeAttribute('aria-current');}); $('#source').value = ''; updateEditor();
@@ -1930,9 +1958,9 @@ for (const [selector,icon] of [['#add-file','plus'],['#new-chat','plus'],['#coll
 }
 const sidebarTabs=document.querySelector('.tabs')!;
 const sidebarActions=document.createElement('div');sidebarActions.className='sidebar-actions';sidebarActions.setAttribute('role','group');sidebarActions.setAttribute('aria-label','File and project actions');
-for(const id of ['add-file','deleted-files','duplicate']) sidebarActions.append(document.getElementById(id)!);
+for(const id of ['add-file','deleted-files']) sidebarActions.append(document.getElementById(id)!);
 sidebarTabs.append(sidebarActions);
-for(const [id,icon,label] of [['deleted-projects','trash','Deleted projects'],['deleted-files','trash','Deleted files'],['duplicate','copy','Duplicate project']] as const) {
+for(const [id,icon,label] of [['deleted-projects','trash','Deleted projects'],['deleted-files','trash','Deleted files']] as const) {
   const button=document.getElementById(id)!;button.replaceChildren(actionIcon(icon));button.title=label;button.setAttribute('aria-label',label);
 }
 document.querySelector('.sidebar-footer')!.remove();

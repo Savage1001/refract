@@ -877,21 +877,33 @@ main {
   font-size:12px;
 }
 
-.project-actions[open] .project-delete {
-  display:block;
-}
-
-.project-delete {
-  display:none;
+.project-action-menu {
   position:absolute;
   right:0;
   top:100%;
   z-index:10;
-  background:var(--surface);
-  color:var(--error);
+  min-width:132px;
+  padding:4px;
   border:1px solid var(--input);
-  padding:8px 14px;
+  border-radius:8px;
+  background:var(--surface);
   box-shadow:0 6px 20px var(--shadow);
+}
+
+.project-action-menu button {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  padding:6px 8px;
+  border:0;
+  background:transparent;
+  text-align:left;
+}
+
+.project-action-menu .project-delete {
+  color:var(--error);
+  --icon-color:var(--error);
 }
 
 #list.grid {

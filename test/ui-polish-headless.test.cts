@@ -236,7 +236,7 @@ test('headless icon controls share idle and hover colors in both themes', {timeo
    await check('#deleted-projects');
    await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
    await page.locator('#source').waitFor({state:'visible'});
-   for (const selector of ['#duplicate','#pane-editor','#attach','#send']) await check(selector);
+   for (const selector of ['#pane-editor','#attach','#send']) await check(selector);
    await page.locator('#chats-tab').click();
    await check('.chat-rename','');
   } finally {await browser.close();}
@@ -378,7 +378,7 @@ test('headless provider results cannot save a default after another project star
  try {
   await page.evaluate(()=> {
    type RaceWindow = Window & {
-    store:Record<string,unknown>; fixture:{projects:unknown[]};
+    store:Record<string,unknown>;
     catalogRequests:string[]; savedModels:string[];
     finishCatalog?:()=>void; finishProviderCheck?:()=>void; finishProjectLoad?:()=>void;
    };
@@ -401,7 +401,6 @@ test('headless provider results cannot save a default after another project star
    w.store.openCodePreferencesSave=async(value:{model:string})=>{w.savedModels.push(value.model);};
    w.store.chatCreate=async()=>'new-chat';
    w.store.chatLoad=async()=>({sessionId:null,messages:[]});
-   w.store.duplicate=async()=>w.fixture.projects[1];
    w.store.versionRetainedStages=(id:string)=>id==='project-1'
     ? new Promise(resolve=>{w.finishProjectLoad=()=>resolve(0);})
     : Promise.resolve(0);
@@ -410,8 +409,8 @@ test('headless provider results cannot save a default after another project star
   await page.waitForFunction(()=>typeof (window as unknown as {finishCatalog?:()=>void}).finishCatalog==='function');
   await page.locator('#new-chat').click();
   await page.waitForFunction(()=>typeof (window as unknown as {finishProviderCheck?:()=>void}).finishProviderCheck==='function');
-  await page.locator('#duplicate').click();
-  await page.locator('#app-dialog').getByRole('button',{name:'Duplicate',exact:true}).click();
+  await page.locator('#home').click();
+  await page.getByRole('button',{name:'Open Conference paper - autumn notes',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#project-name')?.textContent==='Conference paper - autumn notes' &&
    typeof (window as unknown as {finishProjectLoad?:()=>void}).finishProjectLoad==='function');
 
@@ -431,6 +430,52 @@ test('headless provider results cannot save a default after another project star
    (window as unknown as {savedModels:string[]}).savedModels.length>0);
   assert.deepEqual(await page.evaluate(()=>(window as unknown as {catalogRequests:string[]}).catalogRequests),['project-0','project-1']);
   assert.deepEqual(await page.evaluate(()=>(window as unknown as {savedModels:string[]}).savedModels),['lmstudio/project-1']);
+  assert.deepEqual(errors,[]);
+ } finally {await browser.close();}
+});
+
+test('headless project actions duplicate the selected home project in either view', {timeout:60000}, async()=>{
+ const {browser,page,errors}=await fixture.openHeadlessUi('light',{pdf:'',source:'An example document'});
+ try {
+  const project='Conference paper - autumn notes';
+  const actions=page.getByLabel(`Actions for ${project}`,{exact:true});
+  const duplicate=page.getByRole('button',{name:`Duplicate ${project}`,exact:true});
+  const remove=page.getByRole('button',{name:`Delete ${project}`,exact:true});
+  await page.evaluate(()=>{
+   type Project={id:string;name:string};
+   const w=window as unknown as {store:{duplicate:(id:string)=>Promise<Project>};fixture:{projects:Project[];counters:Record<string,number>}};
+   w.store.duplicate=async id=>{
+    const original=w.fixture.projects.find(project=>project.id===id)!;
+    const copy={...original,id:'copy',name:`${original.name} (copy)`};
+    w.fixture.counters.duplicate=(w.fixture.counters.duplicate ?? 0)+1;
+    w.fixture.projects.push(copy);
+    return copy;
+   };
+  });
+  for(const view of ['list','grid']) {
+   await page.locator(`#${view}-view`).click();
+   await actions.press('Enter');
+   assert.equal(await duplicate.locator('svg[aria-hidden="true"]').count(),1);
+   assert.equal(await remove.locator('svg[aria-hidden="true"]').count(),1);
+   await duplicate.click();
+   const dialog=page.getByRole('dialog',{name:`Duplicate ${project}?`,exact:true});
+   await dialog.waitFor();
+   await page.keyboard.press('Escape');
+   await dialog.waitFor({state:'hidden'});
+   assert.equal(await duplicate.evaluate(button=>button===document.activeElement),true);
+   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.duplicate ?? 0),0);
+   await page.keyboard.press('Escape');
+   await duplicate.waitFor({state:'hidden'});
+   assert.equal(await actions.evaluate(summary=>summary===document.activeElement),true);
+  }
+  await actions.click();
+  await duplicate.click();
+  await page.getByRole('dialog',{name:`Duplicate ${project}?`,exact:true}).getByRole('button',{name:'Duplicate',exact:true}).click();
+  await page.getByRole('button',{name:`${project} (copy)`,exact:true}).waitFor();
+  assert.equal(await page.locator('.sidebar-actions').getByRole('button',{name:'Duplicate project'}).count(),0);
+  await page.locator('#home').click();
+  await page.getByRole('button',{name:`Open ${project} (copy)`,exact:true}).waitFor();
+  await page.getByRole('button',{name:`Open ${project}`,exact:true}).waitFor();
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
 });
