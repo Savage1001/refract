@@ -13,6 +13,7 @@ test('preferences IPC persists across application restarts and rejects invalid d
   try {
     app = await electron.launch({ args: [root], env });
     let page = await app.firstWindow();
+    await page.evaluate(() => store.codexAccountSelect('cli'));
     const saved = { model: 'gpt-5.1-codex', reasoningEffort: 'high', favorites: ['gpt-5.1-codex'] };
     await page.evaluate(value => (window as any).store.codexPreferencesSave(value), saved);
     await assert.rejects(page.evaluate(() => (window as any).store.codexPreferencesSave({ model: 'bad\nmodel', reasoningEffort: 'high', favorites: [] })));

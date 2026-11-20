@@ -1217,7 +1217,7 @@ test('saved Codex preferences and explicit snapshots reach chat turns', {timeout
    return original.apply(this,args);
   };
  });
- const page=await app.firstWindow();await page.waitForLoadState('load');await page.reload();
+ const page=await app.firstWindow();await page.waitForLoadState('load');await page.evaluate(()=>store.codexAccountSelect('cli'));await page.reload();
  await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  await page.waitForFunction(()=>!(document.querySelector('#chat-provider') as HTMLSelectElement).disabled);
  await page.evaluate(async()=>{
@@ -1338,7 +1338,7 @@ test('editor build waiting for a write cannot race an assistant operation',{time
  const data=await fs.mkdtemp(path.join(os.tmpdir(),'refract-build-race-'));
  const env:NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const app=await launchDesktop(env);t.after(async()=>{await app.evaluate(()=>{(globalThis as any).__releaseRaceWrite?.();}).catch(()=>{});await app.close().catch(()=>{});const resolved=await fs.realpath(data),parent=await fs.realpath(os.tmpdir());if(path.dirname(resolved).toLowerCase()!==parent.toLowerCase() || !path.basename(resolved).startsWith('refract-build-race-'))throw new Error('Unsafe cleanup path');await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
- const page=await app.firstWindow();await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
+ const page=await app.firstWindow();await page.evaluate(()=>store.codexAccountSelect('cli'));await page.locator('#new').click();await page.locator('#source').waitFor({state:'visible'});
  const id=await page.evaluate(async()=>{const [project]=await store.list();return project.id;});
  await app.evaluate(({app})=>{
   const req=(process.getBuiltinModule('module') as any).createRequire(app.getAppPath()+'\\package.json');

@@ -22,7 +22,11 @@ interface PickerFixture extends Window {
   failSave: boolean;
   holdSave: boolean;
   saves: {provider: string; value: CodexPreferences}[];
-  store: {discoverOpenCodeModels(project?: string): Promise<unknown>};
+  store: {
+    discoverOpenCodeModels(project?: string): Promise<unknown>;
+    codexPreferencesLoad(mode?: 'cli' | 'account'): Promise<CodexPreferences>;
+    codexPreferencesSave(value: CodexPreferences, mode?: 'cli' | 'account'): Promise<void>;
+  };
 }
 
 const assets = path.resolve(__dirname, '..');
@@ -561,4 +565,39 @@ test('numbered shortcuts select the visible models and reasoning rows support ar
   await search(page).press('Control+2');
   assert.equal(await choice(page, 'Research').getAttribute('aria-pressed'), 'true');
   assert.equal(await activeProvider(page), 'codex');
+});
+
+test('switching Codex connections isolates pending saves and model selections', async t => {
+  const page = await picker(t);
+  await page.evaluate(() => {
+    const w = window as unknown as PickerFixture;
+    w.store.codexPreferencesLoad = async mode => ({
+      model: mode === 'cli' ? 'gpt-6.2' : 'research',
+      reasoningEffort: mode === 'cli' ? 'low' : null,
+      favorites: []
+    });
+    w.store.codexPreferencesSave = async (value, mode) => {
+      w.saves.push({provider: mode, value});
+      await new Promise<void>(resolve => { w.releaseSave = resolve; });
+    };
+    const select = document.querySelector<HTMLSelectElement>('#chat-provider')!;
+    select.dataset.codexMode = 'cli';
+    select.dispatchEvent(new Event('providerstate'));
+  });
+  await reasoning(page, 'High').click();
+  await page.waitForFunction(() => Boolean((window as unknown as PickerFixture).releaseSave));
+  await page.evaluate(() => {
+    const select = document.querySelector<HTMLSelectElement>('#chat-provider')!;
+    select.dataset.codexMode = 'account';
+    select.dispatchEvent(new Event('providerstate'));
+  });
+  await page.waitForFunction(() => document.querySelector('.model-trigger')?.textContent.includes('Research'));
+  assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).codexPickerReady()),
+    {model: 'research', reasoningEffort: null, fastMode: false});
+  const saves = await page.evaluate(() => {
+    const w = window as unknown as PickerFixture;
+    w.releaseSave();
+    return w.saves;
+  });
+  assert.deepEqual(saves, [{provider: 'cli', value: {model: 'gpt-6.2', reasoningEffort: 'high', favorites: []}}]);
 });

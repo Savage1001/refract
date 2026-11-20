@@ -25,6 +25,8 @@ async function prepareTestDesktop(app:ElectronApplication):Promise<void> {
 // These tests replace assistant execution; discovery must use the same fixture
 // rather than depending on authenticated CLIs installed on the host machine.
 async function useFakeCodex(app:ElectronApplication):Promise<void> {
+ const page=await app.firstWindow();
+ await page.evaluate(()=>store.codexAccountSelect('cli'));
  await app.evaluate(({ipcMain})=>{
   ipcMain.removeHandler('providers:discover');ipcMain.handle('providers:discover',()=>({codex:true,opencode:false}));
   ipcMain.removeHandler('codex:discover-models');ipcMain.handle('codex:discover-models',()=>({ok:true,models:[{id:'fixture',model:'fixture',displayName:'Fixture model',description:'Test fixture',supportedReasoningEfforts:[],defaultReasoningEffort:null,isDefault:true}]}));

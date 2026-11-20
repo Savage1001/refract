@@ -3,6 +3,7 @@ type Provider = 'codex' | 'opencode';
 type Scope = 'all' | 'favorites' | Provider;
 type Preferences = import('./src/codex-preferences.cjs').CodexPreferences;
 type Selection = Omit<Preferences, 'favorites'>;
+type CodexMode = import('./src/codex-account.cjs').CodexMode;
 type Discovery<T> = {ok: true; models: T[]} | {ok: false; error: string};
 interface Model {
   id: string;
@@ -15,6 +16,7 @@ interface Model {
   disambiguator?: string;
 }
 interface State {
+  mode?: CodexMode;
   models: Model[];
   status: 'loading' | 'ready' | 'error';
   error?: string;
@@ -30,11 +32,11 @@ interface State {
   initialized?: Promise<void>;
 }
 interface PickerApi {
-  discoverCodexModels(): Promise<Discovery<import('./src/codex-models.cjs').CodexModel>>;
+  discoverCodexModels(mode?: CodexMode): Promise<Discovery<import('./src/codex-models.cjs').CodexModel>>;
   discoverOpenCodeModels(project?: string): Promise<Discovery<{id: string; name: string; variants: string[]}>>;
-  codexPreferencesLoad(): Promise<Preferences>;
+  codexPreferencesLoad(mode?: CodexMode): Promise<Preferences>;
   openCodePreferencesLoad(): Promise<Preferences>;
-  codexPreferencesSave(value: Preferences): Promise<void>;
+  codexPreferencesSave(value: Preferences, mode?: CodexMode): Promise<void>;
   openCodePreferencesSave(value: Preferences): Promise<void>;
 }
 
@@ -66,6 +68,11 @@ let openingScopePending = false;
 let firstProvider: Provider = 'codex';
 let project: string | undefined;
 let generation = 0;
+let codexGeneration = 0;
+const codexStates: Record<CodexMode, State> = {
+  cli: {...newState(), mode: 'cli'},
+  account: {...newState(), mode: 'account'},
+};
 let detected = new Set<Provider>();
 let resultKey: string | undefined;
 let detailsOpen = false;
@@ -247,7 +254,7 @@ function save(id: Provider): Promise<void> {
       const version = state.revision;
       const value = {...state.preferences!, favorites: [...state.preferences!.favorites]};
       state.write = Promise.resolve().then(() =>
-        id === 'codex' ? api.codexPreferencesSave(value) : api.openCodePreferencesSave(value)
+        id === 'codex' ? api.codexPreferencesSave(value, state.mode) : api.openCodePreferencesSave(value)
       ).then(() => {
         state.savedRevision = version;
         return true;
@@ -469,8 +476,9 @@ function renderResults(): void {
   const detectionFailed = provider.dataset.pickerStatus === 'error';
   const allMissing = resultScope === 'all' && !providers.some(installed);
   if (detectionFailed || allMissing) {
-    const title = detectionFailed ? 'Provider check failed' : 'No providers found';
-    list.append(statusBlock(title, detectionFailed ? 'Refract couldn’t check for Codex or OpenCode.' : 'Install and authenticate Codex or OpenCode to use the assistant.',
+    const needsCodexSetup = !detectionFailed && provider.dataset.codexSetupRequired === 'true';
+    const title = needsCodexSetup ? 'Connect Codex in Settings' : detectionFailed ? 'Provider check failed' : 'No providers found';
+    list.append(statusBlock(title, detectionFailed ? 'Refract couldn’t check for Codex or OpenCode.' : needsCodexSetup ? 'Open Settings on the home screen to connect your ChatGPT account or choose the Codex CLI.' : 'Install and authenticate Codex or OpenCode to use the assistant.',
       retryButton('Check providers', 'providers:retry', retryProviders)));
     if (resultScope !== 'favorites') {
       if (terms.length) list.append(emptySearch());
@@ -842,7 +850,7 @@ new IntersectionObserver(entries => {
 
 async function discover(id: Provider): Promise<Model[]> {
   if (id === 'codex') {
-    const result = await api.discoverCodexModels();
+    const result = await api.discoverCodexModels(states.codex.mode);
     if (result.ok === false) throw new Error(result.error);
     return result.models.map(model => ({
       id: model.model, label: model.displayName, description: model.description,
@@ -860,7 +868,7 @@ function loadPreferences(id: Provider): Promise<Preferences | undefined> {
   const state = states[id];
   if (state.preferences) return Promise.resolve(state.preferences);
   if (state.loadingPreferences) return state.loadingPreferences;
-  const read = id === 'codex' ? () => api.codexPreferencesLoad() : () => api.openCodePreferencesLoad();
+  const read = id === 'codex' ? () => api.codexPreferencesLoad(state.mode) : () => api.openCodePreferencesLoad();
   state.loadFailed = false;
   state.loadingPreferences = Promise.resolve().then(read).then(value => {
     state.preferences = value;
@@ -890,7 +898,7 @@ function distinguishNames(models: Model[]): Model[] {
 async function initialize(id: Provider, request: number): Promise<void> {
   const state = states[id];
   const [, catalog] = await Promise.allSettled([loadPreferences(id), discover(id)]);
-  if (id === 'opencode' && (request !== generation || !installed(id))) return;
+  if (request !== (id === 'codex' ? codexGeneration : generation) || !installed(id)) return;
   state.status = catalog.status === 'fulfilled' ? 'ready' : 'error';
   state.models = catalog.status === 'fulfilled' ? distinguishNames(catalog.value) : [];
   state.error = catalog.status === 'rejected' && catalog.reason instanceof Error ? catalog.reason.message : undefined;
@@ -924,7 +932,7 @@ function startDiscovery(id: Provider): void {
   const state = states[id];
   state.status = 'loading';
   state.loadFailed = false;
-  state.initialized = initialize(id, id === 'opencode' ? ++generation : 0);
+  state.initialized = initialize(id, id === 'opencode' ? ++generation : ++codexGeneration);
   render();
 }
 function invalidateOpenCodeCatalog(): void {
@@ -935,6 +943,14 @@ function invalidateOpenCodeCatalog(): void {
 function syncProviders(): void {
   if (pending() && states.opencode.status === 'loading' && states.opencode.initialized) invalidateOpenCodeCatalog();
   if (!pending()) {
+    const mode = provider.dataset.codexMode;
+    if ((mode === 'cli' || mode === 'account') && mode !== states.codex.mode) {
+      codexGeneration++;
+      states.codex = codexStates[mode];
+      states.codex.models = [];
+      states.codex.initialized = undefined;
+      states.codex.status = 'loading';
+    }
     const available = new Set(providers.filter(installed));
     const previous = detected;
     detected = available;
@@ -962,8 +978,8 @@ pickerWindow.codexPickerReady = async (id = activeId()) => {
   const state = states[id];
   const initialized = state.initialized;
   await initialized;
-  if (id === 'opencode' && initialized !== state.initialized) {
-    throw new Error('The OpenCode catalog changed. Try sending again from this project.');
+  if (state !== states[id] || initialized !== state.initialized) {
+    throw new Error('The model catalog changed. Check your model and try again.');
   }
   const issue = sendIssue(id);
   if (issue) throw new Error(`Open the model picker and ${issue.message[0].toLowerCase()}${issue.message.slice(1)} before sending.`);
@@ -974,6 +990,9 @@ pickerWindow.codexPickerReady = async (id = activeId()) => {
     if (!await state.write) break;
   }
   if (state.savedRevision < revision) throw new Error('Open the model picker and retry saving before sending.');
+  if (state !== states[id] || initialized !== state.initialized) {
+    throw new Error('The model catalog changed. Check your model and try again.');
+  }
   return {model: modelId, reasoningEffort, ...(id === 'codex' ? {fastMode: fastMode ?? false} : {})};
 };
 })();
