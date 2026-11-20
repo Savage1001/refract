@@ -35,6 +35,13 @@ const scenes: Scene[] = [
     await pause(page);
     await page.keyboard.press('Tab');
     await pause(page);
+    const create = (await page.locator('#new').boundingBox())!;
+    await page.mouse.move(create.x + .5, create.y + create.height / 2);
+    await page.mouse.down();
+    await pause(page, 155);
+    await page.mouse.up();
+    await page.locator('#source').waitFor();
+    await pause(page);
   }],
   ['02-project-navigation', async page => {
     await open(page);
@@ -189,7 +196,9 @@ const scenes: Scene[] = [
     await page.locator('.comment-card').first().waitFor();
     await pause(page);
     await click(page, '.comment-reply-form summary');
-    await click(page, '.expand-tools');
+    await page.locator('.expand-tools').focus();
+    await page.keyboard.press('Enter');
+    await pause(page);
     await click(page, '#tool-versions');
     await click(page, '.version-comparison summary');
     await click(page, '#tool-info');
@@ -262,6 +271,13 @@ const scenes: Scene[] = [
     await collapse.click();
     await collapse.click();
     await pause(page);
+    await click(page, '#tools');
+    await page.locator('.expand-tools').click();
+    await pause(page, 65);
+    await page.locator('#tools').click();
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('refract-recorded-caption',
+      {detail:'Tools returned to Preview during expansion'})));
+    await pause(page, 800);
   }],
   ['20-content-search-results', async page => {
     await page.evaluate(() => {

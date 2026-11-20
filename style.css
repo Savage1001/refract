@@ -308,7 +308,7 @@ body:has(#projects:not([hidden])) .app-titlebar {
   min-height:0;
 }
 
-#files-surface {
+#sidebar-content,#files-surface {
   display:flex;
   flex:1;
   flex-direction:column;
@@ -3314,6 +3314,18 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 .settings-section { border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:14px; }
 
 .sidebar:has(>.sidebar-motion-edge) { border-right-color:transparent; }
+.sidebar-motion-surface {
+  position:absolute;
+  z-index:0;
+  inset:0;
+  background:color-mix(in srgb, var(--sidebar), var(--text) 12%);
+  transform-origin:left;
+  opacity:0;
+  pointer-events:none;
+}
+
+.sidebar:has(>.sidebar-motion-surface) #project-side { position:relative; z-index:1; }
+
 .sidebar-motion-edge {
   position:absolute;
   z-index:2;
@@ -3339,14 +3351,20 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 
   /* Keep keyboard outlines immediate. Only transition painted control states. */
   :is(button, summary, input, select, textarea:not(#source), .project-search, #list article, .pdf-annotation-link),
-  :is(button, summary)>:is(.ui-icon, .folder-icon, .fast-icon) {
+  :is(button, summary)>:is(.ui-icon, .folder-icon, .fast-icon, svg[aria-hidden=true]) {
     transition:background-color var(--motion-control) ease-out,
       border-color var(--motion-control) ease-out, color var(--motion-control) ease-out,
-      box-shadow var(--motion-control) ease-out, scale var(--motion-control) var(--motion-ease);
+      box-shadow var(--motion-control) ease-out, scale var(--motion-control) var(--motion-ease),
+      filter var(--motion-control) ease-out;
   }
 
   button:enabled:active:not([aria-disabled=true], [aria-haspopup], .project-open, .project-name) {
-    scale:.97;
+    filter:brightness(.92);
+  }
+
+  button:enabled:active:not([aria-disabled=true], [aria-haspopup]) > :is(.ui-icon, svg[aria-hidden=true]) {
+    scale:.94;
+    pointer-events:none;
   }
 
   .composer {
@@ -3504,6 +3522,24 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
      always reach the first disclosed control. */
   :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .raw-output, .compile-error details)[open]::details-content {
     animation:motion-surface var(--motion-overlay) var(--motion-ease);
+  }
+
+  #file-list { isolation:isolate; }
+  #file-list .file-tree-row { background:var(--sidebar); }
+
+  /* Fold departing rows behind the live rows, where no stale control can be
+     painted over the target that now owns the pointer. */
+  .file-tree details::details-content { clip-path:inset(0); }
+  .file-tree details:not([open])::details-content {
+    position:absolute;
+    z-index:-1;
+    inset:var(--folder-label-height, 32px) 0 auto;
+    opacity:0;
+    clip-path:inset(0 0 100% 0);
+    pointer-events:none;
+    interactivity:inert;
+    transition:clip-path var(--motion-overlay) var(--motion-ease), opacity var(--motion-overlay) ease-out,
+      content-visibility var(--motion-overlay) allow-discrete;
   }
 
   .new-chat-tooltip {

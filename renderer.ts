@@ -25,6 +25,11 @@ function isMoving(animation?: Animation): boolean {
   return !!animation && (animation.pending || animation.playState === 'running');
 }
 
+function ownsVisibleFocus(surface: Element): boolean {
+  const focus = document.activeElement;
+  return !!focus?.matches(':focus-visible') && surface.contains(focus);
+}
+
 function motionTiming(duration: MotionDuration = '--motion-layout-ms'): KeyframeAnimationOptions {
   const cached = motionTimings.get(duration);
   if (cached) return cached;
@@ -54,9 +59,11 @@ function playMotion(surface: Element, keyframes: Keyframe[], timing = motionTimi
 // Commit geometry before fading the live content so pointer and keyboard input
 // always reach the current layout. Only opacity changes on animation frames.
 function playLayoutMotion(surface: Element, from = .82, previous?: Animation): Animation | undefined {
-  if (!motionEnabled() || !surface.checkVisibility()) return;
+  if (!motionEnabled() || !surface.checkVisibility() || ownsVisibleFocus(surface)) return;
   const currentOpacity = Number(getComputedStyle(surface).opacity);
-  const opacity = isMoving(activeMotion.get(surface)) ? currentOpacity : Math.min(currentOpacity, from);
+  const previousSurface = previous?.effect instanceof KeyframeEffect && previous.effect.target;
+  const carriedOpacity = isMoving(previous) && previousSurface ? Number(getComputedStyle(previousSurface).opacity) : from;
+  const opacity = isMoving(activeMotion.get(surface)) ? currentOpacity : Math.min(currentOpacity, carriedOpacity);
   previous?.cancel();
   return playMotion(surface, [{opacity}, {opacity:1}]);
 }
@@ -77,9 +84,14 @@ document.addEventListener('focusin', event => {
 const exitProperties = ['--exit-left', '--exit-top', '--exit-width', '--exit-height', '--exit-display'] as const;
 let workspaceMotion: Animation | undefined;
 
-function playWorkspaceMotion(surface: Element, interrupt = true): void {
+function playWorkspaceMotion(surface: Element, interrupt = true, focusSafeSurface?: Element): void {
   if (!interrupt && isMoving(workspaceMotion)) return;
-  const next = playLayoutMotion(surface, .82, workspaceMotion);
+  const target = ownsVisibleFocus(surface) ? focusSafeSurface : surface;
+  if (!target) {
+    if (interrupt) workspaceMotion?.cancel();
+    return;
+  }
+  const next = playLayoutMotion(target, .82, workspaceMotion);
   if (!next) return;
   workspaceMotion = next;
   const clear = () => { if (workspaceMotion === next) workspaceMotion = undefined; };
@@ -457,6 +469,9 @@ async function refreshFiles(remappedFocus?: string) {
         const label = document.createElement('summary'), folderIcon = document.createElementNS('http://www.w3.org/2000/svg','svg'), folderPath = document.createElementNS('http://www.w3.org/2000/svg','path'), folderName = document.createElement('span');
         folderIcon.setAttribute('viewBox','0 0 24 24'); folderIcon.setAttribute('aria-hidden','true'); folderIcon.setAttribute('class','folder-icon'); folderPath.setAttribute('d','M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'); folderIcon.append(folderPath); folderName.textContent=item.name; const disclosure=actionIcon('next');disclosure.classList.add('folder-chevron');label.append(disclosure,folderIcon,folderName); label.title = item.path;
         label.oncontextmenu = event => { menuFolder=item.path; $('#file-menu').hidden=true; showFileContextMenu($('#folder-menu'), event); };
+        label.addEventListener('click', () => {
+          if (folder.open && motionEnabled()) folder.style.setProperty('--folder-label-height', `${label.offsetHeight}px`);
+        });
         folder.append(label, renderNodes(item.children));
         list.append(addActions(folder, item, true));
       } else {
@@ -760,14 +775,23 @@ $('#source').addEventListener('click', updateActiveLine);
 $('#source').addEventListener('keyup', updateActiveLine);
 $('#search').oninput = renderProjects;
 $('#clear-search').onclick = () => { $('#search').value = ''; renderProjects(); $('#search').focus(); };
+function displaySidebarTab(files: boolean): void {
+  const incoming: HTMLElement = $(files ? '#files-surface' : '#chat-list');
+  if (!incoming.hidden) return;
+  // Both tabs fill the same space. Switch live controls before painting the
+  // entrance so an old control can never cover the other tab's hit target.
+  $('#files-surface').hidden = !files;
+  $('#chat-list').hidden = files;
+  playLayoutMotion($('#sidebar-content'), .8);
+}
 $('#files-tab').onclick = () => {
-  swapSurfaces([$('#files-surface')], [$('#chat-list')]);
+  displaySidebarTab(true);
   void runProjectSearch();
   $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true');
   $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false');
 };
 $('#chats-tab').onclick = () => {
-  swapSurfaces([$('#chat-list')], [$('#files-surface')]);
+  displaySidebarTab(false);
   ++searchRequest; clearTimeout(searchTimer);
   $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true');
   $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false');
@@ -1776,26 +1800,38 @@ const expandChat = document.createElement('button'); expandChat.type = 'button';
 expandChat.onclick = () => {
   const expanded=!$('.editor-pane').classList.contains('chat-expanded');
   closeLayoutTools();paneLayout={...paneLayout,agent:true,editor:!expanded};applyPaneLayout();
-  playWorkspaceMotion(workspaceShell);
+  playWorkspaceMotion(workspaceShell, true, $('#chat-messages'));
 };
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
 $('#toggle-agent').onclick = () => togglePane('agent');
 const sidebar = document.getElementById('project-navigation')!;
+const sidebarMotionSurface = document.createElement('span');
+sidebarMotionSurface.className = 'sidebar-motion-surface';
+sidebarMotionSurface.setAttribute('aria-hidden', 'true');
 const sidebarEdge = document.createElement('span');
 sidebarEdge.className = 'sidebar-motion-edge';
 sidebarEdge.setAttribute('aria-hidden', 'true');
-sidebar.append(sidebarEdge);
+sidebar.append(sidebarMotionSurface, sidebarEdge);
 $('#collapse').onclick = () => {
   const animate = motionEnabled();
   const start = animate ? sidebarEdge.getBoundingClientRect().left : 0;
   stopMotion(sidebarEdge);
+  stopMotion(sidebarMotionSurface);
   const collapsed = sidebar.classList.toggle('collapsed');
   $('#collapse').setAttribute('aria-expanded', String(!collapsed));
   $('#collapse').title = $('#collapse').ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
   if (animate) {
-    const offset = start - sidebarEdge.getBoundingClientRect().left;
-    if (Math.abs(offset) > .5) playMotion(sidebarEdge, [{translate:`${offset}px 0`}, {translate:'0'}]);
+    const edge = sidebarEdge.getBoundingClientRect().left;
+    const offset = start - edge;
+    if (Math.abs(offset) > .5) {
+      const width = Math.max(1, sidebar.clientWidth);
+      playMotion(sidebarMotionSurface, [
+        {scale:`${Math.max(1, width + offset) / width} 1`, opacity:.28},
+        {scale:'1 1', opacity:0}
+      ]);
+      playMotion(sidebarEdge, [{translate:`${offset}px 0`}, {translate:'0'}]);
+    }
   }
 };
 $('#outline-toggle').onclick = () => {
@@ -2004,7 +2040,7 @@ toolsButton.onclick = () => {
   toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
-  playWorkspaceMotion(compactWorkspace.matches ? workspaceShell : $(showingTools ? '#tools-panel' : '#pdf-content'));
+  playWorkspaceMotion(workspaceShell);
 };
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 let toolsExpansion: 'manual' | 'comparison' | 'logs' | null = null;
@@ -2014,7 +2050,7 @@ function setToolsExpansion(value: typeof toolsExpansion): void {
   $('#workspace').classList.toggle('tools-expanded', !!value);
   expandTools.textContent = value ? 'Collapse panel' : 'Expand panel';
   expandTools.setAttribute('aria-label', value ? 'Collapse tools panel' : 'Expand tools panel');
-  if (changed && showingTools) playWorkspaceMotion(workspaceShell);
+  if (changed && showingTools) playWorkspaceMotion(workspaceShell, true, $('#tool-body'));
 }
 expandTools.onclick = () => setToolsExpansion(toolsExpansion ? null : 'manual');
 $('.tool-tabs').append(expandTools);
@@ -2704,7 +2740,10 @@ const sidebarResize = sidebar;
 const workspaceResize = document.getElementById("workspace")!;
 const editorResize = document.querySelector<HTMLElement>(".editor-pane")!;
 const chatResize = document.getElementById("chat")!;
-document.getElementById('sidebar-resize')!.addEventListener('pointerdown', () => stopMotion(sidebarEdge));
+document.getElementById('sidebar-resize')!.addEventListener('pointerdown', () => {
+  stopMotion(sidebarEdge);
+  stopMotion(sidebarMotionSurface);
+});
 resizeHandle("sidebar-resize", "x", delta => {
   sidebarResize.style.setProperty("--sidebar-width", `${Math.max(150, Math.min(Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth + delta))}px`);
 });

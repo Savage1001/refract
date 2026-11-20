@@ -10,6 +10,28 @@ async function openProject(page: Page): Promise<void> {
   await page.locator('#source').waitFor();
 }
 
+test('press feedback keeps a stationary edge click on its button', {timeout:15000}, async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    const button = page.locator('#new');
+    const bounds = (await button.boundingBox())!;
+    const x = bounds.x + .5, y = bounds.y + bounds.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.waitForFunction(() => getComputedStyle(document.getElementById('new')!).filter !== 'none');
+    await page.waitForTimeout(155);
+    assert.equal(await page.evaluate(({x,y}) => {
+      const button = document.getElementById('new')!;
+      return button.contains(document.elementFromPoint(x, y));
+    }, {x,y}), true);
+    await page.mouse.up();
+    await page.locator('#source').waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('overlay fades leave the app immediately interactive and preserve focus on reversal', async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
@@ -188,7 +210,10 @@ test('Find and the composer show keyboard focus immediately and motion can be di
     await page.keyboard.press('Escape');
     await page.locator('#chat-input').focus();
     assert.match(await page.locator('.composer').evaluate(composer => getComputedStyle(composer).boxShadow), /27, 78, 216/);
-    await page.locator('#pane-preview').evaluate((button: HTMLButtonElement) => button.click());
+    await page.locator('#pane-preview').evaluate((button: HTMLButtonElement) => {
+      button.focus();
+      button.click();
+    });
     assert.equal(await page.locator('.workspace-shell').evaluate(shell =>
       shell.getAnimations().some(animation => animation.id === 'refract-motion')), true);
     await page.emulateMedia({reducedMotion:'reduce'});
@@ -204,9 +229,26 @@ test('Find and the composer show keyboard focus immediately and motion can be di
 test('folder keyboard order and sidebar exit hit testing match the live layout', async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
+    await page.evaluate(() => {
+      const state = (window as unknown as {fixture:{files:Record<string,string>}}).fixture;
+      state.files['z-last.tex'] = '% A file after the folder';
+    });
     await openProject(page);
     const folder = page.locator('#file-list summary').first();
-    if (await folder.evaluate(summary => (summary.parentElement as HTMLDetailsElement).open)) await folder.press('Enter');
+    const exit = await folder.evaluate((summary: HTMLElement) => {
+      const details = summary.parentElement as HTMLDetailsElement;
+      if (!details.open) summary.click();
+      getComputedStyle(details, '::details-content').clipPath;
+      summary.click();
+      const style = getComputedStyle(details, '::details-content');
+      const next = document.querySelector<HTMLButtonElement>('#file-list button[title="z-last.tex"]')!;
+      const {left,top,width,height} = next.getBoundingClientRect();
+      return {position:style.position, pointer:style.pointerEvents,
+        paintingExit:!details.open && style.contentVisibility === 'visible' && style.clipPath !== 'inset(0px 0px 100%)',
+        liveFileOwnsPointer:next.contains(document.elementFromPoint(left+width/2, top+height/2)),
+        liveFileHasBacking:getComputedStyle(next.parentElement!).backgroundColor !== 'rgba(0, 0, 0, 0)'};
+    });
+    assert.deepEqual(exit, {position:'absolute', pointer:'none', paintingExit:true, liveFileOwnsPointer:true, liveFileHasBacking:true});
     await folder.press('Enter');
     await page.keyboard.press('Tab');
     assert.equal(await page.locator('#file-list button[title="sections/abstract.tex"]')
@@ -222,35 +264,60 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     await page.locator('#outline-toggle').click();
     assert.equal(await outline.isVisible(), true);
     const files = await page.evaluate(() => {
-      const list = document.getElementById('files-surface')!;
-      const before = list.getBoundingClientRect();
-      document.getElementById('chats-tab')!.click();
-      const after = list.getBoundingClientRect();
-      const chats = document.getElementById('chat-list')!.getBoundingClientRect();
-      return {before:before.toJSON(), after:after.toJSON(), inert:getComputedStyle(list).getPropertyValue('interactivity'),
-        hidden:list.hidden, chatsVisible:chats.height > 0};
-    });
-    assert.deepEqual(files.after, files.before, 'Outgoing file controls retain their painted bounds only');
-    assert.equal(files.hidden, true);
-    assert.equal(files.inert, 'inert');
-    assert.equal(files.chatsVisible, true);
-    const reversal = await page.evaluate(() => {
       const files = document.getElementById('files-surface')!;
       const chats = document.getElementById('chat-list')!;
-      for (const item of [files, chats]) {
-        item.getAnimations().find(animation => animation.id === 'refract-motion')!.currentTime = 45;
-      }
-      const before = [files,chats].map(item => Number(getComputedStyle(item).opacity));
-      document.getElementById('files-tab')!.click();
-      const after = [files,chats].map(item => {
-        const effect = item.getAnimations().find(animation => animation.id === 'refract-motion')!.effect as KeyframeEffect;
-        return Number(effect.getKeyframes()[0].opacity);
-      });
-      return {before,after};
+      document.getElementById('chats-tab')!.click();
+      const button = chats.querySelector('button')!;
+      const {left,top,width,height} = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(left + width / 2, top + height / 2);
+      return {filesDisplayed:getComputedStyle(files).display, chatsVisible:height > 0, chatOwnsPointer:button.contains(hit)};
     });
-    assert.deepEqual(reversal.after, reversal.before);
-    assert.ok(reversal.before[0] < .9);
+    assert.deepEqual(files, {filesDisplayed:'none', chatsVisible:true, chatOwnsPointer:true});
+    const reversal = await page.evaluate(() => {
+      const surface = document.getElementById('sidebar-content')!;
+      const fade = () => surface.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      fade().currentTime = 45;
+      const before = Number(getComputedStyle(surface).opacity);
+      document.getElementById('files-tab')!.click();
+      const effect = fade().effect as KeyframeEffect;
+      return {before,after:Number(effect.getKeyframes()[0].opacity)};
+    });
+    assert.equal(reversal.after, reversal.before);
+    assert.ok(reversal.before > .8 && reversal.before < 1);
     assert.equal(await page.locator('#file-list').isVisible(), true);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Tools preserves fade continuity while keeping a keyboard-focused expansion control opaque', {timeout:15000}, async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    await openProject(page);
+    await page.locator('#tools').click();
+    const handoff = await page.evaluate(() => {
+      const shell = document.querySelector('.workspace-shell')!;
+      const fade = () => shell.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      document.querySelector<HTMLButtonElement>('.expand-tools')!.click();
+      fade().currentTime = 125;
+      const before = Number(getComputedStyle(shell).opacity);
+      document.getElementById('tools')!.click();
+      const effect = fade().effect as KeyframeEffect;
+      return {before, after:Number(effect.getKeyframes()[0].opacity)};
+    });
+    assert.equal(handoff.after, handoff.before);
+    await page.locator('#tools').click();
+    const expand = page.getByRole('button', {name:'Expand tools panel',exact:true});
+    await expand.focus();
+    await page.keyboard.press('Enter');
+    const control = page.getByRole('button', {name:'Collapse tools panel',exact:true});
+    const focused = await control.evaluate(button => ({
+      active: document.activeElement === button && button.matches(':focus-visible'),
+      shellOpacity: getComputedStyle(button.closest('.workspace-shell')!).opacity,
+      outline: getComputedStyle(button).outlineStyle
+    }));
+    assert.deepEqual(focused, {active:true, shellOpacity:'1', outline:'solid'});
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
@@ -261,22 +328,31 @@ test('a pane change takes over an unfinished PDF reveal and leaves one live fade
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
     await page.locator(project).first().waitFor();
-    const reveal = await page.evaluate(() => new Promise<{initial:number; reversed:number[]}>(resolve => {
+    const reveal = await page.evaluate(() => new Promise<{initial:number; reversed:number[]; before:number; after:number}>(resolve => {
       const animations = (selector: string) => document.querySelector(selector)!.getAnimations()
         .filter(animation => animation.id === 'refract-motion').length;
       const observer = new MutationObserver(() => {
-        if (!document.querySelector('.pdf-pages')) return;
+        const pdf = document.querySelector('.pdf-pages');
+        if (!pdf) return;
         observer.disconnect();
         const initial = animations('.pdf-pages');
+        const fade = pdf.getAnimations().find(animation => animation.id === 'refract-motion')!;
+        fade.currentTime = 90;
+        const before = Number(getComputedStyle(pdf).opacity);
         const preview = document.getElementById('pane-preview')!;
         preview.click();
+        const shell = document.querySelector('.workspace-shell')!;
+        const effect = shell.getAnimations().find(animation => animation.id === 'refract-motion')!.effect as KeyframeEffect;
+        const after = Number(effect.getKeyframes()[0].opacity);
         preview.click();
-        resolve({initial, reversed:['.workspace-shell','#pdf-content','.pdf-pages'].map(animations)});
+        resolve({initial, before, after, reversed:['.workspace-shell','#pdf-content','.pdf-pages'].map(animations)});
       });
       observer.observe(document.getElementById('pdf-area')!, {childList:true});
       document.querySelector<HTMLButtonElement>('#list .project-open')!.click();
     }));
-    assert.deepEqual(reveal, {initial:1, reversed:[1,0,0]});
+    assert.equal(reveal.initial, 1);
+    assert.deepEqual(reveal.reversed, [1,0,0]);
+    assert.equal(reveal.after, reveal.before);
     assert.equal(await page.locator('.pdf-pages').isVisible(), true);
     assert.deepEqual(errors, []);
   } finally {
@@ -390,13 +466,15 @@ test('sidebar motion does not repeatedly lay out a 24-page PDF', {timeout:30000}
         button.click();
         const collapsed = sidebar.clientWidth;
         const movingEdge = edge.getAnimations().some(animation => animation.id === 'refract-motion');
+        const panelMoving = sidebar.querySelector('.sidebar-motion-surface')!.getAnimations()
+          .some(animation => animation.id === 'refract-motion');
         const startingEdge = edge.getBoundingClientRect().left;
         const collapseFrames = await monitor();
         button.click();
         const expanded = sidebar.clientWidth;
         const expandFrames = await monitor();
         const content = document.querySelector('#project-side')!;
-        return {collapsed, expanded, movingEdge, edgeStartsAtOldSide:Math.abs(startingEdge - oldEdge) < 3,
+        return {collapsed, expanded, movingEdge, panelMoving, edgeStartsAtOldSide:Math.abs(startingEdge - oldEdge) < 3,
           overflow:content.scrollWidth > content.clientWidth,
           longestFrame: Math.round(Math.max(...collapseFrames, ...expandFrames))};
       });
@@ -407,9 +485,7 @@ test('sidebar motion does not repeatedly lay out a 24-page PDF', {timeout:30000}
       await page.locator('#file-list summary').first().evaluate(async (folder: HTMLElement) => {
         for (let toggle = 0; toggle < 8; toggle++) {
           folder.click();
-          await Promise.allSettled((folder.parentElement?.getAnimations({subtree:true}) ?? [])
-            .map(animation => animation.finished));
-          await new Promise<number>(resolve => requestAnimationFrame(resolve));
+          await new Promise(resolve => setTimeout(resolve, 165));
         }
       });
       return (await layoutCount()) - before;
@@ -422,6 +498,7 @@ test('sidebar motion does not repeatedly lay out a 24-page PDF', {timeout:30000}
     context.diagnostic(`24-page PDF, collapse + expand: ${animated.layouts} animated layouts / ${reduced.layouts} reduced-motion layouts. Longest sampled frames: ${animated.longestFrame} ms / ${reduced.longestFrame} ms.`);
     assert.ok(animated.expanded > animated.collapsed);
     assert.equal(animated.movingEdge, true);
+    assert.equal(animated.panelMoving, true);
     assert.equal(animated.edgeStartsAtOldSide, true);
     assert.equal(animated.overflow, false);
     assert.ok(animated.layouts <= reduced.layouts + 6, 'Motion must not drive renderer layout on every frame');
