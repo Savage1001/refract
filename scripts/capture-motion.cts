@@ -98,7 +98,7 @@ const scenes: Scene[] = [
       files['z-review.tex'] = '% Review notes';
       for (let index = 0; index < 5; index++) files[`sections/notes-${index}.tex`] = '% Nested notes';
     });
-    await open(page);
+    await open(page, false);
     const folder = page.locator('#file-list summary').first();
     const point = await folder.evaluate((summary:HTMLElement) => {
       const first = document.querySelector('#file-list button[title="z-results.tex"]')!;
