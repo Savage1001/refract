@@ -211,13 +211,8 @@ h2 {
   z-index:40;
 }
 
-body:has(#projects:not([hidden])) .app-titlebar::before {
-  content:"";
-  position:absolute;
-  inset:100% 0 auto;
-  height:48px;
-  background:linear-gradient(to bottom, var(--sidebar), transparent);
-  pointer-events:none;
+body:has(#projects:not([hidden])) .app-titlebar {
+  background:var(--canvas);
 }
 
 /* Project navigation. */

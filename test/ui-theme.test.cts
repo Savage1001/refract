@@ -59,11 +59,12 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
    const background = (selector: string) => page.locator(selector).evaluate(el => getComputedStyle(el).backgroundColor);
    assert.equal(await background('body'), mode === 'dark' ? 'rgb(10, 10, 10)' : 'rgb(252, 252, 252)');
    assert.equal(await background('.sidebar'), mode === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(250, 250, 250)');
-   assert.equal(await background('.app-titlebar'), await background('.sidebar'));
+   assert.equal(await background('.app-titlebar'), await background('body'));
    assert.equal(await background('#new'), mode === 'dark' ? 'rgb(52, 107, 241)' : 'rgb(27, 78, 216)');
    await capture(`${mode}-projects`);
    await page.getByRole('button', { name: 'Open Spectral methods for fluid dynamics', exact: true }).click();
    await page.locator('#source').waitFor({ state: 'visible' });
+   assert.equal(await background('.app-titlebar'), await background('.sidebar'));
    await page.getByText('Compiled', { exact: true }).waitFor({ timeout: 45000 });
    await page.locator('#pdf-area canvas').first().waitFor();
    await page.locator('#file-list button[title="sections/abstract.tex"]').click();
