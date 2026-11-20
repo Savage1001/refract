@@ -359,50 +359,49 @@ test('normal-speed file row edge presses keep the pointer-down frame and open th
     });
     await openProject(page);
     const folder = page.locator('#file-list summary').first();
-    let movingPresses = 0;
-    let pressesAfterFirstFrame = 0;
-    for (let trial = 0; trial < 24; trial++) {
-      const point = await folder.evaluate((summary:HTMLElement, distance) => {
-        if (!(summary.parentElement as HTMLDetailsElement).open) summary.click();
-        const first = document.querySelector<HTMLButtonElement>('#file-list button[title="z-first.tex"]')!;
-        const {left,width,bottom} = first.getBoundingClientRect();
-        const list = document.getElementById('file-list')!;
-        const read = (event:PointerEvent) => {
-          if (!(event.target instanceof Element)) return;
-          const file = event.target.closest<HTMLButtonElement>('button[data-path]');
-          const motion = file?.parentElement?.getAnimations().find(animation => animation.id === 'refract-motion');
-          list.dataset[`${event.type}File`] = file?.dataset.path ?? '';
-          list.dataset[`${event.type}Time`] = String(motion?.currentTime ?? '');
-          list.dataset[`${event.type}Speed`] = String(motion?.playbackRate ?? '');
-        };
-        // Window capture samples the live frame before the renderer's document listener.
-        window.addEventListener('pointerdown', read, {capture:true, once:true});
-        window.addEventListener('pointerup', read, {capture:true, once:true});
-        window.addEventListener('pointermove', () => summary.click(), {capture:true, once:true});
-        return {x:Math.floor(left + width / 2), y:Math.floor(bottom - distance)};
-      }, 3 + trial % 8);
-      await page.mouse.move(point.x, point.y);
-      await page.waitForTimeout(trial % 9);
-      await page.mouse.down();
-      await page.waitForTimeout(30);
-      await page.mouse.up();
-      const {down, up, downTime, upTime, speed} = await page.locator('#file-list').evaluate(list => {
-        const values = (list as HTMLElement).dataset;
-        return {down:values.pointerdownFile, up:values.pointerupFile, downTime:values.pointerdownTime,
-          upTime:values.pointerupTime, speed:values.pointerdownSpeed};
-      });
-      if (down !== 'z-first.tex' && down !== 'z-second.tex') continue;
-      assert.equal(speed, '1');
-      assert.equal(up, down);
-      assert.ok(downTime);
-      assert.equal(upTime, downTime, 'The group must freeze at the pointer-down frame');
-      movingPresses++;
-      if (Number(downTime) > 0) pressesAfterFirstFrame++;
-      await page.waitForFunction(path => document.querySelector('#file-list button.active-file')?.getAttribute('data-path') === path, down);
-      assert.equal(await page.locator('#source').inputValue(), down === 'z-first.tex' ? '% First moving file' : '% Second moving file');
-    }
-    assert.ok(movingPresses >= 12, `Only ${movingPresses} presses landed on the moving files`);
-    assert.ok(pressesAfterFirstFrame > 0, 'Exercise a press after the rows have started moving');
+    const point = await folder.evaluate(async (summary:HTMLElement) => {
+      summary.click();
+      const list = document.getElementById('file-list')!;
+      const first = list.querySelector<HTMLButtonElement>('button[title="z-first.tex"]')!;
+      const rows = list.getAnimations({subtree:true}).filter(animation => animation.id === 'refract-motion');
+      // Seek into the closing motion so the press never depends on how soon the
+      // CI runner delivers the first animation frame. Leave playback at 1×.
+      for (const animation of rows) {
+        animation.pause();
+        animation.currentTime = 120;
+      }
+      await Promise.all(rows.map(animation => animation.ready));
+      window.addEventListener('pointermove', () => {
+        for (const animation of rows) animation.play();
+      }, {capture:true, once:true});
+      const read = (event:PointerEvent) => {
+        if (!(event.target instanceof Element)) return;
+        const file = event.target.closest<HTMLButtonElement>('button[data-path]');
+        list.dataset[`${event.type}File`] = file?.dataset.path ?? '';
+        list.dataset[`${event.type}Times`] = JSON.stringify(rows.map(animation => animation.currentTime));
+        list.dataset[`${event.type}Speeds`] = JSON.stringify(rows.map(animation => animation.playbackRate));
+      };
+      // Window capture samples the live frame before the renderer's document listener.
+      window.addEventListener('pointerdown', read, {capture:true, once:true});
+      window.addEventListener('pointerup', read, {capture:true, once:true});
+      const {left,width,bottom} = first.getBoundingClientRect();
+      return {x:Math.floor(left + width / 2), y:Math.floor(bottom - 8)};
+    });
+    await page.mouse.click(point.x, point.y, {delay:50});
+    const result = await page.locator('#file-list').evaluate(list => {
+      const values = (list as HTMLElement).dataset;
+      return {down:values.pointerdownFile, up:values.pointerupFile,
+        downTimes:JSON.parse(values.pointerdownTimes ?? '[]') as number[],
+        upTimes:JSON.parse(values.pointerupTimes ?? '[]') as number[],
+        speeds:JSON.parse(values.pointerdownSpeeds ?? '[]') as number[]};
+    });
+    assert.equal(result.down, 'z-first.tex');
+    assert.equal(result.up, result.down);
+    assert.deepEqual(result.speeds, [1,1]);
+    assert.ok(result.downTimes.every(time => time >= 120 && time < 200));
+    assert.deepEqual(result.upTimes, result.downTimes, 'Both rows must freeze at their pointer-down frame');
+    await page.waitForFunction(() => document.querySelector('#file-list button.active-file')?.getAttribute('data-path') === 'z-first.tex');
+    assert.equal(await page.locator('#source').inputValue(), '% First moving file');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
