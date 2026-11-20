@@ -181,14 +181,17 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.locator('#list article').first().click();
  await page.locator('#source').waitFor({state:'visible'});
  assert.match(await page.locator('#source').inputValue(), /Test Section/);
- await page.locator('#duplicate').click();
+ await page.locator('#home').click();
+ await page.getByLabel('Actions for Research paper', {exact:true}).click();
+ const duplicate = page.getByRole('button', {name:'Duplicate Research paper', exact:true});
+ await duplicate.click();
  const duplicateDialog = page.getByRole('dialog', {name:/Duplicate Research paper/});
  await duplicateDialog.waitFor();
  assert.equal(await duplicateDialog.getByRole('button', {name:'Cancel'}).evaluate(button => button === document.activeElement), true);
  await page.keyboard.press('Escape');
  await duplicateDialog.waitFor({state:'hidden'});
- assert.equal(await page.locator('#duplicate').evaluate(button => button === document.activeElement), true);
- await page.locator('#duplicate').click();
+ assert.equal(await duplicate.evaluate(button => button === document.activeElement), true);
+ await duplicate.click();
  await duplicateDialog.getByRole('button', {name:'Duplicate', exact:true}).click();
  await page.getByRole('button',{name:'Research paper (copy)',exact:true}).waitFor();
  await page.locator('#source').waitFor({state:'visible'});
@@ -540,7 +543,10 @@ test('project rename, duplication and engine setting persist independently', {ti
  await page.waitForFunction(()=>{const input=document.querySelector('select[aria-label="LaTeX engine"]') as HTMLSelectElement;return input?.value==='xelatex' && !input.disabled;});
  await page.locator('#tools').click();
  await page.getByText('Compiled',{exact:true}).waitFor({timeout:45000});
- await page.locator('#duplicate').click();await page.locator('#app-dialog-action').click();await page.locator('#project-name').getByText('Research (copy)',{exact:true}).waitFor();
+ await page.locator('#home').click();
+ await page.getByLabel('Actions for Research', {exact:true}).click();
+ await page.getByRole('button', {name:'Duplicate Research', exact:true}).click();
+ await page.locator('#app-dialog-action').click();await page.locator('#project-name').getByText('Research (copy)',{exact:true}).waitFor();
  await page.locator('#home').click();await page.getByRole('button',{name:'Open Research (copy)'}).waitFor();
  await app.close();app=null;app=await launchDesktop(env);page=await app.firstWindow();
  await page.getByRole('button',{name:'Open Research',exact:true}).waitFor();await page.getByRole('button',{name:'Open Research (copy)'}).click();await page.locator('#source').waitFor({state:'visible'});
@@ -984,11 +990,13 @@ test('SyncTeX navigates between a nested source and compiled PDF', {timeout:9000
  await assertSourceVisible();
  await app.evaluate(({ipcMain})=>{
   const state=globalThis as any;state.__syncStarted=new Promise<void>(resolve=>{state.__syncNotify=resolve;});
-  ipcMain.removeHandler('synctex:forward');ipcMain.handle('synctex:forward',async()=>{state.__syncNotify();await new Promise<void>(resolve=>{state.__syncRelease=resolve;if(state.__syncCancel)resolve();});return {page:2,x:100,y:100};});
+  ipcMain.removeHandler('synctex:forward');ipcMain.handle('synctex:forward',async()=>{state.__syncNotify();await new Promise<void>(resolve=>{state.__syncRelease=resolve;if(state.__syncCancel)resolve();});return {page:1,x:100,y:100};});
  });
  await page.getByRole('button',{name:'Show in PDF'}).click();await app.evaluate(async()=>await (globalThis as any).__syncStarted);
  await source.fill('Changed');assert.equal(await page.getByRole('button',{name:'Show in PDF'}).isDisabled(),true);
- await app.evaluate(()=>{(globalThis as any).__syncRelease();});await page.waitForTimeout(250);assert.equal(await page.locator('.pdf-page-count').innerText(),'0 / 0');
+ await app.evaluate(()=>{(globalThis as any).__syncRelease();});await page.waitForTimeout(250);
+ assert.equal(await page.locator('.pdf-page-count').innerText(),'2 / 2');
+ assert.equal(await page.getByRole('button',{name:'Show in PDF'}).isDisabled(),true);
  assert.deepEqual(dialogs,[]);
 });
 
