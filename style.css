@@ -2017,6 +2017,11 @@ main {
   border:1px solid var(--picker-line);
   font-size:12px;
 }
+.model-sign-in {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
 .model-notice {
   position:absolute;
   right:0;

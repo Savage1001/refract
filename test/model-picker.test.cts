@@ -10,7 +10,7 @@ const {test} = nodeTest;
 const {chromium} = playwright;
 
 type ModelSelection = Omit<CodexPreferences, 'favorites'>;
-type Mode = 'normal' | 'empty' | 'slow' | 'fail-load' | 'fail-discovery' | 'fail-save' | 'no-opencode' | 'provider-check-failed' | 'offline-duplicates' | 'empty-opencode' | 'no-low-default' | 'unknown-default' | 'empty-codex' | 'failed-codex';
+type Mode = 'signed-out' | 'normal' | 'empty' | 'slow' | 'fail-load' | 'fail-discovery' | 'fail-save' | 'no-opencode' | 'provider-check-failed' | 'offline-duplicates' | 'empty-opencode' | 'no-low-default' | 'unknown-default' | 'empty-codex' | 'failed-codex';
 interface PickerFixture extends Window {
   codexPickerReady(): Promise<ModelSelection>;
   ready?: Promise<ModelSelection>;
@@ -43,7 +43,7 @@ const markup = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href
 async function picker(t: TestContext, mode: Mode = 'normal', selectCodex = true): Promise<Page> {
   const browser = await chromium.launch({channel: 'msedge', headless: true});
   t.after(() => browser.close());
-  const page = await browser.newPage({viewport: {width: 1200, height: 800}});
+  const page = await browser.newPage({viewport: {width: 1200, height: 800}, colorScheme: mode === 'signed-out' ? 'dark' : 'light'});
   page.setDefaultTimeout(5000);
   await page.route(`${root}/**`, async route => {
     const asset = new URL(route.request().url()).pathname;
@@ -52,6 +52,12 @@ async function picker(t: TestContext, mode: Mode = 'normal', selectCodex = true)
         '<select id="chat-provider" data-picker-status="error"></select>');
       await route.fulfill({contentType: 'text/html', body: unavailable});
     }
+    else if (asset === '/' && mode === 'signed-out') await route.fulfill({
+      contentType: 'text/html',
+      body: markup.replace('<select id="chat-provider">', '<select id="chat-provider" data-codex-sign-in-required="true">')
+        .replace('<option value="codex">', '<option value="codex" disabled>')
+        .replace('<option value="opencode">', '<option value="opencode" disabled>')
+    });
     else if (asset === '/') await route.fulfill({contentType: 'text/html', body: mode === 'no-opencode' ? markup.replace('<option value="opencode">', '<option value="opencode" disabled>') : markup});
     else await route.fulfill({path: path.join(assets, asset)});
   });
@@ -602,4 +608,19 @@ test('switching Codex connections isolates pending saves and model selections', 
     return w.saves;
   });
   assert.deepEqual(saves, [{provider: 'cli', value: {model: 'gpt-6.2', reasoningEffort: 'high', favorites: []}}]);
+});
+
+test('signed-out ChatGPT account shows the branded sign-in action', async t => {
+  const page = await picker(t, 'signed-out');
+  const signIn = choice(page, 'Sign in with ChatGPT');
+  assert.ok(await signIn.isVisible());
+  await page.waitForFunction(() => document.querySelector<HTMLImageElement>('.model-sign-in img')?.naturalWidth);
+  await page.locator('#chat-provider').evaluate(provider => {
+    provider.addEventListener('picker-sign-in', () => provider.setAttribute('data-sign-in-requested', 'true'));
+  });
+  if (process.env.REFRACT_PICKER_CAPTURE) {
+    await page.locator('.model-panel').screenshot({path: process.env.REFRACT_PICKER_CAPTURE});
+  }
+  await signIn.click();
+  assert.equal(await page.locator('#chat-provider').getAttribute('data-sign-in-requested'), 'true');
 });
