@@ -378,7 +378,9 @@ async function openProject(p) {
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
   ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = !$('#files-tab').classList.contains('active'); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
-  attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p; restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
+  attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p;
+  suspendPickerForProject(p.id);
+  restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
   compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; toolsButton.setAttribute('aria-expanded', 'false'); $('#compile').textContent = 'Compile';
   pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
   $('#project-navigation').hidden = false; $('#project-name').textContent = p.name;
@@ -464,7 +466,7 @@ function updateEditor() {
   }));
 }
 $('#new').onclick = createProject; $('#start').onclick = createProject;
-$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
+$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; suspendPickerForProject(); clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
 const pendingSaves = new Map<string, Map<string, Promise<Error | null>>>();
 $('#source').oninput = () => {
   const id = active.id, name = currentFile, content = $('#source').value;
@@ -807,19 +809,26 @@ const assistantFormatter: Promise<(text:string)=>string> = (async () => {
   const parser=new Marked({extensions:[math(true),math(false)]});
   return (text:string) => sanitize(parser.parse(text));
 })();
+function publishProviderStatus(provider: HTMLSelectElement, status: 'loading' | 'ready' | 'error'): void {
+  provider.dataset.pickerStatus = status;
+  provider.dispatchEvent(new Event('providerstate'));
+  updateSendState();
+}
+function suspendPickerForProject(projectId?: string): void {
+  const provider = $('#chat-provider') as HTMLSelectElement;
+  providerDiscovery++;
+  providerAvailable = false;
+  provider.disabled = true;
+  publishProviderStatus(provider, 'loading');
+  window.dispatchEvent(new CustomEvent('picker-project', {detail:projectId}));
+}
 function discoverChatProviders(preferred: string | null, handoff: string | null): void {
   const provider = $('#chat-provider') as HTMLSelectElement;
   provider.dataset.handoff = handoff ?? '';
   const request = ++providerDiscovery;
-  const publish = (status: 'loading' | 'ready' | 'error') => {
-    provider.dataset.pickerStatus = status;
-    provider.dispatchEvent(new Event('providerstate'));
-    updateSendState();
-  };
   providerAvailable = false;
   provider.disabled = true;
-  publish('loading');
-  if (active?.id) window.dispatchEvent(new CustomEvent('picker-project', {detail:active.id}));
+  publishProviderStatus(provider, 'loading');
   void store.discoverProviders().then((available: {codex: boolean; opencode: boolean}) => {
     if (request !== providerDiscovery) return;
     provider.replaceChildren();
@@ -832,12 +841,12 @@ function discoverChatProviders(preferred: string | null, handoff: string | null)
     if (preferred && Array.from(provider.options).some(option => option.value === preferred)) provider.value = preferred;
     provider.disabled = !provider.value;
     providerAvailable = Boolean(available[provider.value]);
-    publish('ready');
+    publishProviderStatus(provider, 'ready');
   }).catch(() => {
     if (request !== providerDiscovery) return;
     provider.replaceChildren();
     providerAvailable = false;
-    publish('error');
+    publishProviderStatus(provider, 'error');
   });
 }
 $('#chat-provider').addEventListener('picker-retry-providers', () => {

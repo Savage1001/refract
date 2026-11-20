@@ -869,7 +869,7 @@ function syncProviders(): void {
 }
 provider.addEventListener('providerstate', syncProviders);
 provider.addEventListener('change', render);
-window.addEventListener('picker-project', (event: CustomEvent<string>) => {
+window.addEventListener('picker-project', (event: CustomEvent<string | undefined>) => {
   if (event.detail === project) return;
   project = event.detail;
   invalidateOpenCodeCatalog();

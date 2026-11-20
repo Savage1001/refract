@@ -373,3 +373,65 @@ test('headless chat drafts keep a staged handoff and block sends until model rec
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
 });
+
+test('headless provider results cannot save a default after another project starts opening', {timeout:60000}, async()=> {
+ const {browser,page,errors}=await fixture.openHeadlessUi('light',{pdf:'',source:'An example document'});
+ try {
+  await page.evaluate(()=> {
+   type RaceWindow = Window & {
+    store:Record<string,unknown>; fixture:{projects:unknown[]};
+    catalogRequests:string[]; savedModels:string[];
+    finishCatalog?:()=>void; finishProviderCheck?:()=>void; finishProjectLoad?:()=>void;
+   };
+   const w=window as unknown as RaceWindow;
+   const available={codex:false,opencode:true};
+   w.catalogRequests=[];
+   w.savedModels=[];
+   let checks=0;
+   w.store.discoverProviders=()=> ++checks === 2
+    ? new Promise(resolve=>{w.finishProviderCheck=()=>resolve(available);})
+    : Promise.resolve(available);
+   w.store.discoverOpenCodeModels=(id:string)=>{
+    w.catalogRequests.push(id);
+    const result={ok:true,models:[{id:'lmstudio/'+id,name:'Model for '+id,variants:[]}]};
+    return w.catalogRequests.length===1
+     ? new Promise(resolve=>{w.finishCatalog=()=>resolve(result);})
+     : Promise.resolve(result);
+   };
+   w.store.openCodePreferencesLoad=async()=>({model:null,reasoningEffort:null,favorites:[]});
+   w.store.openCodePreferencesSave=async(value:{model:string})=>{w.savedModels.push(value.model);};
+   w.store.chatCreate=async()=>'new-chat';
+   w.store.chatLoad=async()=>({sessionId:null,messages:[]});
+   w.store.duplicate=async()=>w.fixture.projects[1];
+   w.store.versionRetainedStages=(id:string)=>id==='project-1'
+    ? new Promise(resolve=>{w.finishProjectLoad=()=>resolve(0);})
+    : Promise.resolve(0);
+  });
+  await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+  await page.waitForFunction(()=>typeof (window as unknown as {finishCatalog?:()=>void}).finishCatalog==='function');
+  await page.locator('#new-chat').click();
+  await page.waitForFunction(()=>typeof (window as unknown as {finishProviderCheck?:()=>void}).finishProviderCheck==='function');
+  await page.locator('#duplicate').click();
+  await page.locator('#app-dialog').getByRole('button',{name:'Duplicate',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#project-name')?.textContent==='Conference paper - autumn notes' &&
+   typeof (window as unknown as {finishProjectLoad?:()=>void}).finishProjectLoad==='function');
+
+  await page.evaluate(()=> {
+   const w=window as unknown as {finishCatalog:()=>void;finishProviderCheck:()=>void};
+   w.finishCatalog();
+   w.finishProviderCheck();
+  });
+  const state=await page.evaluate(()=> {
+   const w=window as unknown as {catalogRequests:string[];savedModels:string[]};
+   return {requests:w.catalogRequests,saves:w.savedModels};
+  });
+  assert.deepEqual(state,{requests:['project-0'],saves:[]});
+  assert.ok(await page.locator('#send').isDisabled());
+  await page.evaluate(()=>(window as unknown as {finishProjectLoad:()=>void}).finishProjectLoad());
+  await page.waitForFunction(()=>document.querySelector('.model-trigger-label')?.textContent==='Model for project-1' &&
+   (window as unknown as {savedModels:string[]}).savedModels.length>0);
+  assert.deepEqual(await page.evaluate(()=>(window as unknown as {catalogRequests:string[]}).catalogRequests),['project-0','project-1']);
+  assert.deepEqual(await page.evaluate(()=>(window as unknown as {savedModels:string[]}).savedModels),['lmstudio/project-1']);
+  assert.deepEqual(errors,[]);
+ } finally {await browser.close();}
+});
