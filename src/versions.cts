@@ -232,7 +232,17 @@ class Versions {
   } else { record = JSON.parse(await fs.readFile(journal,'utf8')); if (!Array.isArray(record.stages)) record.stages = []; }
   const saveRecord = async () => {
    const temp = path.join(project, `.refract-restore-journal-${crypto.randomUUID()}.tmp`);
-   try { await fs.writeFile(temp,JSON.stringify(record),{flag:'wx'}); await fs.rename(temp,journal); }
+   try {
+    await fs.writeFile(temp, JSON.stringify(record), {flag:'wx'});
+    const delays = [80, 160, 320, 640];
+    for (let attempt = 0; ; attempt++) {
+     try { await fs.rename(temp, journal); break; }
+     catch (error) {
+      if (process.platform !== 'win32' || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt >= delays.length) throw error;
+      await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+     }
+    }
+   }
    finally { await fs.unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;}); }
   };
   const cleanStages = async () => {

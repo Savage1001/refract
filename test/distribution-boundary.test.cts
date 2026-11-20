@@ -83,7 +83,9 @@ test('missing external configuration reports setup instructions without replacin
   await fs.writeFile(path.join(root, 'main.tex'), 'inert source fixture');
   await fs.writeFile(path.join(output, 'main.pdf'), 'previous PDF');
   const previous = process.env.REFRACT_TEX_BIN;
+  const localAppData = process.env.LOCALAPPDATA;
   delete process.env.REFRACT_TEX_BIN;
+  process.env.LOCALAPPDATA = root;
   try {
     const { compile } = require('../src/compiler.cjs');
     await assert.rejects(compile(root), /REFRACT_TEX_BIN/);
@@ -91,6 +93,8 @@ test('missing external configuration reports setup instructions without replacin
   } finally {
     if (previous === undefined) delete process.env.REFRACT_TEX_BIN;
     else process.env.REFRACT_TEX_BIN = previous;
+    if (localAppData === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = localAppData;
   }
 });
 

@@ -735,13 +735,14 @@ function changePdfZoom(zoom:number, mode:'width'|'page'|'custom'='custom') {
   const position=bounds && bounds.height ? {x:(area.left+pdfArea.clientWidth/2-bounds.left)/bounds.width,y:(center-bounds.top)/bounds.height} : null;
   pdfFitMode=mode;pdfZoom=Math.min(250,Math.max(25,zoom));
   pages.forEach(canvas=>canvas.style.width=`${pdfZoom}%`);
-  // Keep the same point on the visible page under the viewport center.
+  updatePdfControls();
+  // Keep the same point on the visible page after the toolbar and pages resize.
   if(anchor && position && pdfArea.clientHeight) {
     const resized=anchor.getBoundingClientRect();
-    pdfArea.scrollTop+=resized.top+position.y*resized.height-area.top-pdfArea.clientHeight/2;
-    pdfArea.scrollLeft+=resized.left+position.x*resized.width-area.left-pdfArea.clientWidth/2;
+    const viewport=pdfArea.getBoundingClientRect();
+    pdfArea.scrollTop+=resized.top+position.y*resized.height-viewport.top-pdfArea.clientHeight/2;
+    pdfArea.scrollLeft+=resized.left+position.x*resized.width-viewport.left-pdfArea.clientWidth/2;
   }
-  updatePdfControls();
   schedulePdfSharpen();
 }
 function goToPdfPage(page:number) {
@@ -945,7 +946,10 @@ async function compilePreview(force=false) {
       if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
       canvas.dataset.renderScale = String(scale);
       canvas.setAttribute('aria-label', `Page ${i}`);canvas.tabIndex=0;canvas.title='Double-click or press Enter to find this position in the source';
-      const frame=document.createElement('div');frame.className='pdf-page-frame';frame.style.width=`${pdfZoom}%`;frame.append(canvas);
+      const frame=document.createElement('div');frame.className='pdf-page-frame';frame.style.width=`${pdfZoom}%`;
+      // Keep the page geometry independent of the canvas backing resolution.
+      frame.style.aspectRatio = `${base.width} / ${base.height}`;
+      frame.append(canvas);
       void page.getTextContent().then(({items}) => {
         const text = document.createElement('div');
         text.className = 'pdf-accessible-text';
