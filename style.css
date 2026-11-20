@@ -3300,4 +3300,170 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 }
 
 .settings-section { border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:14px; }
+
+@media (prefers-reduced-motion:no-preference) {
+  :root {
+    --motion-control:120ms;
+    --motion-overlay:150ms;
+    --motion-layout:200ms;
+    --motion-ease:cubic-bezier(.2,.7,.2,1);
+  }
+
+  /* Keep keyboard outlines immediate. Only transition painted control states. */
+  :is(button, summary, input, select, textarea:not(#source), .composer, .project-search, .model-search, #list article, .pdf-annotation-link),
+  :is(button, summary)>:is(.ui-icon, .folder-icon, .fast-icon) {
+    transition:background-color var(--motion-control) ease-out,
+      border-color var(--motion-control) ease-out, color var(--motion-control) ease-out,
+      box-shadow var(--motion-control) ease-out, scale var(--motion-control) var(--motion-ease);
+  }
+
+  button:enabled:active:not([aria-disabled=true], [aria-haspopup], .project-open, .project-name) {
+    scale:.97;
+  }
+
+  :is(#outline-toggle .ui-icon, .file-tree .folder-chevron) {
+    transition:transform var(--motion-overlay) var(--motion-ease), color var(--motion-control) ease-out;
+  }
+
+  :is(#file-list .file-tree-actions, .model-favorite) {
+    transition:opacity var(--motion-control) ease-out, background-color var(--motion-control) ease-out,
+      color var(--motion-control) ease-out, scale var(--motion-control) var(--motion-ease);
+  }
+
+  .resize-handle::after {
+    transition:background-color var(--motion-control) ease-out;
+  }
+
+  .settings-download progress[value]::-webkit-progress-value {
+    transition:width var(--motion-layout) var(--motion-ease);
+  }
+
+  /*
+   * Discrete properties keep an exiting overlay painted for its fade. Closed
+   * surfaces stop receiving focus and pointer input as soon as their state changes.
+   */
+  :is(.file-menu, .model-panel, dialog) {
+    opacity:1;
+    scale:1;
+    transition:opacity var(--motion-overlay) var(--motion-ease),
+      scale var(--motion-overlay) var(--motion-ease),
+      display var(--motion-overlay) allow-discrete, overlay var(--motion-overlay) allow-discrete;
+  }
+
+  .file-menu { transform-origin:top left; }
+  .model-panel { transform-origin:top right; }
+  .model-panel[data-placement=above] { transform-origin:bottom right; }
+  .model-panel[data-placement=overlay] { transform-origin:center; }
+
+  :is(.file-menu[hidden], .model-panel[hidden], dialog:not([open])) {
+    opacity:0;
+    scale:.98;
+    pointer-events:none;
+    interactivity:inert;
+  }
+
+  dialog::backdrop {
+    opacity:1;
+    transition:opacity var(--motion-overlay) ease-out,
+      display var(--motion-overlay) allow-discrete, overlay var(--motion-overlay) allow-discrete;
+  }
+
+  dialog:not([open])::backdrop {
+    opacity:0;
+    pointer-events:none;
+  }
+
+  .project-actions::details-content {
+    opacity:0;
+    scale:.98;
+    transform-origin:top right;
+    interactivity:inert;
+    transition:opacity var(--motion-overlay) var(--motion-ease),
+      scale var(--motion-overlay) var(--motion-ease),
+      content-visibility var(--motion-overlay) allow-discrete;
+  }
+
+  .project-actions[open]::details-content {
+    opacity:1;
+    scale:1;
+    interactivity:auto;
+  }
+
+  @starting-style {
+    :is(.file-menu:not([hidden]), .model-panel:not([hidden]), dialog[open]) {
+      opacity:0;
+      scale:.98;
+    }
+
+    dialog[open]::backdrop { opacity:0; }
+  }
+
+  /* Disclosure rows can grow in place without a measured height or a timer. */
+  :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .compile-error details) {
+    interpolate-size:allow-keywords;
+  }
+
+  :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .compile-error details)::details-content {
+    block-size:0;
+    opacity:0;
+    overflow:clip;
+    interactivity:inert;
+    transition:block-size var(--motion-layout) var(--motion-ease),
+      opacity var(--motion-overlay) ease-out, content-visibility var(--motion-layout) allow-discrete;
+  }
+
+  :is(.file-tree details, .file-alternatives, .version-comparison, .comment-reply-form, .compile-error details)[open]::details-content {
+    block-size:auto;
+    opacity:1;
+    interactivity:auto;
+  }
+
+  .new-chat-tooltip {
+    display:block;
+    visibility:hidden;
+    pointer-events:none;
+    opacity:0;
+    translate:0 3px;
+    transition:opacity var(--motion-control) ease-out, translate var(--motion-control) var(--motion-ease),
+      visibility var(--motion-control) allow-discrete;
+  }
+
+  .new-chat-action:hover .new-chat-tooltip,#new-chat:focus-visible+.new-chat-tooltip {
+    visibility:visible;
+    opacity:1;
+    translate:0;
+  }
+
+  /* Keep the editor, PDF pages and picker anchors at their true coordinates. */
+  :is(#projects, #workspace, .workspace-topbar, .sidebar, #project-side, #file-search, #file-list,
+    #outline-list, #chat-list, #tools-panel, #pdf-content, #image-preview, #file-preview,
+    .model-catalog, .model-settings-group, .editor-find, .latex-completions, .project-empty,
+    .settings-download, #restart-update, .preview-status, .chat-progress, .field-error, .draft-attachment,
+    .tool-heading, .pdf-pages, .compile-error, .project-page-thumbnail, .recovery-success) {
+    animation:motion-appear var(--motion-overlay) var(--motion-ease);
+  }
+
+  @keyframes motion-appear {
+    from { opacity:0; }
+  }
+
+  .message-arriving {
+    animation:motion-message var(--motion-layout) var(--motion-ease);
+  }
+
+  @keyframes motion-message {
+    from { opacity:0; translate:0 5px; }
+  }
+
+  :is(.workspace-shell, #list)::view-transition { pointer-events:none; }
+
+  :is(.workspace-shell :is(#editor-content, .chat, .pdf-pane), #list > article) {
+    view-transition-name:match-element;
+  }
+
+  :is(.workspace-shell, #list)::view-transition-group(*) {
+    animation-duration:var(--motion-layout);
+    animation-timing-function:var(--motion-ease);
+  }
+}
 .codex-account-actions { display:flex; flex-wrap:wrap; gap:8px; }

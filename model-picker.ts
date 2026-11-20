@@ -762,6 +762,7 @@ function positionPanel(): void {
   const below = innerHeight - anchor.bottom - margin - gap;
   const overlay = Math.max(above, below) < 310;
   const placeAbove = above >= 450 || above >= below;
+  panel.dataset.placement = overlay ? 'overlay' : placeAbove ? 'above' : 'below';
   const available = overlay ? innerHeight - margin * 2 : placeAbove ? above : below;
   const compact = width < 470;
   if (panel.classList.contains('model-panel-compact') !== compact) {

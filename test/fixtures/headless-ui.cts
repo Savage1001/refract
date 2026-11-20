@@ -1,6 +1,7 @@
 import path = require('node:path');
 import url = require('node:url');
 import playwright = require('playwright');
+import type { BrowserContextOptions } from 'playwright';
 
 interface ReviewProject { id:string; name:string; rootFile:string; created:string; engine:string; draftMode:boolean }
 interface ReviewComment { id:string; file:string; quote:string; text:string; resolved:boolean; created:string; replies:{text:string}[] }
@@ -94,10 +95,11 @@ function fixtureDocument(): {pdf:string;source:string} {
  return {pdf:Buffer.from(pdf, 'ascii').toString('base64'),source};
 }
 
-async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: {pdf:string;source:string}) {
+async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: {pdf:string;source:string},
+  options?: Pick<BrowserContextOptions, 'reducedMotion' | 'recordVideo' | 'viewport'>) {
  const browser=await playwright.chromium.launch({channel:'msedge',headless:true,args:['--allow-file-access-from-files']});
  try {
-  const context=await browser.newContext({viewport:{width:1440,height:900},colorScheme,locale:'en-US',timezoneId:'UTC'});
+  const context=await browser.newContext({viewport:{width:1440,height:900},colorScheme,locale:'en-US',timezoneId:'UTC', ...options});
   await context.route(/^https?:/,route=>route.abort());
   await context.addInitScript(installFixture,fixtureData ?? fixtureDocument());
   const page=await context.newPage();const errors:string[]=[];

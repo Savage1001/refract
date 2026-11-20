@@ -159,7 +159,7 @@ test('browsing, cross-provider search and Escape preserve the send target', asyn
   assert.deepEqual(await page.evaluate(() => (window as unknown as PickerFixture).codexPickerReady()),
     {model: 'opencode/effort-model', reasoningEffort: 'low'});
   await page.locator('#outside').click();
-  assert.equal(await page.locator('.model-panel').isVisible(), false);
+  await page.locator('.model-panel').waitFor({state:'hidden'});
   assert.ok(await page.locator('#outside').evaluate(el => document.activeElement === el));
 });
 

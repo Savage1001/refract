@@ -1,0 +1,232 @@
+import assert = require('node:assert/strict');
+import fs = require('node:fs/promises');
+import os = require('node:os');
+import path = require('node:path');
+import childProcess = require('node:child_process');
+import fixture = require('../test/fixtures/headless-ui.cjs');
+import type { Page } from 'playwright';
+
+const output = process.env.REFRACT_MOTION_ARTIFACTS ?? path.join(os.tmpdir(), 'refract-motion-clips');
+const pause = (page: Page, ms = 610) => page.waitForTimeout(ms);
+const project = '#list .project-open';
+async function click(page: Page, target: string): Promise<void> {
+  await page.locator(target).first().click();
+  await pause(page);
+}
+async function open(page: Page, waitForPdf = true): Promise<void> {
+  await page.locator(project).first().click();
+  await page.locator('#source').waitFor();
+  if (waitForPdf) await page.locator('#pdf-area canvas').first().waitFor();
+  await pause(page);
+}
+
+type Scene = [name: string, run: (page: Page) => Promise<void>, theme?: 'dark', reduced?: 'reduce'];
+const scenes: Scene[] = [
+  ['01-control-feedback', async page => {
+    const settings = page.locator('#settings');
+    await settings.hover();
+    await pause(page);
+    await page.mouse.down();
+    await pause(page, 300);
+    await page.mouse.move(20, 90);
+    await page.mouse.up();
+    await page.locator('#search').click();
+    await pause(page);
+    await page.keyboard.press('Tab');
+    await pause(page);
+  }],
+  ['02-project-navigation', async page => {
+    await open(page);
+    await click(page, '#home');
+  }],
+  ['03-list-and-grid', async page => {
+    await click(page, '#grid-view');
+    await click(page, '#list-view');
+  }],
+  ['04-dialog-and-backdrop', async page => {
+    await click(page, '#settings');
+    await page.keyboard.press('Escape');
+    await pause(page);
+    await click(page, '#deleted-projects');
+    await page.keyboard.press('Escape');
+  }, 'dark'],
+  ['05-project-and-file-menus', async page => {
+    await click(page, '.project-actions summary');
+    await page.keyboard.press('Escape');
+    await pause(page);
+    await open(page);
+    const file = page.locator('#file-list button[title="main.tex"]');
+    await file.click({button:'right'});
+    await pause(page);
+    await page.keyboard.press('Escape');
+  }],
+  ['06-project-search-states', async page => {
+    await page.locator('#search').fill('Unmatched project');
+    await pause(page, 900);
+    await click(page, '#clear-search');
+  }],
+  ['07-sidebar-collapse', async page => {
+    await open(page);
+    await click(page, '#collapse');
+    await click(page, '#collapse');
+  }, 'dark'],
+  ['08-file-tree-outline-and-disclosures', async page => {
+    await open(page);
+    await click(page, '#file-list summary');
+    await click(page, '#file-list summary');
+    await click(page, '#outline-toggle');
+    await click(page, '#outline-toggle');
+    await click(page, '#add-file');
+    await page.locator('#file-name').press('Enter');
+    await pause(page);
+    await click(page, '.file-alternatives summary');
+    await click(page, '.file-alternatives summary');
+    await page.keyboard.press('Escape');
+  }],
+  ['09-sidebar-tabs-and-preview', async page => {
+    await page.evaluate(() => {
+      const w = window as unknown as {store:{openFile:(id:string,name:string)=>Promise<unknown>}};
+      const openFile = w.store.openFile;
+      w.store.openFile = (id, name) => name.endsWith('abstract.tex') ? Promise.resolve({
+        kind:'image', data:'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="320" height="220"%3E%3Crect width="320" height="220" rx="12" fill="%23dde8f6"/%3E%3Cpath d="M32 182 L32 36 M32 182 L286 182 M38 161 Q112 164 152 101 T280 52" fill="none" stroke="%23234b7c" stroke-width="4"/%3E%3C/svg%3E'
+      }) : openFile(id, name);
+    });
+    await open(page);
+    await click(page, '#chats-tab');
+    await click(page, '#files-tab');
+    await click(page, '#file-list button[title="sections/abstract.tex"]');
+  }],
+  ['10-find-and-command-completions', async page => {
+    await open(page);
+    await page.locator('#source').focus();
+    await page.keyboard.press('Control+f');
+    await pause(page);
+    await page.keyboard.press('Escape');
+    const editor = page.locator('#source');
+    await editor.fill('\\sec');
+    await editor.press('End');
+    await editor.press('Control+Space');
+    await pause(page);
+    await editor.press('Escape');
+  }],
+  ['11-workspace-panes', async page => {
+    await open(page);
+    await click(page, '#pane-preview');
+    await click(page, '#pane-agent');
+    await click(page, '#pane-agent');
+    await click(page, '#pane-preview');
+    await click(page, '.expand-chat');
+    await click(page, '.expand-chat');
+  }, 'dark'],
+  ['12-model-picker', async page => {
+    await open(page);
+    await click(page, '.model-trigger');
+    await page.getByRole('searchbox', {name:'Search models'}).fill('Research');
+    await pause(page);
+    await page.keyboard.press('Escape');
+    await pause(page);
+    await click(page, '.model-trigger');
+    await page.keyboard.press('Escape');
+  }],
+  ['13-assistant-messages-and-progress', async page => {
+    await open(page);
+    await page.locator('#new-chat').hover();
+    await pause(page);
+    await page.evaluate(() => { (window as unknown as {fixture:{delay:number}}).fixture.delay = 900; });
+    await page.locator('#chat-input').fill('How should I structure the introduction?');
+    await click(page, '#send');
+    await page.locator('.message.assistant').last().waitFor();
+    await pause(page, 950);
+  }, 'dark'],
+  ['14-pdf-compile-and-preview', async page => {
+    await page.evaluate(() => {
+      const w = window as unknown as {store:{compile:()=>Promise<unknown>}};
+      const compile = w.store.compile;
+      w.store.compile = async () => {
+        await new Promise(resolve => setTimeout(resolve, 850));
+        return compile();
+      };
+    });
+    await open(page, false);
+    await page.locator('#pdf-area canvas').first().waitFor();
+    await pause(page, 950);
+  }],
+  ['15-project-tools-and-replies', async page => {
+    await open(page);
+    await click(page, '#tools');
+    await click(page, '#tool-comments');
+    await click(page, '.comment-reply-form summary');
+    await click(page, '.expand-tools');
+    await click(page, '.expand-tools');
+    await click(page, '#tool-versions');
+    await click(page, '.version-comparison summary');
+    await click(page, '#tools');
+  }],
+  ['16-update-progress', async page => {
+    const status = (phase: string, percent?: number) => page.evaluate(({phase,percent}) => {
+      const w=window as unknown as {store:{updateStatus:()=>Promise<unknown>}};
+      w.store.updateStatus=async()=>({track:'stable',phase,downloadPercent:percent,
+        message:phase==='ready' ? 'An update is ready to install.' : 'Downloading an update…'});
+    }, {phase,percent});
+    await status('downloading', 18);
+    await click(page, '#settings');
+    await status('downloading', 72);
+    await page.getByText('72%', {exact:true}).waitFor();
+    await pause(page);
+    await status('ready');
+    await page.locator('#restart-update').waitFor();
+    await pause(page);
+  }, 'dark'],
+  ['17-reduced-motion', async page => {
+    await click(page, '#grid-view');
+    await click(page, '#settings');
+    await page.keyboard.press('Escape');
+    await open(page);
+    await click(page, '#pane-agent');
+    await click(page, '#collapse');
+  }, 'dark', 'reduce'],
+];
+
+async function record([name, run, theme, reducedMotion]: Scene): Promise<void> {
+  const {browser, page, errors} = await fixture.openHeadlessUi(theme, undefined, {
+    reducedMotion, recordVideo:{dir:output, size:{width:1152,height:720}}
+  });
+  const video = page.video()!;
+  try {
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      const dot = document.createElement('span');
+      dot.style.cssText = 'position:fixed;z-index:1000;pointer-events:none;width:12px;height:12px;border:2px solid white;border-radius:50%;background:#265ede;box-shadow:0 0 0 1px #1b2743;transform:translate(5px,5px);display:none;';
+      document.body.append(dot);
+      document.addEventListener('pointermove', event => {
+        dot.style.display = 'block';
+        dot.style.left = `${event.clientX}px`;
+        dot.style.top = `${event.clientY}px`;
+      });
+    });
+    await page.locator(project).first().waitFor();
+    await pause(page, 400);
+    await run(page);
+    await pause(page, 550);
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.context().close();
+    await browser.close();
+  }
+  const mp4 = path.join(output, `${name}.mp4`);
+  const result = childProcess.spawnSync('ffmpeg', ['-v','error','-y','-i',await video.path(),'-c:v','libx264',
+    '-crf','19','-pix_fmt','yuv420p','-movflags','+faststart',mp4], {stdio:'inherit',windowsHide:true});
+  assert.equal(result.status, 0, `Could not encode ${name}`);
+  const info = await fs.stat(mp4);
+  assert.ok(info.size < 10_000_000, `${name} exceeds GitHub's upload limit`);
+  console.log(`${name} ${info.size} bytes`);
+}
+
+async function main(): Promise<void> {
+  await fs.mkdir(output, {recursive:true});
+  const filter = process.argv[2];
+  const selected = scenes.filter(([name]) => !filter || new RegExp(filter).test(name));
+  for (const scene of selected) await record(scene);
+}
+
+void main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });
