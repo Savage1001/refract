@@ -211,6 +211,15 @@ h2 {
   z-index:40;
 }
 
+body:has(#projects:not([hidden])) .app-titlebar::before {
+  content:"";
+  position:absolute;
+  inset:100% 0 auto;
+  height:48px;
+  background:linear-gradient(to bottom, var(--sidebar), transparent);
+  pointer-events:none;
+}
+
 /* Project navigation. */
 .app-titlebar:has(.workspace-topbar:not([hidden]))::after {
   content:"";
@@ -223,6 +232,8 @@ h2 {
 .sidebar {
   position:relative;
   width:var(--sidebar-width,232px);
+  max-width:max(150px, 40vw);
+  container-type:inline-size;
   flex:none;
   display:flex;
   flex-direction:column;
@@ -526,6 +537,10 @@ h2 {
   transform:translateY(-50%);
 }
 
+.file-search-field:has(>.clear-file-search[hidden]) #file-search-input {
+  padding-inline-end:8px;
+}
+
 #file-search-results {
   max-height:220px;
   overflow:auto;
@@ -619,6 +634,17 @@ main {
 
 #new svg {
   flex: none;
+}
+
+#import {
+  display:inline-flex;
+  align-items:center;
+  width:auto;
+  height:36px;
+  gap:6px;
+  padding-inline:9px;
+  font-size:13px;
+  white-space:nowrap;
 }
 
 .project-header-actions .icon {
@@ -1042,7 +1068,7 @@ main {
   height:env(titlebar-area-height, var(--window-controls-height));
   gap:8px;
   padding:0 12px;
-  padding-left:clamp(12px, calc(var(--titlebar-sidebar-width, 0px) + 12px - env(titlebar-area-x, 0px)), calc(env(titlebar-area-width, 100%) - 150px));
+  padding-left:clamp(12px, calc(var(--titlebar-sidebar-width, 0px) + 12px - env(titlebar-area-x, 0px)), calc(env(titlebar-area-width, 100%) - 190px));
 }
 
 .workspace-topbar button {
@@ -1078,7 +1104,7 @@ main {
   flex:none;
 }
 
-.workspace-actions #tools {
+.workspace-actions :is(#tools, #export-project) {
   width:26px;
   height:24px;
   padding:0;
@@ -1094,7 +1120,7 @@ main {
 .editor-pane {
   display:flex;
   flex-direction:column;
-  flex:1;
+  flex:1 1 0;
   min-width:0;
   min-height:0;
   background:var(--canvas);
@@ -2093,7 +2119,7 @@ main {
   display:flex;
   align-items:center;
   gap:var(--action-gap);
-  overflow-x:auto;
+  flex-wrap:wrap;
   flex:none;
   padding:12px 16px;
   background:var(--canvas);
@@ -2129,7 +2155,7 @@ main {
   mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 9a7.2 7.2 0 1 0 .2 5'/%3E%3Cpath d='m16 9 3.5.1L20 5.5'/%3E%3C/svg%3E") center/contain no-repeat;
 }
 
-.pdf-pane header #compile:disabled::before {
+.pdf-pane header #compile[aria-disabled="true"]::before {
   animation:compile-spin 1s linear infinite;
 }
 
@@ -2151,6 +2177,14 @@ main {
   flex:none;
   gap:var(--action-gap);
   margin-inline:8px;
+  flex-wrap:wrap;
+  max-width:100%;
+}
+
+.pdf-page-controls, .pdf-zoom-controls {
+  display:flex;
+  align-items:center;
+  gap:var(--action-gap);
 }
 
 .pdf-controls button {
@@ -2184,6 +2218,7 @@ main {
   flex:none;
   min-width:0;
   padding-inline:2px;
+  margin-inline:-3px;
   font-variant-numeric:tabular-nums;
 }
 
@@ -2981,7 +3016,7 @@ dialog .dialog-actions {
 }
 
 @media(prefers-reduced-motion:reduce) {
-  .pdf-pane header #compile:disabled::before {
+  .pdf-pane header #compile[aria-disabled="true"]::before {
     animation:none;
   }
 
@@ -3113,8 +3148,16 @@ dialog .dialog-actions {
 
 /* One source of visibility for all pane combinations, including narrow windows. */
 .pane-toggles { display:flex; gap:2px; padding:1px; border:1px solid var(--input); border-radius:5px; }
-.pane-toggles .pane-toggle { display:grid; place-items:center; width:26px; height:22px; padding:2px; border:0; border-radius:4px; }
-.pane-toggles .pane-toggle[aria-pressed="true"] { background:var(--selected); box-shadow:inset 0 0 0 1px var(--input); }
+.pane-toggles .pane-toggle { display:grid; place-items:center; width:28px; height:26px; padding:2px; border:0; border-radius:4px; }
+.pane-toggles .pane-toggle[aria-pressed="true"] { background:var(--selected); box-shadow:inset 0 0 0 1px var(--link); }
+.pane-toggle span { display:none; }
+@media (min-width:1201px) {
+  .pane-toggles .pane-toggle { display:flex; gap:4px; width:auto; align-items:center; padding-inline:6px; font-size:11px; }
+  .pane-toggle span { display:inline; }
+}
+@media (forced-colors:active) {
+  .pane-toggles .pane-toggle[aria-pressed="true"] { outline:1px solid Highlight; outline-offset:-1px; }
+}
 #workspace.pane-layout .pdf-pane { display:flex; flex:1; min-width:0; }
 #workspace.pane-layout .workspace-handle { display:block; }
 #workspace.pane-layout.pane-preview-hidden .pdf-pane,
@@ -3126,6 +3169,9 @@ dialog .dialog-actions {
 #workspace.pane-layout.pane-editor-hidden .editor-find,
 #workspace.pane-layout.pane-agent-hidden .chat { display:none; }
 #workspace.pane-layout.pane-preview-hidden .editor-pane { flex:1!important; }
+#workspace.pane-layout:not(.pane-preview-hidden) .editor-pane {
+  flex:0 1 clamp(300px, var(--editor-width, 50%), calc(100% - 290px));
+}
 #workspace.pane-layout.pane-editor-hidden .chat { flex:1; height:auto; max-height:none; margin-top:0; }
 #workspace.pane-layout.pane-agent-hidden.pane-editor-hidden .editor-pane { display:none; }
 #workspace.pane-layout.tools-expanded .editor-pane,
@@ -3138,8 +3184,61 @@ dialog .dialog-actions {
 .file-tree summary>.folder-chevron { width:14px; height:14px; }
 .file-tree details[open]>summary>.folder-chevron { transform:rotate(90deg); }
 .file-tree summary>span { overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.file-tree-row { position:relative; }
+.file-tree-row > button[data-path], .file-tree-row > details > summary { padding-inline-end:32px; }
+.file-tree-row:not(:hover, :focus-within) > button[data-path]:not(.active-file),
+.file-tree-row:not(:hover, :focus-within) > details > summary { padding-inline-end:5px; }
+#file-list .file-tree-actions {
+  position:absolute;
+  top:2px;
+  right:2px;
+  display:grid;
+  place-items:center;
+  width:26px;
+  min-height:26px;
+  padding:0;
+  color:var(--sidebar-muted);
+  opacity:0;
+}
+#file-list .file-tree-row:hover > .file-tree-actions,
+#file-list .file-tree-row:focus-within > .file-tree-actions,
+#file-list .active-file + .file-tree-actions { opacity:1; }
+.project-trail #project-name:is(:hover, :focus-visible) { text-decoration:underline; text-underline-offset:3px; }
+.editor-empty {
+  flex:1;
+  align-self:center;
+  text-align:center;
+  color:var(--muted);
+  padding:16px;
+}
+.editor-wrap:has(:is(.source-container, #image-preview, #file-preview):not([hidden])) .editor-empty { display:none; }
+.preview-status {
+  margin:0;
+  padding:6px 16px;
+  font-size:12px;
+  color:var(--warning);
+  background:var(--warning-surface);
+}
+.retained-preview-error { flex:none; max-height:min(35vh, 240px); margin:8px 12px; overflow:auto; }
+.stop-chat[aria-disabled="true"] { opacity:.5; cursor:default; }
+.recovery-success { color:var(--success); }
+.visually-hidden, .pdf-accessible-text {
+  position:absolute;
+  width:1px;
+  height:1px;
+  padding:0;
+  margin:-1px;
+  overflow:hidden;
+  clip-path:inset(50%);
+}
+@media (prefers-color-scheme:dark) {
+  .composer, :is(input, select, textarea):where(:not(#model-picker *)) { border-color:#646464; }
+}
 
 .brand-home span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@container (max-width:140px) {
+  .brand-home span { display:none; }
+}
 
 .brand-home,#collapse { -webkit-app-region:no-drag; }
 

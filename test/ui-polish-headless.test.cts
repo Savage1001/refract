@@ -40,6 +40,9 @@ test('headless editor escape, completion, context menus and dialog primary actio
   await page.locator('#project-name').click();await page.locator('#rename-name').fill('Cancelled project');await page.keyboard.press('Escape');await page.locator('#rename-dialog').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.rename),projectRenameCount);assert.equal(await page.locator('#project-name').textContent(),'Confirmed project');
   const folder=page.locator('#file-list summary[title="sections"]');await folder.focus();await folder.press('Shift+F10');await page.locator('#folder-move').click();
+  await page.locator('#folder-move-path').fill('   ');await page.locator('#folder-move-path').press('Enter');
+  assert.equal(await page.locator('#folder-move-error').textContent(),'Enter a new project path.');
+  assert.equal(await page.locator('#folder-move-dialog').isVisible(),true);
   await page.locator('#folder-move-path').fill('chapters');await page.locator('#folder-move-path').press('Enter');await page.locator('#file-list summary[title="chapters"]').waitFor();
   const before=await page.evaluate(()=>(window as unknown as StateWindow).fixture.counters.createFile);
   for(const cancel of ['button','escape']) {await page.locator('#add-file').click();await page.locator('#file-name').fill('cancelled.tex');if(cancel==='escape')await page.keyboard.press('Escape');else await page.locator('#file-dialog button[value=cancel]').click();}
@@ -194,11 +197,11 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
   await folder.click();assert.equal(await folder.evaluate(el=>(el.parentElement as HTMLDetailsElement).open),false);await folder.press('Enter');assert.equal(await folder.evaluate(el=>(el.parentElement as HTMLDetailsElement).open),true);
   assert.equal(await page.locator('#outline-toggle svg path').getAttribute('d'),await folder.locator('.folder-chevron path').getAttribute('d'));
   assert.equal(await page.locator('#project-trust').count(),0);
-  const actions=page.locator('.sidebar-actions>button');assert.equal(await actions.count(),3);
+  const actions=page.locator('.sidebar-actions>button');assert.equal(await actions.count(),2);
   const boxes=await actions.evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {y:r.y,width:r.width,height:r.height};}));
   assert.ok(boxes.every(box=>box.y===boxes[0].y && box.width===28 && box.height===32));
   assert.equal(await page.getByRole('button',{name:'Deleted files',exact:true}).getAttribute('title'),'Deleted files');
-  assert.equal(await page.getByRole('button',{name:'Duplicate project',exact:true}).locator('svg').count(),1);
+  assert.equal(await page.getByRole('button',{name:'Add file or folder',exact:true}).locator('svg').count(),1);
   await page.locator('#pane-preview').click();assert.equal(await page.locator('.pdf-pane').isVisible(),false);
   await page.locator('#pane-agent').click();assert.equal(await page.locator('#chat').isVisible(),false);
   await page.locator('#pane-editor').click();assert.equal(await page.locator('#source').isVisible(),true);
@@ -236,6 +239,8 @@ test('headless icon controls share idle and hover colors in both themes', {timeo
    await check('#deleted-projects');
    await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
    await page.locator('#source').waitFor({state:'visible'});
+   await page.locator('#chat-input').fill('Check this source');
+   await page.waitForFunction(() => !(document.querySelector('#send') as HTMLButtonElement).disabled);
    for (const selector of ['#pane-editor','#attach','#send']) await check(selector);
    await page.locator('#chats-tab').click();
    await check('.chat-rename','');
@@ -407,6 +412,7 @@ test('headless provider results cannot save a default after another project star
   });
   await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
   await page.waitForFunction(()=>typeof (window as unknown as {finishCatalog?:()=>void}).finishCatalog==='function');
+  await page.getByRole('button',{name:'Dismiss welcome',exact:true}).waitFor();
   await page.locator('#new-chat').click();
   await page.waitForFunction(()=>typeof (window as unknown as {finishProviderCheck?:()=>void}).finishProviderCheck==='function');
   await page.locator('#home').click();
@@ -426,7 +432,7 @@ test('headless provider results cannot save a default after another project star
   assert.deepEqual(state,{requests:['project-0'],saves:[]});
   assert.ok(await page.locator('#send').isDisabled());
   await page.evaluate(()=>(window as unknown as {finishProjectLoad:()=>void}).finishProjectLoad());
-  await page.waitForFunction(()=>document.querySelector('.model-trigger-label')?.textContent==='Model for project-1' &&
+  await page.waitForFunction(()=>document.querySelector('.model-trigger-label')?.textContent==='Model for project 1' &&
    (window as unknown as {savedModels:string[]}).savedModels.length>0);
   assert.deepEqual(await page.evaluate(()=>(window as unknown as {catalogRequests:string[]}).catalogRequests),['project-0','project-1']);
   assert.deepEqual(await page.evaluate(()=>(window as unknown as {savedModels:string[]}).savedModels),['lmstudio/project-1']);
@@ -441,6 +447,9 @@ test('headless project actions duplicate the selected home project in either vie
   const actions=page.getByLabel(`Actions for ${project}`,{exact:true});
   const duplicate=page.getByRole('button',{name:`Duplicate ${project}`,exact:true});
   const remove=page.getByRole('button',{name:`Delete ${project}`,exact:true});
+  const titlebar=page.locator('.app-titlebar');
+  const gradient=()=>titlebar.evaluate(bar=>getComputedStyle(bar,'::before').backgroundImage);
+  assert.match(await gradient(),/^linear-gradient/);
   await page.evaluate(()=>{
    type Project={id:string;name:string};
    const w=window as unknown as {store:{duplicate:(id:string)=>Promise<Project>};fixture:{projects:Project[];counters:Record<string,number>}};
@@ -472,10 +481,12 @@ test('headless project actions duplicate the selected home project in either vie
   await duplicate.click();
   await page.getByRole('dialog',{name:`Duplicate ${project}?`,exact:true}).getByRole('button',{name:'Duplicate',exact:true}).click();
   await page.getByRole('button',{name:`${project} (copy)`,exact:true}).waitFor();
+  assert.equal(await gradient(),'none');
   assert.equal(await page.locator('.sidebar-actions').getByRole('button',{name:'Duplicate project'}).count(),0);
   await page.locator('#home').click();
   await page.getByRole('button',{name:`Open ${project} (copy)`,exact:true}).waitFor();
   await page.getByRole('button',{name:`Open ${project}`,exact:true}).waitFor();
+  assert.match(await gradient(),/^linear-gradient/);
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
 });

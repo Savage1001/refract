@@ -55,6 +55,14 @@ const sourceNames: Record<string, string> = {
   opencode: 'OpenCode', lmstudio: 'LM Studio', anthropic: 'Anthropic',
   openai: 'OpenAI', openrouter: 'OpenRouter', google: 'Google'
 };
+function formatModelName(name: string): string {
+  return name.replace(/-+/g, ' ').trim();
+}
+
+function modelNameFromId(id: string): string {
+  return formatModelName(id.slice(id.lastIndexOf('/') + 1));
+}
+
 function openCodeSource(id: string): string {
   const prefix = id.split('/')[0];
   return sourceNames[prefix.toLowerCase()] ?? prefix;
@@ -341,8 +349,8 @@ function updateTrigger(): void {
   else if (!installed(id)) label = `${labels[id]} unavailable`;
   else if (state.loadFailed) label = 'Preferences unavailable';
   else if (model) label = model.label;
-  else if (state.status === 'loading') label = preferences?.model ?? 'Loading models…';
-  else if (preferences?.model) label = `${preferences.model.split('/').at(-1)} (unavailable)`;
+  else if (state.status === 'loading') label = preferences?.model ? modelNameFromId(preferences.model) : 'Loading models…';
+  else if (preferences?.model) label = `${modelNameFromId(preferences.model)} (unavailable)`;
   else if (state.status === 'error') label = 'Models unavailable';
 
   const configuredEffort = preferences?.reasoningEffort;
@@ -395,7 +403,11 @@ function providerStatus(id: Provider): HTMLElement | undefined {
 }
 function matchesQuery(model: Model, id: Provider, terms: string[]): boolean {
   const text = [model.label, model.id, model.source, model.description, labels[id]].filter(Boolean).join(' ').toLowerCase();
-  return terms.every(term => text.includes(term));
+  const label = model.label.toLowerCase();
+  return terms.every(term => {
+    const normalized = formatModelName(term);
+    return text.includes(term) || (normalized !== '' && label.includes(normalized));
+  });
 }
 function modelRow(id: Provider, model: Model, available: boolean): HTMLElement {
   const {preferences} = states[id];
@@ -506,7 +518,7 @@ function renderResults(): void {
       models = distinguishNames((preferences?.favorites ?? []).map(key => {
         const known = byId.get(key);
         if (known) return {...known};
-        return {id: key, label: key.split('/').at(-1)!, source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []};
+        return {id: key, label: modelNameFromId(key), source: id === 'opencode' ? openCodeSource(key) : undefined, efforts: []};
       }));
     }
     models = models.filter(model => matchesQuery(model, id, terms));
@@ -558,7 +570,7 @@ function renderSettings(): void {
     return;
   }
 
-  const current = element('strong', 'model-settings-model', model?.label ?? preferences?.model?.split('/').at(-1) ?? 'No model selected');
+  const current = element('strong', 'model-settings-model', model?.label ?? (preferences?.model ? modelNameFromId(preferences.model) : 'No model selected'));
   current.title = model ? [model.label, model.disambiguator ?? model.source, model.description].filter(Boolean).join('\n') : current.textContent;
   heading.append(current);
   const identity = model?.disambiguator ?? model?.source;
@@ -853,7 +865,7 @@ async function discover(id: Provider): Promise<Model[]> {
     const result = await api.discoverCodexModels(states.codex.mode);
     if (result.ok === false) throw new Error(result.error);
     return result.models.map(model => ({
-      id: model.model, label: model.displayName, description: model.description,
+      id: model.model, label: formatModelName(model.displayName), description: model.description,
       efforts: model.supportedReasoningEfforts.map(option => option.effort).filter(value => effortOrder.includes(value) && value !== 'none'),
       defaultEffort: model.defaultReasoningEffort ?? undefined, isDefault: model.isDefault
     }));
@@ -861,7 +873,7 @@ async function discover(id: Provider): Promise<Model[]> {
   const result = await api.discoverOpenCodeModels(project);
   if (result.ok === false) throw new Error(result.error);
   return result.models.map(model => {
-    return {id: model.id, label: model.name, source: openCodeSource(model.id), efforts: model.variants};
+    return {id: model.id, label: formatModelName(model.name), source: openCodeSource(model.id), efforts: model.variants};
   });
 }
 function loadPreferences(id: Provider): Promise<Preferences | undefined> {

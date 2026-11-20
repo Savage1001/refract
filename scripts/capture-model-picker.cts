@@ -37,7 +37,7 @@ async function openPicker(page: Page): Promise<void> {
   await page.getByRole('button', {name: 'Open Spectral methods for fluid dynamics', exact: true}).click();
   await page.locator('#source').waitFor({state: 'visible'});
   await page.getByText('Compiled', {exact: true}).waitFor();
-  await page.waitForFunction(() => document.querySelector('.model-trigger-label')?.textContent === 'GPT-6.2 Sol');
+  await page.waitForFunction(() => document.querySelector('.model-trigger-label')?.textContent === 'GPT 6.2 Sol');
   await page.locator('.model-trigger').click();
   await page.getByRole('radio', {name: 'Low', exact: true, checked: true}).waitFor();
   await page.evaluate(() => document.fonts.ready);
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
         await page.getByRole('button', {name: 'Qwen 3.5 9B', exact: true}).waitFor();
         await page.locator('.model-panel').screenshot({path: path.join(output, 'opencode-dark.png')});
         await page.getByRole('button', {name: 'Codex models'}).click();
-        await page.getByRole('button', {name: 'Add GPT-6.2 Sol to favorites', exact: true}).click();
+        await page.getByRole('button', {name: 'Add GPT 6.2 Sol to favorites', exact: true}).click();
         await page.getByRole('button', {name: 'OpenCode models'}).click();
         await page.getByRole('button', {name: 'Qwen 3.5 9B', exact: true}).click();
         await page.getByRole('button', {name: 'Favorite models'}).click();

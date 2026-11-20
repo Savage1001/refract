@@ -11,6 +11,7 @@ let projects = [], active = null, currentFile = 'main.tex', opening = 0, project
 let revision = 0, compileTimer = null, compileRunning = false, compileQueued = false;
 let restoringProject: string | null = null;
 const chatBusy = new Set();
+const pendingChatStarts = new Map<string, {cancel():void}>();
 const chatProgress = new Map<string,{chatId:string;status:string}>();
 const pendingAttachments = new Set<string>();
 let attachments = [], welcomeDismissed = false, commentSelection = null, openFiles = [];
@@ -44,8 +45,13 @@ function saveChatDraft() {
 }
 function restoreChatDraft(id:string,chatId:string) {const draft=readChatDraft(draftKey(id,chatId));$('#chat-input').value=draft.text;attachments=[...draft.attachments];renderAttachments();}
 const $ = (s: string): any => document.querySelector(s);
-function updateSendState() {$('#send').disabled=!active || !providerAvailable || Boolean($('#chat-provider').dataset.pickerBlock) || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
-function setEditorReadOnly(value:boolean) {$('#source').readOnly=value;completionButton.disabled=value || $('.source-container').hidden;}
+function updateSendState() {$('#send').disabled=!active || !$('#chat-input').value.trim() || !providerAvailable || Boolean($('#chat-provider').dataset.pickerBlock) || chatLoading || chatBusy.has(active.id) || restoringProject===active.id || pendingAttachments.has(draftKey(active.id,currentChat));}
+function setEditorReadOnly(value:boolean) {
+  sourceEditor.readOnly=value;
+  completionButton.disabled=value || $('.source-container').hidden;
+  replaceInput.disabled = value;
+  for (const button of findPanel.querySelectorAll<HTMLButtonElement>('[data-replace], [data-all]')) button.disabled = value;
+}
 type AppDialogOptions = {
   title: string;
   message?: string;
@@ -88,7 +94,7 @@ async function confirmAction(title: string, action: string, message?: string): P
 }
 
 function report(action: string, error: unknown) {
-  void showAppDialog({title: `Could not ${action}`, message: error instanceof Error ? error.message : String(error), action: 'Close'});
+  return showAppDialog({title: `Could not ${action}`, message: error instanceof Error ? error.message : String(error), action: 'Close'});
 }
 
 store.onShutdownNotice((title: string, message: string, action: string) => {
@@ -180,7 +186,7 @@ function renderProjects() {
     const row = document.createElement('article'), name = document.createElement('button'), date = document.createElement('span'), remove=document.createElement('button');
     const projectLabel = document.createElement('span'); projectLabel.className='project-label'; projectLabel.textContent=p.name;
     const openHint = document.createElement('span'); openHint.className='project-open-hint'; openHint.textContent='Open project →'; openHint.setAttribute('aria-hidden','true');
-    name.className='project-open'; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!pendingProjectActions.has(p.id)) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
+    name.className='project-open'; name.dataset.projectId=p.id; name.title=p.name; name.append(projectLabel,openHint); name.setAttribute('aria-label',`Open ${p.name}`); name.onclick=event=>{event.stopPropagation(); if(!pendingProjectActions.has(p.id)) openProject(p);}; date.className='project-date';date.textContent = new Date(p.created).toLocaleDateString();
     remove.append(actionIcon('trash'), 'Delete');
     remove.className = 'project-delete';
     remove.setAttribute('aria-label', `Delete ${p.name}`);
@@ -202,18 +208,19 @@ function renderProjects() {
       try {
         await operation();
       } catch (error) {
-        report(errorAction, error);
+        await report(errorAction, error);
       } finally {
         pendingProjectActions.delete(p.id);
         duplicate.disabled = remove.disabled = false;
+        if (!active && document.activeElement === document.body) {
+          const fallback = actions.isConnected ? actionLabel : document.querySelector<HTMLElement>('.project-open') ?? $('#new');
+          fallback.focus();
+        }
       }
     };
     duplicate.onclick = () => runAction(`Duplicate ${p.name}?`, 'Duplicate', async () => {
       const request = projectOpening;
-      const project = await store.duplicate(p.id);
-      projects = await store.list();
-      renderProjects();
-      if (request === projectOpening) await openProject(project);
+      await finishLibraryAction(await store.duplicate(p.id), request);
     }, 'duplicate project');
     remove.onclick = () => runAction(`Move ${p.name} to Deleted projects?`, 'Delete project', async () => {
       await store.trashProject(p.id);
@@ -229,14 +236,26 @@ function renderProjects() {
 document.addEventListener('click',event=>{if (!(event.target as Element).closest('.project-actions')) document.querySelectorAll<HTMLDetailsElement>('.project-actions[open]').forEach(menu=>{menu.open=false;});});
 try {const saved=localStorage.getItem('refract-project-sort');if(['newest','oldest','name','edited'].includes(saved)) $('#project-sort').value=saved;} catch {}
 $('#project-sort').onchange=()=>{try{localStorage.setItem('refract-project-sort',$('#project-sort').value);}catch{} renderProjects();};
+function announceRestoration(list: HTMLElement, name: string, remainingIndex: number): void {
+  const status = document.createElement('p');
+  status.className = 'recovery-success';
+  status.setAttribute('role', 'status');
+  const remaining = list.querySelectorAll<HTMLButtonElement>('.trash-row button');
+  const dialog = list.closest('dialog');
+  if (document.activeElement === document.body || document.activeElement === dialog) {
+    (remaining[Math.min(remainingIndex, remaining.length - 1)] ?? dialog?.querySelector<HTMLButtonElement>('.dialog-actions button'))?.focus();
+  }
+  list.prepend(status);
+  requestAnimationFrame(() => { status.textContent = `Restored ${name}.`; });
+}
 async function renderDeletedProjects() {
   const items=await store.deletedProjects(), list=$('#project-trash-list');list.replaceChildren();
   if(!items.length){const title=document.createElement('p'), hint=document.createElement('p'); title.className='recovery-empty-title'; title.textContent='No deleted projects'; hint.className='recovery-empty-hint'; hint.textContent='Projects you delete appear here for up to 30 days.'; list.append(title,hint); return;}
-  for(const item of items) {
+  for(const [index, item] of items.entries()) {
     const row=document.createElement('div'), label=document.createElement('span'), date=document.createElement('small'), button=document.createElement('button');
     row.className='trash-row';label.textContent=item.name;const deleted=Date.parse(item.deleted);
     date.textContent=Number.isFinite(deleted) ? `Deleted ${new Date(deleted).toLocaleString()}` : 'Deletion date unavailable'; const retention=document.createElement('small'); retention.className='recovery-retention'; if(Number.isFinite(deleted)) retention.textContent=`${Math.max(0,Math.ceil((deleted+30*24*60*60*1000-Date.now())/(24*60*60*1000)))} days remaining`; button.textContent='Restore';button.setAttribute('aria-label',`Restore ${item.name}`);
-    button.onclick=async()=>{button.disabled=true;try{await store.restoreProject(item.id);projects=await store.list();renderProjects();await renderDeletedProjects();}catch(error){report('restore project',error);button.disabled=false;}};
+    button.onclick=async()=>{button.disabled=true;try{await store.restoreProject(item.id);projects=await store.list();renderProjects();await renderDeletedProjects();if($('#project-trash-dialog').open) announceRestoration(list,item.name,index);}catch(error){report('restore project',error);button.disabled=false;}};
     const description=document.createElement('div'); description.className='trash-description'; description.append(label,date,retention); row.append(description,button);list.append(row);
   }
 }
@@ -277,20 +296,37 @@ for (const menu of document.querySelectorAll<HTMLElement>('#file-menu, #folder-m
       buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
     }
   });
-  menu.addEventListener('click', () => dismissFileMenus(true));
+  menu.addEventListener('click', () => dismissFileMenus(true), {capture:true});
 }
 document.addEventListener('focusin', event => {
   if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus();
 });
 let fileTreeRequest = 0, renderedTree = '', renderedTreeProject = '';
-async function refreshFiles() {
+async function refreshFiles(remappedFocus?: string) {
   if (!active) return;
+  const remapOrigin = remappedFocus ? contextMenuOrigin : null;
   const id = active.id, request = ++fileTreeRequest, nodes = await store.tree(id);
   if (active?.id !== id || request !== fileTreeRequest) return;
   const signature = JSON.stringify(nodes);
-  if (renderedTreeProject === id && renderedTree === signature && document.querySelector('#file-list button.active-file')?.getAttribute('data-path') === currentFile) return;
+  if (!remappedFocus && renderedTreeProject === id && renderedTree === signature && document.querySelector('#file-list button.active-file')?.getAttribute('data-path') === currentFile) return;
   renderedTreeProject = id; renderedTree = signature;
   const folderStates = new Map(Array.from(document.querySelectorAll<HTMLDetailsElement>('#file-list details[data-path]'), folder => [folder.dataset.path, folder.open]));
+  function addActions(control: HTMLElement, item: {name:string; path:string}, folder: boolean): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'file-tree-row';
+    const actions = document.createElement('button');
+    actions.className = 'file-tree-actions';
+    actions.textContent = '⋯';
+    actions.title = actions.ariaLabel = `Actions for ${item.path}`;
+    actions.onclick = event => {
+      event.stopPropagation();
+      if (folder) menuFolder = item.path;
+      else menuFile = item.path;
+      showFileContextMenu($(folder ? '#folder-menu' : '#file-menu'), event, actions);
+    };
+    row.append(control, actions);
+    return row;
+  }
   function renderNodes(items) {
     const list = document.createElement('div'); list.className = 'file-tree';
     for (const item of items) {
@@ -299,7 +335,8 @@ async function refreshFiles() {
         const label = document.createElement('summary'), folderIcon = document.createElementNS('http://www.w3.org/2000/svg','svg'), folderPath = document.createElementNS('http://www.w3.org/2000/svg','path'), folderName = document.createElement('span');
         folderIcon.setAttribute('viewBox','0 0 24 24'); folderIcon.setAttribute('aria-hidden','true'); folderIcon.setAttribute('class','folder-icon'); folderPath.setAttribute('d','M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'); folderIcon.append(folderPath); folderName.textContent=item.name; const disclosure=actionIcon('next');disclosure.classList.add('folder-chevron');label.append(disclosure,folderIcon,folderName); label.title = item.path;
         label.oncontextmenu = event => { menuFolder=item.path; $('#file-menu').hidden=true; showFileContextMenu($('#folder-menu'), event); };
-        folder.append(label, renderNodes(item.children)); list.append(folder);
+        folder.append(label, renderNodes(item.children));
+        list.append(addActions(folder, item, true));
       } else {
         const button = document.createElement('button'), icon = document.createElement('span'), name = document.createElement('span');
         icon.className = 'tree-file-icon'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = '\u25a7  '; icon.dataset.type = (item.name.split('.').pop() || 'file').slice(0,4).toUpperCase(); name.className = 'tree-file-name'; name.textContent = item.name; button.append(icon, name);
@@ -313,15 +350,32 @@ async function refreshFiles() {
             if (file.kind === 'image' && active?.id === id) thumbnail.src = file.data;
           }).catch(() => {});
         }
-        button.title = item.path; button.setAttribute('aria-label', `Open ${item.path}`); button.dataset.path = item.path; button.classList.toggle('active-file', item.path === currentFile); if (item.path === currentFile) button.setAttribute('aria-current', 'page'); button.onclick = () => openFile(item.path);
-        button.oncontextmenu = event => { menuFile = item.path; $('#folder-menu').hidden=true; showFileContextMenu($('#file-menu'), event); }; list.append(button);
+        button.title = item.path; button.setAttribute('aria-label', `Open ${item.path}`); button.dataset.path = item.path; button.classList.toggle('active-file', item.path === currentFile); if (item.path === currentFile) button.setAttribute('aria-current', 'page'); button.onclick = async () => {await openFile(item.path); if(currentFile===item.path && active?.id===id && !displayedPaneLayout().editor) revealSource();};
+        button.oncontextmenu = event => { menuFile = item.path; $('#folder-menu').hidden=true; showFileContextMenu($('#file-menu'), event); }; list.append(addActions(button, item, false));
       }
     }
     return list;
   }
-  $('#file-list').replaceChildren(renderNodes(nodes));
+  const fileList = document.getElementById('file-list')!;
+  const focused = document.activeElement?.closest<HTMLElement>('#file-list button, #file-list summary')
+    ?? (document.activeElement === document.body ? remapOrigin : null);
+  const row = focused?.closest('.file-tree-row');
+  const focusedPath = row?.firstElementChild?.getAttribute('data-path');
+  const destination = focused === remapOrigin ? remappedFocus : undefined;
+  fileList.replaceChildren(renderNodes(nodes));
+  if (focused && document.activeElement === document.body) {
+    const replacement = Array.from(fileList.querySelectorAll<HTMLElement>('[data-path]')).find(item => item.dataset.path === (destination ?? focusedPath));
+    if (destination && replacement) {
+      for (let parent = replacement.parentElement?.closest('details'); parent; parent = parent.parentElement?.closest('details')) parent.open = true;
+    }
+    const newFocus = focused.classList.contains('file-tree-actions') ? replacement?.closest('.file-tree-row')?.lastElementChild
+      : replacement instanceof HTMLDetailsElement ? replacement.querySelector('summary') : replacement;
+    (newFocus instanceof HTMLElement ? newFocus : $('#files-tab')).focus({preventScroll:!destination});
+  }
 }
-setInterval(() => { if (active) void refreshFiles().catch(error => console.error('Could not refresh project files', error)); }, 3000);
+setInterval(() => {
+  if (active && !movingFolder && !renamingFile) void refreshFiles().catch(error => console.error('Could not refresh project files', error));
+}, 3000);
 let previewDocument: any = null, previewLoading: any = null, previewGeneration = 0;
 function clearFilePreview() {
   previewGeneration++;
@@ -380,7 +434,17 @@ async function showProjectPdf(encoded: string, request: number, id: string, name
     if (request === opening && active?.id === id) panel.textContent = `Could not preview PDF: ${error.message}`;
   }
 }
-async function openFile(name) {
+let pendingFileOpen: Promise<void> | undefined;
+function openFile(name: string): Promise<void> {
+  const request = loadFile(name);
+  pendingFileOpen = request;
+  return request.finally(() => { if (pendingFileOpen === request) pendingFileOpen = undefined; });
+}
+async function finishFileNavigation(projectId: string): Promise<void> {
+  while (active?.id === projectId && pendingFileOpen) await pendingFileOpen;
+}
+async function loadFile(name: string): Promise<void> {
+  if (!active) return;
   const request = ++opening, id = active.id, version = revision;
   try {
     const file = await store.openFile(id,name);
@@ -390,7 +454,8 @@ async function openFile(name) {
     clearFilePreview();
     commentSelection = null; currentFile = name; document.querySelectorAll<HTMLElement>('#file-list button[data-path]').forEach(button => { const selected = button.dataset.path === name; button.classList.toggle('active-file', selected); if (selected) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current'); }); if (!openFiles.includes(name)) openFiles.push(name); renderFileTabs();
     $('#numbers').hidden = file.kind !== 'text'; $('.source-container').hidden = file.kind !== 'text';
-    completionButton.disabled=file.kind!=='text' || ($('#source') as HTMLTextAreaElement).readOnly;
+    findButton.disabled=file.kind!=='text';
+    completionButton.disabled=findButton.disabled || ($('#source') as HTMLTextAreaElement).readOnly;
     updatePdfControls();
     if(file.kind!=='text') findPanel.hidden=true;
     if (file.kind === 'text') {
@@ -417,8 +482,11 @@ async function openProject(p) {
   suspendPickerForProject(p.id);
   restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
   compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; toolsButton.setAttribute('aria-expanded', 'false'); $('#compile').textContent = 'Compile';
-  pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
-  $('#project-navigation').hidden = false; $('#project-name').textContent = p.name;
+  previewStatus.hidden = true; previewError?.remove(); buildOutputView = defaultBuildOutputView();
+  compactPreview = false; applyPaneLayout(false);
+  releasePdf(pdfDocument); pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
+  $('#project-navigation').hidden = false; setProjectName(p.name);
+  $('#project-name').focus({preventScroll:true});
   showRestoreNotice(false);
   try {
     const retained=await store.versionRetainedStages(p.id);if(request!==projectOpening)return;showRestoreNotice(retained>0);
@@ -430,9 +498,24 @@ async function openProject(p) {
   } catch (error) { if (request === projectOpening) report('open project', error); }
   finally {if(request===projectOpening && chatRequest===chatOpening){chatLoading=false;updateSendState();}}
 }
+async function finishLibraryAction(project: {id:string}, request: number): Promise<void> {
+  projects = await store.list(); renderProjects();
+  while (request === projectOpening) {
+    const dialog = document.querySelector<HTMLDialogElement>('dialog[open]');
+    if (!dialog) { await openProject(project); return; }
+    await new Promise<void>(resolve => dialog.addEventListener('close', () => resolve(), {once:true}));
+  }
+}
 async function createProject() {
-  try { const p = await store.create('New Project'); projects = await store.list(); renderProjects(); await openProject(p); }
-  catch (error) { report('create project', error); }
+  if ($('#new').disabled || $('#import').disabled) return;
+  const trigger = document.activeElement, request = projectOpening;
+  $('#new').disabled = true; $('#start').disabled = true; $('#import').disabled = true;
+  try { await finishLibraryAction(await store.create('New Project'), request); }
+  catch (error) { await report('create project', error); }
+  finally {
+    $('#new').disabled = false; $('#start').disabled = false; $('#import').disabled = false;
+    if (!active && document.activeElement === document.body && trigger instanceof HTMLElement) trigger.focus();
+  }
 }
 function* outlineSections(source:string): Generator<{title:string; index:number}> {
   const heading = /\\(?:sub)*section\*?\{/g;
@@ -484,7 +567,7 @@ function updateEditor() {
     button.onclick = () => {
       const editor = $('#source') as HTMLTextAreaElement;
       const line = source.slice(0, match.index).split('\n').length;
-      editor.focus(); editor.setSelectionRange(match.index, match.index);
+      revealSource(); editor.setSelectionRange(match.index, match.index);
       const lineHeight = parseFloat(getComputedStyle(editor).lineHeight);
       editor.scrollTop = Math.max(0, (line - 1) * lineHeight - editor.clientHeight / 2);
       const prefix = source.slice(source.lastIndexOf('\n', match.index - 1) + 1, match.index);
@@ -495,13 +578,31 @@ function updateEditor() {
       editor.scrollLeft = Math.max(0, measure.getBoundingClientRect().width - editor.clientWidth / 2);
       measure.remove();
       editor.dispatchEvent(new Event('scroll'));
-      if (pdfDocument && compiledProject === active?.id) showInPdf.click();
+      if (!compactWorkspace.matches && pdfDocument && compiledProject === active?.id) showInPdf.click();
     };
     return button;
   }));
 }
 $('#new').onclick = createProject; $('#start').onclick = createProject;
-$('#home').onclick = async () => { saveEditorView();saveChatDraft();++chatOpening;chatLoading=false;++opening; ++projectOpening; active = null; suspendPickerForProject(); clearFilePreview(); $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true; try { projects = await store.list(); renderProjects(); } catch (error) { report('load projects', error); } };
+$('#home').onclick = async () => {
+  const id = active?.id, request = ++projectOpening;
+  saveEditorView(); saveChatDraft(); ++chatOpening; chatLoading = false; ++opening;
+  active = null; suspendPickerForProject(); clearFilePreview(); closeLayoutTools();
+  releasePdf(pdfDocument); pdfDocument = null; pdfRenderRevision++;
+  $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true;
+  const focusProject = (projectId = id) => {
+    const previous = Array.from(document.querySelectorAll<HTMLButtonElement>('.project-open')).find(button => button.dataset.projectId === projectId);
+    (previous ?? $('#search')).focus();
+  };
+  focusProject();
+  try {
+    const items = await store.list();
+    if (request !== projectOpening) return;
+    const focused = document.activeElement;
+    projects = items; renderProjects();
+    if (focused instanceof HTMLElement && !focused.isConnected) focusProject(focused.dataset.projectId);
+  } catch (error) { if (request === projectOpening) report('load projects', error); }
+};
 const pendingSaves = new Map<string, Map<string, Promise<Error | null>>>();
 $('#source').oninput = () => {
   const id = active.id, name = currentFile, content = $('#source').value;
@@ -540,16 +641,17 @@ $('#files-tab').onclick = () => { $('#file-search').hidden = false; void runProj
 $('#chats-tab').onclick = () => { $('#file-search').hidden = true; ++searchRequest; clearTimeout(searchTimer); $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true'); $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = true; $('#outline').hidden = true; $('#chat-list').hidden = false; };
 store.list().then(p => { projects = p; renderProjects(); }).catch(error => report('load projects', error));
 let compiledProject = null, compiledPdf: string | null = null, compileLog = '';
-type PdfViewport = { width:number; height:number };
-type PdfPage = { getViewport(options: {scale:number}): PdfViewport; render(options:{canvasContext:CanvasRenderingContext2D;viewport:PdfViewport}): {promise:Promise<unknown>} };
-type PdfDocument = { numPages:number; getPage(page:number):Promise<PdfPage> };
+type PdfDocument = import('pdfjs-dist').PDFDocumentProxy;
 let pdfZoom=100, pdfPage=1, pdfPageCount=0, requestedPdfPage=1;
 let pdfFitMode: 'width' | 'page' | 'custom' = 'width';
 let pdfDocument:PdfDocument | null = null, pdfRenderRevision=0;
+function releasePdf(pdf: PdfDocument | null | undefined): void {
+  void pdf?.destroy().catch(error => console.error('Could not release PDF', error));
+}
 let lastPdfSync:{page:number;x:number;y:number}|null=null;
 let pdfSharpTimer: ReturnType<typeof setTimeout> | null = null;
 const pdfControls=document.createElement('div');pdfControls.className='pdf-controls';
-pdfControls.innerHTML='<span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">›</button><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button>';
+pdfControls.innerHTML='<div class="pdf-page-controls"><span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">›</button></div><div class="pdf-zoom-controls"><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button></div>';
 $('#zoom-fit').textContent='Fit width'; $('#zoom-fit').setAttribute('aria-label','Fit PDF to width');
 $('#download').replaceChildren(actionIcon('download')); $('#download').setAttribute('aria-label','Download PDF');
 $('#export-project').replaceChildren(actionIcon('export')); $('#export-project').setAttribute('aria-label','Export project');
@@ -580,7 +682,12 @@ function updatePdfControls() {
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Previous compiled PDF page"]')!.disabled=pdfPageCount===0 || pdfPage<=1;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Next compiled PDF page"]')!.disabled=pdfPageCount===0 || pdfPage>=pdfPageCount;
   pdfCurrentPage.disabled=pdfPageCount===0; pdfPageInput.disabled=pdfPageCount===0; if(!pdfPageCount) finishPdfPageEdit(false);
-  showInPdf.disabled=pdfPageCount===0 || $('.source-container').hidden;
+  const synced = !!active && compiledProject === active.id;
+  showInPdf.disabled=!synced || pdfPageCount===0 || $('.source-container').hidden;
+  for (const canvas of pdfArea.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')) {
+    const hint = synced ? 'Double-click or press Enter to find this position in the source' : '';
+    if (canvas.title !== hint) canvas.title = hint;
+  }
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Zoom out compiled PDF"]')!.disabled=pdfPageCount===0 || pdfZoom<=25;
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Zoom in compiled PDF"]')!.disabled=pdfPageCount===0 || pdfZoom>=250;
   $('#zoom-fit').disabled=pdfPageCount===0;
@@ -602,13 +709,14 @@ async function sharpenPdfPages(doc:PdfDocument, revision:number, zoom:number) {
       const replacement = document.createElement('canvas');
       replacement.width = Math.ceil(viewport.width); replacement.height = Math.ceil(viewport.height);
       replacement.dataset.renderScale = String(scale);
-      replacement.style.width = '100%'; replacement.setAttribute('aria-label', `Page ${i+1}`);replacement.tabIndex=0;replacement.title='Double-click or press Enter to find this position in the source';
+      replacement.style.width = '100%'; replacement.setAttribute('aria-label', `Page ${i+1}`);replacement.tabIndex=0;
       const context = replacement.getContext('2d'); if (!context) throw new Error('Could not render PDF page');
       await page.render({canvasContext:context,viewport}).promise;
       if (revision !== pdfRenderRevision || doc !== pdfDocument || !canvases[i].isConnected) return;
+      replacement.title = canvases[i].title;
       const focused=document.activeElement===canvases[i];canvases[i].replaceWith(replacement);if(focused)replacement.focus({preventScroll:true});
     }
-  } catch (error) { console.error('PDF zoom rendering failed', error); }
+  } catch (error) { if (doc === pdfDocument) console.error('PDF zoom rendering failed', error); }
 }
 function schedulePdfSharpen() {
   const revision=++pdfRenderRevision;
@@ -666,13 +774,18 @@ pdfPageInput.addEventListener('input',()=>pdfPageInput.removeAttribute('aria-inv
 pdfPageInput.addEventListener('blur',()=>finishPdfPageEdit(false));
 showInPdf.onclick=async()=>{
   if(!active || !compiledProject || compiledProject!==active.id || !currentFile || $('.source-container').hidden)return;
-  closeLayoutTools();paneLayout={...visiblePaneLayout(),preview:true};if(window.matchMedia('(max-width:1200px)').matches) paneLayout={agent:false,editor:false,preview:true};applyPaneLayout();
   const id=active.id,file=currentFile,version=revision,editor=$('#source') as HTMLTextAreaElement,line=editor.value.slice(0,editor.selectionStart).split('\n').length;
   try {
     const position=await store.syncForward(id,file,line),doc=pdfDocument;
     if(active?.id!==id || currentFile!==file || revision!==version || compiledProject!==id || !doc)return;
     const viewport=(await doc.getPage(position.page)).getViewport({scale:1});
     if(active?.id!==id || currentFile!==file || revision!==version || compiledProject!==id || pdfDocument!==doc)return;
+    const sourceFocused = document.activeElement === showInPdf || document.activeElement === editor;
+    closeLayoutTools();
+    if (compactWorkspace.matches) compactPreview = true;
+    else paneLayout.preview = true;
+    applyPaneLayout();
+    if (sourceFocused && compactWorkspace.matches) $('#pane-preview').focus();
     schedulePdfSharpen();
     const canvas=pdfArea.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')[position.page-1];if(!canvas)return;
     const bounds=canvas.getBoundingClientRect(),area=pdfArea.getBoundingClientRect();
@@ -691,15 +804,13 @@ async function navigatePdfSource(canvas:HTMLCanvasElement,clientX:number,clientY
     if(active?.id!==id || revision!==version || compiledProject!==id || pdfDocument!==doc)return;
     await openFile(result.file);if(active?.id!==id || revision!==version || currentFile!==result.file)return;
     const editor=$('#source') as HTMLTextAreaElement,lines=editor.value.split('\n');if(result.line<1 || result.line>lines.length)return;
-    const offset=lines.slice(0,result.line-1).reduce((n,line)=>n+line.length+1,0); closeLayoutTools();paneLayout={...visiblePaneLayout(),editor:true};if(window.matchMedia('(max-width:1200px)').matches)paneLayout.preview=false;applyPaneLayout(); editor.focus();editor.setSelectionRange(offset,offset+lines[result.line-1].length);
-    const style=getComputedStyle(editor),lineHeight=parseFloat(style.lineHeight);
-    editor.scrollTop=Math.max(0,parseFloat(style.paddingTop)+(result.line-1)*lineHeight-(editor.clientHeight-lineHeight)/2);
-    syncEditorScroll();
+    const offset=lines.slice(0,result.line-1).reduce((n,line)=>n+line.length+1,0);
+    selectSource(offset,offset+lines[result.line-1].length);
   } catch(error){if(active?.id===id && revision===version)report('find PDF source',error);}
 }
 pdfArea.addEventListener('dblclick',event=>{if((event.target as HTMLElement).closest('a,button,input,select,textarea'))return;const canvas=(event.target as HTMLElement).closest<HTMLCanvasElement>('.pdf-pages canvas');if(canvas)void navigatePdfSource(canvas,event.clientX,event.clientY);});
 pdfArea.addEventListener('keydown',event=>{
-  if(event.key!=='Enter' && event.key!==' ')return;
+  if((event.key!=='Enter' && event.key!==' ') || !active || compiledProject!==active.id)return;
   const canvas=(event.target as HTMLElement).closest<HTMLCanvasElement>('.pdf-pages canvas');if(!canvas)return;
   event.preventDefault();const rect=canvas.getBoundingClientRect(),doc=pdfDocument,index=[...pdfArea.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')].indexOf(canvas),saved=lastPdfSync;
   if(doc && saved && saved.page===index+1) {
@@ -718,39 +829,77 @@ pdfArea.addEventListener('scroll',()=>{
 window.addEventListener('resize',()=>{if(pdfDocument){if(pdfFitMode==='page') fitPdfPage(); else schedulePdfSharpen();}});
 updatePdfControls();
 const pendingDraftSaves=new Set<string>();
+const versionFileOptions = new WeakMap<HTMLButtonElement, readonly string[]>();
 let showingTools = false, selectedTool = 'logs';
+let updateBuildOutput: (() => void) | undefined;
+function defaultBuildOutputView() { return {expanded:false, query:'', issuesOnly:false, wrap:true}; }
+let buildOutputView = defaultBuildOutputView();
+const texFileDiagnostic = /^\.[\\/](.+?):(\d+):\s*(.+)$/;
+const previewStatus = document.createElement('p');
+previewStatus.className = 'preview-status';
+previewStatus.setAttribute('role', 'status');
+previewStatus.hidden = true;
+$('#pdf-area').before(previewStatus);
+let previewError: HTMLElement | undefined;
+function buildSourceAction(diagnostic: RegExpMatchArray | undefined): HTMLButtonElement | undefined {
+  const [, errorFile, lineNumber] = diagnostic ?? [];
+  const sourcePath = errorFile?.replaceAll('\\', '/');
+  const listedFile = Array.from(document.querySelectorAll<HTMLButtonElement>('#file-list button[data-path]')).some(button => button.dataset.path === sourcePath);
+  if (!lineNumber || !sourcePath || !listedFile) return;
+  const projectId = active?.id, version = revision;
+  const jump = document.createElement('button');
+  jump.type = 'button'; jump.className = 'secondary compile-line-action';
+  jump.textContent = `Go to line ${lineNumber} in ${sourcePath}`;
+  jump.onclick = async () => {
+    if (!projectId || active?.id !== projectId || revision !== version) return;
+    if (currentFile !== sourcePath) await openFile(sourcePath);
+    if (active?.id !== projectId || currentFile !== sourcePath || revision !== version) return;
+    const rows = sourceEditor.value.split('\n'), index = Number(lineNumber) - 1;
+    if (index < 0 || index >= rows.length) return;
+    const offset = rows.slice(0, index).reduce((sum, line) => sum + line.length + 1, 0);
+    selectSource(offset, offset + rows[index].length);
+  };
+  return jump;
+}
 function showCompileError(output: string) {
   const panel = document.createElement('section'); panel.className = 'compile-error'; panel.setAttribute('role', 'alert');
   const title = document.createElement('h2'); title.textContent = 'Could not compile';
   const message = document.createElement('p');
-  const lines = output.split(/\r?\n/), cause = lines.find(line => /^!\s/.test(line)), location = lines.find(line => /^l\.\d+/.test(line));
+  const lines = output.split(/\r?\n/);
+  const diagnostic = lines.map(line => line.match(texFileDiagnostic)).find(Boolean);
+  const cause = diagnostic?.[3] || lines.find(line => /^!\s/.test(line));
+  const location = lines.find(line => /^l\.\d+/.test(line));
   message.textContent = [cause, location].filter(Boolean).join(' - ') || lines.find(line => line.trim()) || 'Check the build output for details, then compile again.';
-  const guidance = document.createElement('p'); guidance.className = 'compile-guidance'; guidance.textContent = cause ? 'Fix the issue in the source, then compile again.' : 'Resolve the issue, then compile again.';
+  const guidance = document.createElement('p'); guidance.className = 'compile-guidance';
+  guidance.textContent = pdfDocument ? 'Showing the last successful PDF. Fix the issue and compile again.' : 'Resolve the issue, then compile again.';
   const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'View build output';
   const log = document.createElement('pre'); log.className = 'compile-log'; log.textContent = output;
   details.append(summary, log); panel.append(title, message, guidance);
-  const lineNumber = location?.match(/^l\.(\d+)/)?.[1];
-  if (lineNumber && currentFile && !$('.source-container').hidden) {
-    const errorFile=currentFile, errorProject=active?.id; const jump = document.createElement('button'); jump.type='button'; jump.className='secondary compile-line-action';
-    jump.textContent=`Go to line ${lineNumber} in ${currentFile}`;
-    jump.onclick=async()=>{ if (!errorProject || active?.id !== errorProject) return; if(currentFile !== errorFile) await openFile(errorFile); if(active?.id !== errorProject || currentFile !== errorFile) return; const editor=$('#source') as HTMLTextAreaElement, rows=editor.value.split('\n'), index=Number(lineNumber)-1; if(index<0 || index>=rows.length) return; const offset=rows.slice(0,index).reduce((sum,line)=>sum+line.length+1,0); editor.focus(); editor.setSelectionRange(offset,offset+rows[index].length); editor.scrollTop=Math.max(0,index*parseFloat(getComputedStyle(editor).lineHeight)-editor.clientHeight/3); updateActiveLine(); };
-    panel.append(jump);
-  }
-  panel.append(details); $('#pdf-area').replaceChildren(panel);
+  const jump = buildSourceAction(diagnostic);
+  if (jump) panel.append(jump);
+  previewStatus.hidden = true; previewError?.remove();
+  previewError = panel;
+  panel.append(details);
+  if (pdfDocument) { panel.classList.add('retained-preview-error'); pdfArea.before(panel); }
+  else pdfArea.replaceChildren(panel);
+  updatePdfControls();
 }
 function scheduleCompile() {
+  previewError?.remove(); previewError = undefined;
   if (pdfPageCount) requestedPdfPage=pdfPage;
   compiledProject = null; compiledPdf = null; $('#download').disabled = true;
   lastPdfSync=null;
-  pdfDocument = null; pdfRenderRevision++;
-  pdfPageCount=0;pdfPage=1;updatePdfControls();
+  updatePdfControls();
   compileLog = 'Changes pending compilation';
-  if (showingTools && selectedTool === 'logs') renderToolPanel();
+  if (showingTools && selectedTool === 'logs') updateBuildOutput?.();
   const placeholder = document.createElement('div'); placeholder.className = 'pdf-placeholder'; placeholder.setAttribute('role','status');
   const placeholderTitle = document.createElement('strong'); placeholderTitle.textContent = 'Changes pending compilation';
   const placeholderHint = document.createElement('span'); placeholderHint.textContent = 'Your preview will update after the document is compiled.';
   placeholder.append(placeholderTitle,placeholderHint);
-  $('#pdf-area').replaceChildren(placeholder);
+  if (pdfDocument) {
+    previewStatus.textContent = 'Showing the last successful build while changes compile.';
+    previewStatus.hidden = false;
+  } else $('#pdf-area').replaceChildren(placeholder);
   $('#compile').textContent = 'Compile';
   clearTimeout(compileTimer);
   // Queue the next event-loop turn so synchronous edits coalesce without a typing delay.
@@ -762,7 +911,8 @@ async function compilePreview(force=false) {
   if (compileRunning) { compileQueued = true; return; }
   compileRunning = true;
   const id = active.id, version = revision;
-  $('#compile').disabled = true; $('#compile').textContent = 'Compiling…';
+  let pendingPdf: PdfDocument | undefined;
+  $('#compile').setAttribute('aria-disabled', 'true'); $('#compile').textContent = 'Compiling…';
   try {
     const saveResults = await Promise.all([...(pendingSaves.get(id)?.values() || [])]);
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
@@ -771,7 +921,7 @@ async function compilePreview(force=false) {
     const result = await store.compile(id,force);
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
     compileLog = result.log || '';
-    if (showingTools && selectedTool === 'logs') renderToolPanel();
+    if (showingTools && selectedTool === 'logs') updateBuildOutput?.();
     if (!result.ok) {
       showCompileError(result.log || 'No build output was provided.'); compiledProject = null; $('#compile').textContent = 'Errors'; return;
     }
@@ -779,7 +929,7 @@ async function compilePreview(force=false) {
     const pdfModulePath: string = '../node_modules/pdfjs-dist/build/pdf.mjs';
     const pdfjs = await import(pdfModulePath);
     pdfjs.GlobalWorkerOptions.workerSrc = '../node_modules/pdfjs-dist/build/pdf.worker.mjs';
-    const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported:false }).promise;
+    const doc = pendingPdf = await pdfjs.getDocument({ data: bytes, isEvalSupported:false }).promise;
     const container = document.createElement('div'); container.className = 'pdf-pages';
     for (let i = 1; i <= doc.numPages; i++) {
       if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
@@ -796,6 +946,12 @@ async function compilePreview(force=false) {
       canvas.dataset.renderScale = String(scale);
       canvas.setAttribute('aria-label', `Page ${i}`);canvas.tabIndex=0;canvas.title='Double-click or press Enter to find this position in the source';
       const frame=document.createElement('div');frame.className='pdf-page-frame';frame.style.width=`${pdfZoom}%`;frame.append(canvas);
+      void page.getTextContent().then(({items}) => {
+        const text = document.createElement('div');
+        text.className = 'pdf-accessible-text';
+        text.textContent = items.map(item => 'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join('').trim();
+        if (text.textContent) frame.append(text);
+      }).catch(error => console.error('Could not read PDF page text', error));
       const annotations=await page.getAnnotations({intent:'display'});
       for(const annotation of annotations){
         if(annotation.subtype!=='Link' || (!annotation.url && !annotation.dest))continue;
@@ -810,18 +966,28 @@ async function compilePreview(force=false) {
       container.append(frame);
     }
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
-    $('#pdf-area').replaceChildren(container);pdfDocument=doc;pdfPageCount=doc.numPages;pdfPage=1;changePdfZoom(pdfZoom,pdfFitMode);if(pdfFitMode==='page') fitPdfPage();goToPdfPage(Math.min(requestedPdfPage,doc.numPages)); compiledProject = id; compiledPdf = result.pdf; $('#download').disabled = false; $('#compile').textContent = 'Compiled';
+    const readingPage = Math.min(pdfDocument ? pdfPage : requestedPdfPage, doc.numPages);
+    const previouslyFocused = Array.from(pdfArea.querySelectorAll('.pdf-pages canvas')).indexOf(document.activeElement);
+    previewStatus.hidden = true; previewError?.remove(); previewError = undefined;
+    compiledProject = id; compiledPdf = result.pdf;
+    releasePdf(pdfDocument);
+    $('#pdf-area').replaceChildren(container);pdfDocument=doc;pdfPageCount=doc.numPages;pdfPage=readingPage;changePdfZoom(pdfZoom,pdfFitMode);if(pdfFitMode==='page') fitPdfPage();goToPdfPage(readingPage);
+    if (previouslyFocused >= 0) container.querySelectorAll('canvas')[Math.min(previouslyFocused, doc.numPages - 1)]?.focus({preventScroll:true});
+    $('#download').disabled = false; $('#compile').textContent = 'Compiled';
   } catch (error) {
     if (active && active.id === id && revision === version) {
       compiledProject = null; compiledPdf = null; $('#download').disabled = true;
       compileLog = error.message || String(error);
       showCompileError(compileLog); $('#compile').textContent = 'Errors';
-      if (showingTools && selectedTool === 'logs') renderToolPanel();
+      if (showingTools && selectedTool === 'logs') updateBuildOutput?.();
     } else if (active) compileQueued = true;
   }
-  finally { compileRunning = false; $('#compile').disabled = false; if (compileQueued) { compileQueued = false; scheduleCompile(); } }
+  finally {
+    if (pendingPdf !== pdfDocument) releasePdf(pendingPdf);
+    compileRunning = false; $('#compile').removeAttribute('aria-disabled'); if (compileQueued) { compileQueued = false; scheduleCompile(); }
+  }
 }
-$('#compile').onclick = () => { scheduleCompile(); clearTimeout(compileTimer); compilePreview(true); };
+$('#compile').onclick = () => { if (!compileRunning) { scheduleCompile(); clearTimeout(compileTimer); compilePreview(true); } };
 $('#download').onclick = () => { if (active && compiledProject === active.id && compiledPdf) store.savePdf(compiledPdf).catch(error => report('save PDF', error)); };
 const purifierPath: string='../node_modules/dompurify/dist/purify.es.mjs';
 const katexPath: string='../node_modules/katex/dist/katex.mjs';
@@ -895,6 +1061,7 @@ function retryChatProviders(): void {
 $('#chat-provider').addEventListener('picker-retry-providers', retryChatProviders);
 window.addEventListener('codex-connection-changed', () => { if (active) retryChatProviders(); });
 function renderChat(chat) {
+  chatAnnouncement.textContent = '';
   const saved = chat.provider || (chat.sessionId || chat.messages.length ? 'codex' : null);
   const staged = active && readChatDraft(draftKey(active.id,currentChat)).provider;
   discoverChatProviders(staged ?? saved, saved);
@@ -905,7 +1072,7 @@ function renderChat(chat) {
     const title = document.createElement('strong'), intro = document.createElement('p'), close = document.createElement('button');
     close.className = 'dismiss-welcome'; close.setAttribute('aria-label', 'Dismiss welcome'); close.replaceChildren(actionIcon('close'));
     close.addEventListener('mousedown', event => event.preventDefault());
-    close.onclick = () => { welcomeDismissed = true; pane.replaceChildren(); };
+    close.onclick = () => { welcomeDismissed = true; pane.replaceChildren(); $('#chat-input').focus(); };
     title.textContent = 'Welcome to Refract!'; intro.textContent = 'Ask about your LaTeX, research, or writing.';
     pane.replaceChildren(close, title, intro); return;
   }
@@ -951,21 +1118,31 @@ $('#chat-provider').onchange = () => {
 async function sendChat() {
   if (!active || !providerAvailable || $('#chat-provider').dataset.pickerBlock || chatLoading || restoringProject === active.id || chatBusy.has(active.id) || pendingAttachments.has(draftKey(active.id,currentChat)) || !$('#chat-input').value.trim()) return;
   const id = active.id, chatId = currentChat, prompt = $('#chat-input').value, images = attachments, provider = ($('#chat-provider') as HTMLSelectElement).value;
+  let cancelled = false;
+  const stopPreparation = new Promise<void>(resolve => {
+    pendingChatStarts.set(id, {cancel:() => { cancelled = true; resolve(); }});
+  });
+  chatAnnouncement.textContent = '';
+  if (document.activeElement === $('#send')) $('#chat-input').focus();
   const providerSelect = $('#chat-provider') as HTMLSelectElement;
   const codexMode = provider === 'codex' ? providerSelect.dataset.codexMode || undefined : undefined;
   providerSelect.disabled = true;
   providerSelect.dataset.pickerStatus = 'busy';
   providerSelect.dispatchEvent(new Event('providerstate'));
+  chatBusy.add(id);
   attachments = []; renderAttachments();
-  $('#chat-input').value = ''; $('#send').disabled = true; chatBusy.add(id);chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
+  $('#chat-input').value = ''; $('#send').disabled = true; chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
   saveChatDraft();
   const pending = document.createElement('div'); pending.className = 'message user'; pending.textContent = prompt;
   if ($('#chat-messages .dismiss-welcome')) $('#chat-messages').replaceChildren(pending); else $('#chat-messages').append(pending);
   let submitted=false, chat=null;
   try {
-    const selection = await (window as unknown as Window & {
+    const readiness = (window as unknown as Window & {
       codexPickerReady: (id: string) => Promise<Omit<import('./src/codex-preferences.cjs').CodexPreferences, 'favorites'>>;
     }).codexPickerReady(provider);
+    const selection = await Promise.race([readiness, stopPreparation]);
+    pendingChatStarts.delete(id);
+    if (!selection || cancelled) throw new Error('Assistant turn stopped before sending.');
     submitted = true;
     chat = await store.chatSend(id, prompt, chatId, images, provider, selection, codexMode);
     if (chat) {
@@ -977,17 +1154,21 @@ async function sendChat() {
     if(String(error.message).includes('Save pending changes before sending a message.')) submitted=false;
     if(active?.id===id && currentChat===chatId) {
       if(!String(error.message).includes('Assistant operation finished, but its recovery snapshot failed')) {
-        if(!$('#chat-input').value) $('#chat-input').value=prompt;
+        const draftText = $('#chat-input').value;
+        if (!draftText || !submitted) $('#chat-input').value = draftText ? `${prompt}\n\n${draftText}` : prompt;
         if(!attachments.length) {attachments=images;renderAttachments();}
         saveChatDraft();
+        if (cancelled) chatAnnouncement.textContent = 'Message stopped before sending. The composer contains your recovered draft.';
       }
-      pending.remove(); report('send message',error);
+      pending.remove(); if (!cancelled) report('send message',error);
     } else if(!String(error.message).includes('Assistant operation finished, but its recovery snapshot failed')) {
       const key=draftKey(id,chatId),draft=readChatDraft(key);
-      if(!draft.text)draft.text=prompt;if(!draft.attachments.length)draft.attachments=images;
+      if (!draft.text || !submitted) draft.text = draft.text ? `${prompt}\n\n${draft.text}` : prompt;
+      if(!draft.attachments.length)draft.attachments=images;
       writeChatDraft(key,draft);
     }
   } finally {
+    pendingChatStarts.delete(id);
     try {
       if(active?.id===id && submitted) {
         const files=await store.files(id);if(active?.id===id) {
@@ -998,7 +1179,10 @@ async function sendChat() {
             else {clearEditor();const root=active.rootFile || 'main.tex';if(files.includes(root)) await openFile(root);}
             if(currentChat===chatId) {
               const request=chatOpening, refreshed=chat || await store.chatLoad(id,chatId);
-              if(active?.id===id && currentChat===chatId && request===chatOpening) renderChat(refreshed);
+              if(active?.id===id && currentChat===chatId && request===chatOpening) {
+                renderChat(refreshed);
+                if (chat?.messages?.at(-1)?.role === 'assistant') chatAnnouncement.textContent = 'Assistant response ready.';
+              }
             }
             await refreshChats();revision++;scheduleCompile();
           }
@@ -1011,15 +1195,20 @@ async function sendChat() {
       providerSelect.dataset.pickerStatus = 'ready';
       providerSelect.dispatchEvent(new Event('providerstate'));
     }
-    if(active) {setEditorReadOnly(chatBusy.has(active.id) || restoringProject===active.id);updateSendState();}updateCancelButton();
+    if(active) {setEditorReadOnly(chatBusy.has(active.id) || restoringProject===active.id);updateAttachmentState();}updateCancelButton();
   }
 }
 const chatProgressElement=document.createElement('div');chatProgressElement.className='chat-progress';chatProgressElement.setAttribute('role','status');chatProgressElement.setAttribute('aria-live','polite');chatProgressElement.hidden=true;
 $('#chat-messages').after(chatProgressElement);
+const chatAnnouncement = document.createElement('span');
+chatAnnouncement.className = 'visually-hidden';
+chatAnnouncement.setAttribute('role', 'status');
+chatProgressElement.after(chatAnnouncement);
 function updateChatProgress() {
   const progress=active && chatProgress.get(active.id);
-  chatProgressElement.hidden=!progress || progress.chatId!==currentChat;
-  chatProgressElement.textContent=chatProgressElement.hidden ? '' : progress.status;
+  chatProgressElement.hidden=!progress;
+  chatProgressElement.textContent=!progress ? '' : progress.chatId===currentChat ? progress.status : 'The assistant is working in another chat in this project.';
+  updateCancelButton();
 }
 store.onChatProgress(update=>{
   if(!update || !chatBusy.has(update.projectId) || typeof update.status!=='string')return;
@@ -1027,14 +1216,24 @@ store.onChatProgress(update=>{
 });
 const cancelChatButton=document.createElement('button');cancelChatButton.type='button';cancelChatButton.className='stop-chat';cancelChatButton.setAttribute('aria-label','Stop');cancelChatButton.title='Stop assistant';cancelChatButton.hidden=true;
 $('#send').before(cancelChatButton);
-function updateCancelButton() {cancelChatButton.hidden=!active || !chatBusy.has(active.id);cancelChatButton.disabled=false;cancelChatButton.setAttribute('aria-label','Stop');$('#send').hidden=!cancelChatButton.hidden;}
+function updateCancelButton() {
+  const wasFocused = document.activeElement === cancelChatButton;
+  cancelChatButton.hidden=!active || chatProgress.get(active.id)?.chatId!==currentChat;
+  if (cancelChatButton.hidden) {
+    if (wasFocused) $('#chat-input').focus();
+    cancelChatButton.removeAttribute('aria-disabled'); cancelChatButton.setAttribute('aria-label','Stop');
+  }
+  $('#send').hidden=!cancelChatButton.hidden;
+}
 cancelChatButton.onclick=async()=>{
-  if(!active || !chatBusy.has(active.id)) return;
-  const id=active.id;cancelChatButton.disabled=true;cancelChatButton.setAttribute('aria-label','Stopping…');
-  try {await store.chatCancel(id);} catch(error) {if(active?.id===id){report('stop assistant',error);updateCancelButton();}}
+  if(!active || !chatBusy.has(active.id) || cancelChatButton.getAttribute('aria-disabled')==='true') return;
+  const id=active.id;cancelChatButton.setAttribute('aria-disabled','true');cancelChatButton.setAttribute('aria-label','Stopping…');
+  const pending = pendingChatStarts.get(id);
+  if (pending) { pending.cancel(); return; }
+  try {await store.chatCancel(id);} catch(error) {if(active?.id===id){report('stop assistant',error);cancelChatButton.removeAttribute('aria-disabled');cancelChatButton.setAttribute('aria-label','Stop');}}
 };
 $('#send').onclick = sendChat;
-$('#chat-input').addEventListener('input',saveChatDraft);
+$('#chat-input').addEventListener('input',()=>{saveChatDraft();updateSendState();});
 $('#chat-input').onkeydown = event => { if (event.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendChat(); } };
 const fileNameError = document.createElement('p'); fileNameError.id = 'file-name-error'; fileNameError.className = 'field-error'; fileNameError.hidden = true; fileNameError.textContent = 'Enter a file or folder name.'; fileNameError.setAttribute('role', 'alert');
 $('#file-name').after(fileNameError); $('#file-name').setAttribute('aria-describedby', fileNameError.id);
@@ -1091,13 +1290,16 @@ for (const [fieldId, dialogId, action] of [
 $('#rename-dialog').onclose = async () => {
   if ($('#rename-dialog').returnValue !== 'rename' || !active) return;
   const id = active.id;
-  try { const result = await store.rename(id, $('#rename-name').value); if (active?.id === id) { active = result; $('#project-name').textContent = result.name; } }
+  try { const result = await store.rename(id, $('#rename-name').value); if (active?.id === id) { active = result; setProjectName(result.name); } }
   catch (error) { report('rename project', error); }
 };
 async function refreshChats() {
   if (!active) return;
   const id = active.id, chats = await store.chatList(id);
   if (active?.id !== id) return;
+  const focused = document.activeElement?.closest<HTMLElement>('.chat-row');
+  const focusedId = focused?.dataset.chatId;
+  const focusRename = !!document.activeElement?.matches('.chat-rename, .chat-row input');
   $('#chat-list').replaceChildren(...chats.map(chat => {
     const button = document.createElement('button'); button.textContent = chat.title; button.className='chat-open'; if(chat.id === currentChat) button.setAttribute('aria-current','true');
     button.onclick = async () => {
@@ -1106,7 +1308,7 @@ async function refreshChats() {
       catch (error) { if(active?.id===id && request===chatOpening) report('open chat', error); }
       finally {if(active?.id===id && request===chatOpening){chatLoading=false;updateSendState();}}
     };
-    const row = document.createElement('div'); row.className = 'chat-row';
+    const row = document.createElement('div'); row.className = 'chat-row'; row.dataset.chatId = chat.id;
     const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = '✎'; rename.setAttribute('aria-label', `Rename ${chat.title}`); rename.title = 'Rename chat';
     rename.onclick = () => {
       const input = document.createElement('input'); input.value = chat.title; input.maxLength = 100; input.setAttribute('aria-label', 'Chat name');
@@ -1118,19 +1320,35 @@ async function refreshChats() {
         catch (error) { report('rename chat', error); }
         if (active?.id === id) await refreshChats();
       };
-      input.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); void finish(true); } else if (event.key === 'Escape') void finish(false); };
+      input.onkeydown = event => { if (event.isComposing) return; if (event.key === 'Enter') { event.preventDefault(); void finish(true); } else if (event.key === 'Escape') void finish(false); };
       input.onblur = () => { void finish(true); };
     };
     row.append(button, rename); return row;
   }));
+  if (focusedId && document.activeElement === document.body) {
+    Array.from(document.querySelectorAll<HTMLElement>('.chat-row')).find(row => row.dataset.chatId === focusedId)
+      ?.querySelector<HTMLButtonElement>(focusRename ? '.chat-rename' : '.chat-open')?.focus();
+  }
 }
 $('#new-chat').onclick = async () => {
-  if (!active) return; const id = active.id,request=++chatOpening;chatLoading=true;$('#send').disabled=true;
+  if (!active || chatLoading) return; const id = active.id,request=++chatOpening;chatLoading=true;$('#send').disabled=true;
   try { const chatId = await store.chatCreate(id),chat=await store.chatLoad(id,chatId); if (active?.id === id && request===chatOpening) { saveChatDraft();currentChat = chatId;restoreChatDraft(id,currentChat);renderChat(chat);updateChatProgress();await refreshChats(); } }
   catch (error) { if(active?.id===id && request===chatOpening) report('create chat', error); }
   finally {if(active?.id===id && request===chatOpening){chatLoading=false;updateSendState();}}
 };
-$('#import').onclick = async () => { $('#import').disabled = true; try { const project = await store.importProject(); if (project) { projects = await store.list(); renderProjects(); await openProject(project); } } catch (error) { report('import project', error); } finally { $('#import').disabled = false; } };
+$('#import').ariaLabel = $('#import').title = 'Import project ZIP';
+$('#import').append('Import ZIP');
+$('#import').onclick = async () => {
+  if ($('#import').disabled) return;
+  const request = projectOpening;
+  $('#import').disabled = true; $('#new').disabled = true; $('#start').disabled = true;
+  try { const project = await store.importProject(); if (project) await finishLibraryAction(project, request); }
+  catch (error) { await report('import project', error); }
+  finally {
+    $('#import').disabled = false; $('#new').disabled = false; $('#start').disabled = false;
+    if (!active && document.activeElement === document.body) $('#import').focus();
+  }
+};
 $('#export-project').onclick = () => { if (active) store.exportProject(active.id).catch(error => report('export project', error)); };
 function highlightLatex(text) {
   const fragment = document.createDocumentFragment();
@@ -1168,6 +1386,7 @@ function openFind() {
   if (!active || $('.source-container').hidden) return;
   const selected=sourceEditor.value.slice(sourceEditor.selectionStart,sourceEditor.selectionEnd);
   if (document.activeElement===sourceEditor && selected && !selected.includes('\n')) findInput.value=selected;
+  if (!displayedPaneLayout().editor) revealSource();
   findAnchor=sourceEditor.selectionStart;
   findPanel.hidden=false;findInput.focus();findInput.select();refreshFind();
 }
@@ -1385,15 +1604,30 @@ $('#source').addEventListener('keydown', (event: KeyboardEvent) => {
 const expandChat = document.createElement('button'); expandChat.type = 'button'; expandChat.className = 'expand-chat'; expandChat.textContent = 'Expand chat'; expandChat.setAttribute('aria-pressed','false');
 expandChat.onclick = () => {
   const expanded=!$('.editor-pane').classList.contains('chat-expanded');
-  closeLayoutTools();paneLayout={...visiblePaneLayout(),agent:true,editor:!expanded};applyPaneLayout();
+  closeLayoutTools();paneLayout={...paneLayout,agent:true,editor:!expanded};applyPaneLayout();
 };
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
 $('#toggle-agent').onclick = () => togglePane('agent');
-$('#collapse').onclick = () => { const sidebar = document.querySelector('.sidebar'); sidebar.classList.toggle('collapsed'); $('#collapse').setAttribute('aria-label', sidebar.classList.contains('collapsed') ? 'Expand sidebar' : 'Collapse sidebar'); };
+$('#collapse').onclick = () => {
+  const collapsed = $('.sidebar').classList.toggle('collapsed');
+  $('#collapse').setAttribute('aria-expanded', String(!collapsed));
+  $('#collapse').title = $('#collapse').ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+};
 $('#outline-toggle').onclick = () => { const list = $('#outline-list'); list.hidden = !list.hidden; $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden)); };
-$('#grid-view').onclick = () => { $('#list').classList.add('grid'); $('#grid-view').classList.add('selected'); $('#list-view').classList.remove('selected'); $('#grid-view').setAttribute('aria-pressed','true'); $('#list-view').setAttribute('aria-pressed','false'); renderProjects(); };
-$('#list-view').onclick = () => { $('#list').classList.remove('grid'); $('#list-view').classList.add('selected'); $('#grid-view').classList.remove('selected'); $('#list-view').setAttribute('aria-pressed','true'); $('#grid-view').setAttribute('aria-pressed','false'); renderProjects(); };
+function setProjectView(view: 'grid' | 'list', persist = true): void {
+  $('#list').classList.toggle('grid', view === 'grid');
+  for (const choice of ['grid', 'list'] as const) {
+    const button = $(`#${choice}-view`);
+    button.classList.toggle('selected', choice === view);
+    button.setAttribute('aria-pressed', String(choice === view));
+  }
+  if (persist) { try { localStorage.setItem('refract-project-view', view); } catch {} }
+  renderProjects();
+}
+$('#grid-view').onclick = () => setProjectView('grid');
+$('#list-view').onclick = () => setProjectView('list');
+try { if (localStorage.getItem('refract-project-view') === 'grid') setProjectView('grid', false); } catch {}
 $('#zoom-fit').onclick = () => changePdfZoom(100,'width');
 function attachmentPreview(item:{token:string;name:string}, projectId:string):HTMLElement {
   const container=document.createElement('span'); container.className='attachment-preview';
@@ -1405,15 +1639,26 @@ function attachmentPreview(item:{token:string;name:string}, projectId:string):HT
 }
 $('#chat-image-close').onclick=()=>($('#chat-image-dialog') as HTMLDialogElement).close();
 $('#chat-image-dialog').addEventListener('click',(event:MouseEvent)=>{if(event.target===event.currentTarget) ($('#chat-image-dialog') as HTMLDialogElement).close();});
-function renderAttachments() {
+function updateAttachmentState(): void {
   const pending=!!active && pendingAttachments.has(draftKey(active.id,currentChat));
+  const busy = !!active && chatBusy.has(active.id);
   updateSendState();
-  $('#attach').disabled=pending || attachments.length>=10;
-  $('#attach').title=attachments.length>=10 ? 'Maximum of 10 attachments' : pending ? 'Selecting attachments' : 'Upload files & photos';
+  $('#attach').disabled=pending || busy || attachments.length>=10;
+  $('#attach').title=attachments.length>=10 ? 'Maximum of 10 attachments' : pending ? 'Selecting attachments' : busy ? 'Attach files after the assistant finishes' : 'Upload files & photos';
+}
+function renderAttachments() {
+  updateAttachmentState();
   $('#attachment-list').replaceChildren(...attachments.map((item, index) => {
     const wrapper=document.createElement('span'); wrapper.className='draft-attachment'; wrapper.append(attachmentPreview(item,active.id));
     const button=document.createElement('button'); button.type='button'; button.className='attachment-remove'; button.replaceChildren(actionIcon('close')); button.setAttribute('aria-label',`Remove ${item.name}`);
-    button.onclick=()=>{attachments.splice(index,1);renderAttachments();saveChatDraft();}; wrapper.append(button); return wrapper;
+    button.onclick=()=>{
+      const hadFocus = document.activeElement === button;
+      attachments.splice(index,1);renderAttachments();saveChatDraft();
+      if (hadFocus) {
+        const remaining = document.querySelectorAll<HTMLButtonElement>('.attachment-remove');
+        (remaining[Math.min(index, remaining.length - 1)] ?? $('#attach')).focus();
+      }
+    }; wrapper.append(button); return wrapper;
   }));
 }
 $('#chat-input').addEventListener('paste', async (event: ClipboardEvent) => {
@@ -1422,6 +1667,7 @@ $('#chat-input').addEventListener('paste', async (event: ClipboardEvent) => {
   event.preventDefault();
   if(!active)return;
   const id=active.id,chatId=currentChat,key=draftKey(id,chatId);
+  if (chatBusy.has(id)) return;
   if(attachments.length>=10) {report('paste image',new Error('Maximum of 10 attachments'));return;}
   if(pendingAttachments.has(key)) {report('paste image',new Error('An attachment is already being added'));return;}
   const file=image.getAsFile();if(!file)return;
@@ -1435,13 +1681,23 @@ $('#chat-input').addEventListener('paste', async (event: ClipboardEvent) => {
 });
 $('#attach').onclick = async () => {
   if (!active || attachments.length>=10) return; const id = active.id,chatId=currentChat,key=draftKey(id,chatId),remaining=10-attachments.length;
-  if(pendingAttachments.has(key))return;pendingAttachments.add(key);renderAttachments();
+  const hadFocus = document.activeElement === $('#attach');
+  if (chatBusy.has(id) || pendingAttachments.has(key)) return;
+  pendingAttachments.add(key);renderAttachments();
   try { const added = await store.chatAttach(id,remaining); if (active?.id === id && currentChat===chatId) { attachments.push(...added); renderAttachments();saveChatDraft(); } else {const draft=readChatDraft(key);draft.attachments.push(...added);writeChatDraft(key,draft);} }
   catch (error) { report('attach file', error); }
-  finally {pendingAttachments.delete(key);if(active?.id===id && currentChat===chatId)renderAttachments();}
+  finally {
+    pendingAttachments.delete(key);
+    if (active?.id === id && currentChat === chatId) {
+      renderAttachments();
+      if (hadFocus && document.activeElement === document.body) ($('#attach').disabled ? $('#chat-input') : $('#attach')).focus();
+    }
+  }
 };
 function renderToolPanel() {
   const body = $('#tool-body'); body.classList.remove('has-open-comparison'); body.replaceChildren();
+  updateBuildOutput = undefined;
+  if (toolsExpansion !== 'manual') setToolsExpansion(null);
   $('#tool-info').classList.toggle('active', selectedTool === 'info'); $('#tool-info').setAttribute('aria-pressed',String(selectedTool === 'info'));
   $('#tool-versions').classList.toggle('active', selectedTool === 'versions'); $('#tool-versions').setAttribute('aria-pressed',String(selectedTool === 'versions'));
   $('#tool-comments').classList.toggle('active', selectedTool === 'comments'); $('#tool-comments').setAttribute('aria-pressed',String(selectedTool === 'comments'));
@@ -1451,32 +1707,70 @@ function renderToolPanel() {
   if (selectedTool === 'logs') {
     const label = document.createElement('div'); label.textContent = 'Build output'; label.className = 'tool-heading';
     const log = document.createElement('pre'); log.className = 'tool-log';
-    let errors = 0, warnings = 0; const diagnostics: { text: string; kind: 'error' | 'warning' }[] = [];
-    for (const line of compileLog.split('\n')) { const item = document.createElement('span'); item.className = /^!|(?:^|:)\s*error\b/i.test(line) ? 'log-error' : /\bwarning\b/i.test(line) ? 'log-warning' : ''; if(item.className === 'log-error') errors++; if(item.className === 'log-warning') warnings++; if(item.className && diagnostics.length < 20) diagnostics.push({ text: line, kind: item.className === 'log-error' ? 'error' : 'warning' }); item.textContent = line + '\n'; log.append(item); }
-    const summary = document.createElement('p'); summary.className = 'log-summary'; summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} · ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
-    const wrap = document.createElement('button'); wrap.className = 'secondary log-wrap'; wrap.textContent = 'Disable line wrap'; wrap.setAttribute('aria-pressed','true');
-    wrap.onclick = () => { const enabled = wrap.getAttribute('aria-pressed') === 'true'; wrap.setAttribute('aria-pressed',String(!enabled)); wrap.textContent = enabled ? 'Enable line wrap' : 'Disable line wrap'; log.classList.toggle('unwrapped', enabled); };
+    const summary = document.createElement('p'); summary.className = 'log-summary';
+    const outputView = buildOutputView;
+    const wrap = document.createElement('button'); wrap.className = 'secondary log-wrap';
+    const applyWrap = () => {
+      wrap.setAttribute('aria-pressed',String(outputView.wrap));
+      wrap.textContent = outputView.wrap ? 'Disable line wrap' : 'Enable line wrap';
+      log.classList.toggle('unwrapped', !outputView.wrap);
+    };
+    wrap.onclick = () => { outputView.wrap = !outputView.wrap; applyWrap(); };
+    applyWrap();
     const diagnosticList = document.createElement('div'); diagnosticList.className = 'log-diagnostics';
-    const uniqueDiagnostics = diagnostics.filter((item, index) => diagnostics.findIndex(other => other.kind === item.kind && other.text === item.text) === index);
-    if (uniqueDiagnostics.length < diagnostics.length) { const note = document.createElement('p'); note.className='diagnostic-note'; note.textContent=`Showing ${uniqueDiagnostics.length} distinct diagnostic ${uniqueDiagnostics.length === 1 ? 'message' : 'messages'}; repeated lines remain in full output.`; diagnosticList.append(note); }
-    for (const diagnostic of uniqueDiagnostics) { const item = document.createElement('p'); item.className = `diagnostic-${diagnostic.kind}`; item.textContent = diagnostic.text; diagnosticList.append(item); }
-    const logSearch = document.createElement('input'); logSearch.type='search'; logSearch.className='log-search'; logSearch.placeholder='Filter output lines'; logSearch.setAttribute('aria-label','Filter build output');
+    const logSearch = document.createElement('input'); logSearch.type='search'; logSearch.className='log-search'; logSearch.placeholder='Filter output lines'; logSearch.setAttribute('aria-label','Filter build output'); logSearch.value = outputView.query;
     const logCount = document.createElement('span'); logCount.className='log-filter-count'; logCount.setAttribute('role','status'); let filterTimer: ReturnType<typeof setTimeout> | null = null;
     const logEmpty = document.createElement('p'); logEmpty.className='log-filter-empty'; logEmpty.textContent='No output lines match these filters.'; logEmpty.hidden=true;
-    const issuesOnly=document.createElement('button'); issuesOnly.type='button'; issuesOnly.className='secondary log-issues'; issuesOnly.textContent='Issues only'; issuesOnly.setAttribute('aria-pressed','false');
+    const issuesOnly=document.createElement('button'); issuesOnly.type='button'; issuesOnly.className='secondary log-issues'; issuesOnly.textContent='Issues only'; issuesOnly.setAttribute('aria-pressed',String(outputView.issuesOnly));
     const applyFilter=()=>{const query=logSearch.value.trim().toLowerCase(), onlyIssues=issuesOnly.getAttribute('aria-pressed')==='true'; let shown=0; for(const line of Array.from(log.children)) { const match=(!query || (line.textContent || '').toLowerCase().includes(query)) && (!onlyIssues || line.classList.contains('log-error') || line.classList.contains('log-warning')); (line as HTMLElement).hidden=!match; if(match) shown++; } logCount.textContent=query || onlyIssues ? `${shown} matching ${shown === 1 ? 'line' : 'lines'}` : ''; logEmpty.hidden=shown>0 || !(query || onlyIssues); log.hidden=!logEmpty.hidden; };
-    logSearch.oninput = () => { if(filterTimer) clearTimeout(filterTimer); filterTimer=setTimeout(applyFilter,150); };
-    issuesOnly.onclick=()=>{issuesOnly.setAttribute('aria-pressed',String(issuesOnly.getAttribute('aria-pressed')!=='true')); applyFilter();};
+    logSearch.oninput = () => { outputView.query = logSearch.value; if(filterTimer) clearTimeout(filterTimer); filterTimer=setTimeout(applyFilter,150); };
+    issuesOnly.onclick=()=>{outputView.issuesOnly = !outputView.issuesOnly; issuesOnly.setAttribute('aria-pressed',String(outputView.issuesOnly)); applyFilter();};
     const details = document.createElement('details'); details.className = 'raw-output'; const disclosure = document.createElement('summary'); disclosure.textContent = 'Full build output'; const controls = document.createElement('div'); controls.className='log-controls'; controls.append(logSearch,issuesOnly,wrap,logCount); details.append(disclosure, controls, logEmpty, log);
-    let expandedForOutput = false;
-    details.ontoggle = () => { if(!details.isConnected) return; if(details.open && window.matchMedia('(min-width: 1201px)').matches && !$('#workspace').classList.contains('tools-expanded')) { expandedForOutput=true; $('#workspace').classList.add('tools-expanded'); expandTools.textContent='Collapse panel'; expandTools.setAttribute('aria-label','Collapse tools panel'); } else if(!details.open && expandedForOutput) { expandedForOutput=false; $('#workspace').classList.remove('tools-expanded'); expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel'); } };
+    details.open = outputView.expanded;
+    details.ontoggle = () => {
+      if (!details.isConnected) return;
+      outputView.expanded = details.open;
+      if (details.open && !compactWorkspace.matches && !toolsExpansion) setToolsExpansion('logs');
+      else if (!details.open && toolsExpansion === 'logs') setToolsExpansion(null);
+    };
     body.append(label, summary, diagnosticList, details);
+    updateBuildOutput = () => {
+      let errors = 0, warnings = 0, diagnosticCount = 0;
+      const diagnostics = new Map<string, 'error' | 'warning'>();
+      const lines = document.createDocumentFragment();
+      for (const line of compileLog.split(/\r?\n/)) {
+        const item = document.createElement('span');
+        const kind = texFileDiagnostic.test(line) || /^!|(?:^|:)\s*error\b/i.test(line) ? 'error' : /\bwarning\b/i.test(line) ? 'warning' : null;
+        if (kind) {
+          item.className = `log-${kind}`;
+          if (kind === 'error') errors++; else warnings++;
+          if (diagnosticCount++ < 20) diagnostics.set(line, kind);
+        }
+        item.textContent = line + '\n'; lines.append(item);
+      }
+      log.replaceChildren(lines);
+      summary.textContent = compileLog ? `${errors} detected ${errors === 1 ? 'error line' : 'error lines'} · ${warnings} detected ${warnings === 1 ? 'warning line' : 'warning lines'}` : 'No build output yet.';
+      diagnosticList.replaceChildren();
+      if (diagnostics.size < Math.min(diagnosticCount, 20)) {
+        const note = document.createElement('p'); note.className = 'diagnostic-note';
+        note.textContent = 'Repeated diagnostics remain in the full output.';
+        diagnosticList.append(note);
+      }
+      for (const [line, kind] of diagnostics) {
+        const item = document.createElement('p'); item.className = `diagnostic-${kind}`;
+        item.textContent = line; diagnosticList.append(item);
+        const action = buildSourceAction(line.match(texFileDiagnostic));
+        if (action) diagnosticList.append(action);
+      }
+      applyFilter();
+    };
+    updateBuildOutput();
   } else if (active) {
     const title = document.createElement('div'); title.className = 'tool-heading'; title.textContent = 'Project Info';
     const facts = document.createElement('dl'); facts.className = 'project-facts';
     for (const [label, value] of [['Name', active.name], ['Root file', active.rootFile || 'main.tex'], ['Created', new Date(active.created).toLocaleDateString()]]) {
       const row = document.createElement('div'), term = document.createElement('dt'), description = document.createElement('dd');
-      term.textContent = label; if (label === 'Root file') { const link = document.createElement('button'); link.className='fact-link'; link.textContent=value; link.onclick=()=>void openFile(value); description.append(link); } else description.textContent = value; row.append(term, description); facts.append(row);
+      term.textContent = label; if (label === 'Root file') { const link = document.createElement('button'); link.className='fact-link'; link.textContent=value; link.onclick=async()=>{const id=active?.id;await openFile(value);if(active?.id===id && currentFile===value) revealSource();}; description.append(link); } else description.textContent = value; row.append(term, description); facts.append(row);
     }
     const engineLabel=document.createElement('label'); engineLabel.textContent='LaTeX engine ';
     const engine=document.createElement('select'); engine.setAttribute('aria-label','LaTeX engine');
@@ -1511,14 +1805,20 @@ toolsButton.append(actionIcon('wrench'));
 toolsButton.onclick = () => {
   showingTools = !showingTools;
   $('#tools-panel').hidden = !showingTools; $('#pdf-content').hidden = showingTools;
-  $('#workspace').classList.remove('tools-expanded');
-  expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
+  setToolsExpansion(null);
   toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
 };
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
-expandTools.onclick = () => { const expanded = $('#workspace').classList.toggle('tools-expanded'); expandTools.textContent=expanded ? 'Collapse panel' : 'Expand panel'; expandTools.setAttribute('aria-label',expanded ? 'Collapse tools panel' : 'Expand tools panel'); };
+let toolsExpansion: 'manual' | 'comparison' | 'logs' | null = null;
+function setToolsExpansion(value: typeof toolsExpansion): void {
+  toolsExpansion = value;
+  $('#workspace').classList.toggle('tools-expanded', !!value);
+  expandTools.textContent = value ? 'Collapse panel' : 'Expand panel';
+  expandTools.setAttribute('aria-label', value ? 'Collapse tools panel' : 'Expand tools panel');
+}
+expandTools.onclick = () => setToolsExpansion(toolsExpansion ? null : 'manual');
 $('.tool-tabs').append(expandTools);
 $('#tool-info').onclick = () => { selectedTool = 'info'; renderToolPanel(); };
 $('#tool-logs').onclick = () => { selectedTool = 'logs'; renderToolPanel(); };
@@ -1542,19 +1842,35 @@ async function renderVersions() {
   try {
     const versions = await store.versionList(id);
     if (active?.id !== id || !showingTools || selectedTool !== 'versions') return;
-    const body = document.getElementById('tool-body')!, heading = document.createElement('div'); body.classList.remove('has-open-comparison'); heading.className = 'tool-heading'; heading.textContent = 'Versions'; body.replaceChildren(heading);
+    const body = document.getElementById('tool-body')!, heading = document.createElement('div');
+    const focused = document.activeElement instanceof HTMLElement && body.contains(document.activeElement) ? document.activeElement.dataset.versionFocus : undefined;
+    body.classList.remove('has-open-comparison'); heading.className = 'tool-heading'; heading.textContent = 'Versions'; body.replaceChildren(heading);
+    if (toolsExpansion === 'comparison') setToolsExpansion(null);
     for (const [index, version] of versions.entries()) {
       const row = document.createElement('div'); row.className = 'version-row';
       const label = document.createElement('span'); label.textContent = `v${versions.length - index} \u00b7 ${new Date(version.created).toLocaleString()} · ${version.files.length} ${version.files.length === 1 ? 'file' : 'files'}`;
       const restore = document.createElement('button'); restore.textContent = 'Restore file';
+      restore.dataset.versionFocus = `${version.id}:file`;
+      restore.dataset.restoreVersionFile = '';
+      versionFileOptions.set(restore, version.files);
       restore.disabled = !version.files.includes(currentFile) || chatBusy.has(id) || !!restoringProject;
       restore.onclick = async () => {
         const file = currentFile;
+        if (!version.files.includes(file)) return;
         if (!await confirmAction(`Restore ${file} from this version?`, 'Restore file') || active?.id !== id || restoringProject || chatBusy.has(id)) return;
-        try { await store.versionRestoreFile(id, version.id, file); if (active?.id === id) { await openFile(file); revision++; scheduleCompile(); await renderVersions(); } }
+        const fileRequest = opening;
+        try {
+          await store.versionRestoreFile(id, version.id, file);
+          if (active?.id === id) {
+            if (currentFile === file && opening === fileRequest) await openFile(file);
+            await finishFileNavigation(id);
+            if (active?.id === id) { revision++; scheduleCompile(); await renderVersions(); }
+          }
+        }
         catch (error) { report('restore file', error); }
       };
       const restoreProject = document.createElement('button'); restoreProject.textContent = 'Restore project';
+      restoreProject.dataset.versionFocus = `${version.id}:project`;
       restoreProject.disabled = chatBusy.has(id) || !!restoringProject;
       restoreProject.onclick = async () => {
         if (restoringProject || chatBusy.has(id)) return;
@@ -1580,9 +1896,14 @@ async function renderVersions() {
       const summary = document.createElement('summary'); summary.textContent = 'Compare with current';
       const changes = document.createElement('div'); compare.append(summary,changes);
       compare.ontoggle = async () => {
-        row.classList.toggle('comparison-selected', compare.open); body.classList.toggle('has-open-comparison', compare.open);
-        if (!compare.open) return;
-        if (window.matchMedia('(min-width: 1201px)').matches) { $('#workspace').classList.add('tools-expanded'); expandTools.textContent='Collapse panel'; expandTools.setAttribute('aria-label','Collapse tools panel'); }
+        if (!compare.isConnected) return;
+        row.classList.toggle('comparison-selected', compare.open);
+        body.classList.toggle('has-open-comparison', !!body.querySelector('.version-comparison[open]'));
+        if (!compare.open) {
+          if (toolsExpansion === 'comparison' && !body.classList.contains('has-open-comparison')) setToolsExpansion(null);
+          return;
+        }
+        if (!compactWorkspace.matches && !toolsExpansion) setToolsExpansion('comparison');
         changes.textContent = 'Loading changes…';
         try {
           const differences = await store.versionCompare(id,version.id);
@@ -1618,6 +1939,10 @@ async function renderVersions() {
       };
       const actions = document.createElement('div'); actions.className = 'version-actions'; actions.append(restore, restoreProject);
       row.append(label, actions); body.append(row,compare);
+    }
+    if (focused && document.activeElement === document.body) {
+      const replacement = Array.from(body.querySelectorAll<HTMLButtonElement>('button[data-version-focus]')).find(button => button.dataset.versionFocus === focused && !button.disabled);
+      (replacement ?? $('#tool-versions')).focus();
     }
   } catch (error) { report('load versions', error); }
 }
@@ -1666,17 +1991,27 @@ async function renderComments(restoreFocus?:CommentFocusRestore) {
       list.replaceChildren(...filtered.map(c => {
         const card = document.createElement('div'); card.className = 'comment-card';
         const reference = document.createElement('button'); reference.className = 'comment-reference'; reference.dataset.commentFocus = `reference:${c.id}`; reference.textContent = `${c.file}${c.quote ? ': ' + c.quote : ''}`;
-        const anchorStatus = document.createElement('small');
+        const anchorStatus = document.createElement('small'); anchorStatus.setAttribute('role', 'status');
         if (c.anchor?.status === 'orphaned') anchorStatus.textContent = 'Selection unavailable';
         reference.onclick = async () => {
-          if (currentFile !== c.file) await openFile(c.file);
-          if (!c.quote || active?.id !== id || currentFile !== c.file) return;
+          const changedFile = currentFile !== c.file;
+          if (changedFile) await openFile(c.file);
+          if (active?.id !== id || currentFile !== c.file) return;
+          if (!c.quote) { if (changedFile || !displayedPaneLayout().editor) revealSource(); return; }
           const source = $('#source').value;
           try {
             const position = await store.commentLocate(id,c.id);
             if (active?.id !== id || currentFile !== c.file || $('#source').value !== source) return;
-            if (!position) { anchorStatus.textContent = 'Selection unavailable'; return; }
-            anchorStatus.textContent = ''; $('#source').focus(); $('#source').setSelectionRange(position.start,position.end);
+            if (!position) {
+              anchorStatus.textContent = 'Selection unavailable';
+              if (!displayedPaneLayout().editor) {
+                revealSource();
+                editorNavigationStatus.hidden = false;
+                editorNavigationStatus.textContent = 'The comment’s original selection is unavailable in this file.';
+              }
+              return;
+            }
+            anchorStatus.textContent = ''; selectSource(position.start,position.end);
           } catch (error) { report('find comment selection',error); }
         };
         const meta = document.createElement('div'); meta.className = 'comment-meta';
@@ -1693,6 +2028,7 @@ async function renderComments(restoreFocus?:CommentFocusRestore) {
         replyButton.onclick = () => {
           const value = replyInput.value;
           if (!value.trim() || active?.id !== id) return;
+          draft.expanded.add(c.id);
           return perform(actionKey('reply',c.id),replyButton,async()=>{
             await store.commentReply(id,c.id,value);
             if (draft.replies.get(c.id) === value) draft.replies.delete(c.id);
@@ -1741,36 +2077,119 @@ $('#folder-delete').onclick=async()=>{
   } catch(error) {if(active?.id===id) report('delete folder',error);}
   finally {restoringProject=null;if(active?.id===id){setEditorReadOnly(chatBusy.has(id));compileQueued=false;scheduleCompile();}}
 };
-$('#folder-move').onclick=()=>{if(!menuFolder || !active)return;$('#folder-menu').hidden=true;$('#folder-move-path').value=menuFolder;$('#folder-move-dialog').dataset.projectId=active.id;$('#folder-move-dialog').dataset.oldPath=menuFolder;$('#folder-move-dialog').returnValue='';$('#folder-move-dialog').showModal();$('#folder-move-path').select();};
-$('#folder-move-dialog').onclose=async()=>{
-  const dialog=$('#folder-move-dialog'), id=dialog.dataset.projectId, oldName=dialog.dataset.oldPath, newName=$('#folder-move-path').value.trim().replaceAll('\\','/');
-  if(dialog.returnValue!=='move' || !id || active?.id!==id || !oldName || !newName || newName===oldName || restoringProject) return;
-  if(chatBusy.has(id)) {report('move folder',new Error('Wait for the assistant to finish.'));return;}
+const folderMovePath = document.querySelector<HTMLInputElement>('#folder-move-path')!;
+const folderMoveDialog = document.querySelector<HTMLDialogElement>('#folder-move-dialog')!;
+let movingFolder = false;
+const folderMoveError = document.createElement('p');
+folderMoveError.id = 'folder-move-error'; folderMoveError.className = 'field-error'; folderMoveError.setAttribute('role', 'alert');
+folderMovePath.after(folderMoveError); folderMovePath.setAttribute('aria-describedby', folderMoveError.id);
+function setFolderMoveError(message = ''): void {
+  folderMoveError.textContent = message; folderMoveError.hidden = !message;
+  if (message) folderMovePath.setAttribute('aria-invalid', 'true'); else folderMovePath.removeAttribute('aria-invalid');
+}
+folderMovePath.addEventListener('input', () => setFolderMoveError());
+folderMovePath.addEventListener('invalid', event => {
+  event.preventDefault(); setFolderMoveError('Enter a new project path.'); folderMovePath.focus();
+});
+folderMoveDialog.addEventListener('cancel', event => { if (movingFolder) event.preventDefault(); });
+$('#folder-move').onclick = () => {
+  if (!menuFolder || !active) return;
+  folderMoveDialog.dataset.projectId = active.id; folderMoveDialog.dataset.oldPath = menuFolder; folderMoveDialog.returnValue = '';
+  setFolderMoveError(); folderMovePath.value = menuFolder; folderMoveDialog.showModal(); folderMovePath.select();
+};
+folderMovePath.form!.addEventListener('submit', async event => {
+  if (movingFolder) {event.preventDefault();return;}
+  if ((event.submitter as HTMLButtonElement | null)?.value !== 'move') return;
+  event.preventDefault();
+  const {projectId:id, oldPath:oldName} = folderMoveDialog.dataset;
+  if (!id || active?.id !== id || !oldName) return;
+  const newName = folderMovePath.value.trim().replaceAll('\\','/');
+  if (!newName) { setFolderMoveError('Enter a new project path.'); folderMovePath.focus(); return; }
+  if (newName === oldName) { folderMoveDialog.close('cancel'); return; }
+  if (restoringProject || chatBusy.has(id)) { setFolderMoveError('Wait for the current project operation to finish.'); return; }
+  movingFolder = true; folderMovePath.readOnly = true;
+  ++fileTreeRequest;
   restoringProject=id;setEditorReadOnly(true);revision++;scheduleCompile();clearTimeout(compileTimer);
   try {
     const saves=await Promise.all([...(pendingSaves.get(id)?.values() || [])]);if(saves.some(Boolean)) throw new Error('Save pending changes before moving the folder.');
     const meta=await store.moveFolder(id,oldName,newName);
+    folderMoveDialog.close('move');
     if(active?.id===id) {
       const remap=name=>name.toLowerCase().startsWith(oldName.toLowerCase()+'/') ? newName+name.slice(oldName.length) : name;
-      const current=remap(currentFile);openFiles=openFiles.map(remap);active=meta;await refreshFiles();renderFileTabs();
-      if(current!==currentFile) await openFile(current);
+      const originalFile = currentFile, destinationFile = remap(originalFile), fileRequest = opening;
+      openFiles=openFiles.map(remap);active=meta;
+      await refreshFiles(newName);
+      if (active?.id !== id) return;
+      if (destinationFile !== originalFile && currentFile === originalFile && opening === fileRequest) await openFile(destinationFile);
+      renderFileTabs();
     }
-  } catch(error) {if(active?.id===id) report('move folder',error);}
-  finally {restoringProject=null;if(active?.id===id){setEditorReadOnly(chatBusy.has(id));compileQueued=false;scheduleCompile();}}
-};
-$('#file-rename').onclick = () => {
-  if (!menuFile) return; $('#file-menu').hidden = true;
-  $('#rename-file-name').value = menuFile.split('/').pop(); $('#rename-file-dialog').returnValue = ''; $('#rename-file-dialog').showModal(); $('#rename-file-name').select();
-};
-$('#rename-file-dialog').onclose = async () => {
-  if ($('#rename-file-dialog').returnValue !== 'rename' || !active || !menuFile) return;
-  const id = active.id, oldName = menuFile, basename = $('#rename-file-name').value.trim();
-  if (!basename || /[\\/]/.test(basename)) return;
-  const segments = oldName.split('/'); segments.pop(); segments.push(basename); const newName = segments.join('/');
+  } catch(error) {
+    if (folderMoveDialog.open) {
+      setFolderMoveError(error instanceof Error ? error.message : String(error));
+      folderMovePath.focus();
+    } else if (active?.id === id) report('refresh moved folder',error);
+  } finally {
+    movingFolder=false; folderMovePath.readOnly=false; restoringProject=null;
+    if(active?.id===id){setEditorReadOnly(chatBusy.has(id));compileQueued=false;scheduleCompile();}
+  }
+});
+const renameFileInput = document.querySelector<HTMLInputElement>('#rename-file-name')!;
+const renameFileDialog = document.querySelector<HTMLDialogElement>('#rename-file-dialog')!;
+let renamingFile = false;
+const renameFileError = document.createElement('p');
+renameFileError.id = 'rename-file-error';
+renameFileError.className = 'field-error';
+renameFileError.setAttribute('role', 'alert');
+renameFileInput.after(renameFileError);
+renameFileInput.setAttribute('aria-describedby', renameFileError.id);
+function setRenameFileError(message = ''): void {
+  renameFileInput.setCustomValidity(message);
+  renameFileError.textContent = message;
+  renameFileError.hidden = !message;
+  if (message) renameFileInput.setAttribute('aria-invalid', 'true');
+  else renameFileInput.removeAttribute('aria-invalid');
+}
+renameFileInput.addEventListener('input', () => setRenameFileError());
+renameFileInput.addEventListener('invalid', event => {
+  event.preventDefault();
+  setRenameFileError(renameFileInput.value.trim() ? renameFileInput.validationMessage : 'Enter a file name.');
+  renameFileInput.focus();
+});
+renameFileDialog.addEventListener('cancel', event => { if (renamingFile) event.preventDefault(); });
+renameFileInput.form!.addEventListener('submit', async event => {
+  if (renamingFile) { event.preventDefault(); return; }
+  if ((event.submitter as HTMLButtonElement | null)?.value !== 'rename') return;
+  event.preventDefault();
+  if (!active || !menuFile) return;
+  const name = renameFileInput.value.trim();
+  const message = !name ? 'Enter a file name.' : /[\\/]/.test(name) ? 'Enter a file name without a folder path.'
+    : name.startsWith('.') ? 'Choose a name that begins with a character other than a dot.' : '';
+  if (message) { setRenameFileError(message); renameFileInput.focus(); return; }
+  const id = active.id, oldName = menuFile;
+  const newName = oldName.slice(0, oldName.lastIndexOf('/') + 1) + name;
+  if (oldName === newName) { renameFileDialog.close('cancel'); return; }
+  renamingFile = true; renameFileInput.readOnly = true;
+  ++fileTreeRequest;
   try {
     const meta = await store.renameFile(id, oldName, newName);
-    if (active?.id === id) { openFiles = openFiles.map(f => f === oldName ? newName : f); active = meta; await refreshFiles(); if (currentFile === oldName) await openFile(newName); renderFileTabs(); revision++; scheduleCompile(); }
-  } catch (error) { report('rename file', error); }
+    renameFileDialog.close('rename');
+    if (active?.id !== id) return;
+    const fileRequest = opening;
+    openFiles = openFiles.map(file => file === oldName ? newName : file); active = meta;
+    await refreshFiles(newName);
+    if (active?.id === id && currentFile === oldName && opening === fileRequest) await openFile(newName);
+    await finishFileNavigation(id);
+    if (active?.id === id) { renderFileTabs(); revision++; scheduleCompile(); }
+  } catch (error) {
+    if (renameFileDialog.open) {
+      setRenameFileError(error instanceof Error ? error.message : String(error));
+      renameFileInput.focus();
+    } else if (active?.id === id) report('refresh renamed file', error);
+  } finally { renamingFile = false; renameFileInput.readOnly = false; }
+});
+$('#file-rename').onclick = () => {
+  if (!menuFile) return; $('#file-menu').hidden = true;
+  setRenameFileError(); renameFileInput.value = menuFile.split('/').pop(); $('#rename-file-dialog').returnValue = ''; $('#rename-file-dialog').showModal(); renameFileInput.select();
 };
 $('#file-download').onclick = () => { $('#file-menu').hidden = true; if (active && menuFile) store.downloadFile(active.id, menuFile).catch(error => report('download file',error)); };
 $('#file-delete').onclick = async () => {
@@ -1783,11 +2202,11 @@ async function renderTrash(id) {
   const items=await store.trashList(id); if(active?.id!==id) return;
   const list=$('#trash-list'); list.replaceChildren();
   if(!items.length) { const title=document.createElement('p'), hint=document.createElement('p'); title.className='recovery-empty-title'; title.textContent='No deleted files'; hint.className='recovery-empty-hint'; hint.textContent='Files and folders deleted from this project appear here for restoration.'; list.append(title,hint); return; }
-  for(const item of items) {
+  for(const [index, item] of items.entries()) {
     const row=document.createElement('div'), label=document.createElement('span'), button=document.createElement('button');
-    row.className='trash-row'; label.textContent=item.kind==='folder' ? `${item.name}/` : item.name; button.textContent='Restore';
+    row.className='trash-row'; label.textContent=item.kind==='folder' ? `${item.name}/` : item.name; button.textContent='Restore'; button.ariaLabel=`Restore ${item.name}`;
     const description = document.createElement('div'), kind = document.createElement('small'); description.className='trash-description'; const deleted = Date.parse(item.deleted); kind.textContent=`${item.kind==='folder' ? 'Folder' : 'File'}${Number.isFinite(deleted) ? ` · Deleted ${new Date(deleted).toLocaleString()}` : ''}`; description.append(label,kind);
-    button.onclick=async()=>{button.disabled=true;try {const name=await store.restoreTrash(id,item.id);if(active?.id===id){await refreshFiles();revision++;scheduleCompile();await renderTrash(id);if(item.kind!=='folder') await openFile(name);else if(!currentFile && (active.rootFile || 'main.tex').toLowerCase().startsWith(name.toLowerCase()+'/')) await openFile(active.rootFile);}}catch(error){report('restore file',error);button.disabled=false;}};
+    button.onclick=async()=>{button.disabled=true;try {const name=await store.restoreTrash(id,item.id);if(active?.id===id){await refreshFiles();revision++;scheduleCompile();await renderTrash(id);if($('#trash-dialog').open) announceRestoration(list,name,index);if(item.kind!=='folder') await openFile(name);else if(!currentFile && (active.rootFile || 'main.tex').toLowerCase().startsWith(name.toLowerCase()+'/')) await openFile(active.rootFile);}}catch(error){report('restore file',error);button.disabled=false;}};
     row.append(description,button);list.append(row);
   }
 }
@@ -1796,32 +2215,71 @@ $('#trash-close').onclick=()=>$('#trash-dialog').close();
 document.addEventListener('click', event => { if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus(true); });
 function clearEditor() {
   findPanel.hidden=true;findCache=undefined;
+  findButton.disabled = true; completionButton.disabled = true; closeCompletions();
   saveEditorView();currentFile = ''; document.querySelectorAll('#file-list button').forEach(button => {button.classList.remove('active-file');button.removeAttribute('aria-current');}); $('#source').value = ''; updateEditor();
   clearFilePreview(); $('#numbers').hidden = true; $('.source-container').hidden = true; renderFileTabs();
 }
+const emptyEditor = document.createElement('div');
+emptyEditor.className = 'editor-empty';
+const emptyEditorText = document.createElement('p');
+emptyEditorText.textContent = 'Choose a file from the sidebar or add a new one.';
+const emptyEditorAdd = document.createElement('button');
+emptyEditorAdd.className = 'secondary';
+emptyEditorAdd.textContent = 'Add file or folder';
+emptyEditorAdd.onclick = () => openAddFile();
+emptyEditor.append(emptyEditorText, emptyEditorAdd);
+$('.editor-wrap').append(emptyEditor);
+const editorNavigationStatus = document.createElement('p');
+editorNavigationStatus.className = 'preview-status';
+editorNavigationStatus.setAttribute('role', 'status');
+editorNavigationStatus.hidden = true;
+$('.editor-wrap').before(editorNavigationStatus);
 function renderFileTabs() {
-  $('#file-tabs').replaceChildren(...openFiles.map(file => {
+  editorNavigationStatus.hidden = true;
+  for (const restore of document.querySelectorAll<HTMLButtonElement>('[data-restore-version-file]')) {
+    restore.disabled = !versionFileOptions.get(restore)?.includes(currentFile) || chatBusy.has(active?.id) || !!restoringProject;
+  }
+  const fileTabs = document.getElementById('file-tabs')!;
+  const focused = document.activeElement instanceof HTMLButtonElement && fileTabs.contains(document.activeElement) ? document.activeElement : null;
+  fileTabs.replaceChildren(...openFiles.map(file => {
     const tab = document.createElement('div'); tab.className = 'file-tab' + (file === currentFile ? ' active' : '');
-    const open = document.createElement('button'); open.textContent = file.split('/').pop(); open.title = file; if(file===currentFile) open.setAttribute('aria-current','page'); open.onclick = () => openFile(file);
+    const open = document.createElement('button'); open.textContent = file.split('/').pop(); open.title = file; if(file===currentFile) open.setAttribute('aria-current','page');
+    open.dataset.tabFile = file; open.dataset.tabAction = 'open';
+    open.onclick = async () => {
+      const hadFocus = document.activeElement === open;
+      await openFile(file);
+      if (hadFocus && document.activeElement === document.body) {
+        Array.from(document.querySelectorAll<HTMLButtonElement>('#file-tabs button[title]')).find(button => button.title === file)?.focus();
+      }
+    };
     const close = document.createElement('button'); close.replaceChildren(actionIcon('close')); close.className = 'close-tab'; close.setAttribute('aria-label', `Close ${file}`);
+    close.dataset.tabFile = file; close.dataset.tabAction = 'close';
     close.onclick = async () => {
       const hadFocus=document.activeElement===close;
       openFiles = openFiles.filter(name => name !== file);
       if (currentFile === file) { if (openFiles.length) await openFile(openFiles.at(-1)); else clearEditor(); }
       renderFileTabs();
-      if(hadFocus) {
+      if(hadFocus && document.activeElement === document.body) {
         const selected=Array.from(document.querySelectorAll<HTMLButtonElement>('#file-tabs button[title]')).find(button=>button.title===currentFile);
-        (selected ?? document.querySelector<HTMLButtonElement>('.tabs button.active'))?.focus();
+        (selected ?? emptyEditorAdd).focus();
       }
     };
     tab.append(open, close); return tab;
   }));
+  if (focused && document.activeElement === document.body) {
+    Array.from(fileTabs.querySelectorAll<HTMLButtonElement>('button[data-tab-file]'))
+      .find(button => button.dataset.tabFile === focused.dataset.tabFile && button.dataset.tabAction === focused.dataset.tabAction)?.focus();
+  }
 }
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 let searchRequest = 0;
 $('.file-search-field').prepend(actionIcon('search'));
 const clearFileSearch = document.createElement('button'); clearFileSearch.type='button'; clearFileSearch.className='clear-file-search'; clearFileSearch.replaceChildren(actionIcon('close')); clearFileSearch.setAttribute('aria-label','Clear file search'); clearFileSearch.hidden=true;
 $('#file-search-input').after(clearFileSearch);
+const fileSearchStatus = document.createElement('span');
+fileSearchStatus.className = 'visually-hidden';
+fileSearchStatus.setAttribute('role', 'status');
+$('#file-search-results').before(fileSearchStatus);
 clearFileSearch.onclick = () => { $('#file-search-input').value=''; clearFileSearch.hidden=true; clearTimeout(searchTimer); void runProjectSearch(); $('#file-search-input').focus(); };
 $('#file-search').addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.isComposing || !$('#file-search-input').value) return;
@@ -1833,6 +2291,7 @@ async function runProjectSearch() {
   if (!active || $('#file-search').hidden) return;
   const request = ++searchRequest, id = active.id, query = $('#file-search-input').value;
   if (!query.trim()) {
+    fileSearchStatus.textContent = '';
     $('#file-search-results').replaceChildren();
     return;
   }
@@ -1840,6 +2299,7 @@ async function runProjectSearch() {
     const results = await store.search(id,query);
     if (request !== searchRequest || active?.id !== id || $('#file-search').hidden) return;
     const count = document.createElement('p'); count.className = 'search-count'; count.textContent = `${results.length} ${results.length === 1 ? 'result' : 'results'}`;
+    fileSearchStatus.textContent = results.length ? count.textContent : 'No matching files or lines.';
     $('#file-search-results').replaceChildren(count, ...results.map(result => {
       const button = document.createElement('button'), title = document.createElement('strong'), text = document.createElement('span');
       title.textContent = `${result.file}:${result.line}`;
@@ -1851,7 +2311,7 @@ async function runProjectSearch() {
         if (active?.id !== id || currentFile !== result.file) return;
         const editor = $('#source'), lines = editor.value.split('\n');
         const offset = lines.slice(0,result.line-1).reduce((n,line) => n + line.length + 1, 0) + result.column;
-        editor.focus(); editor.setSelectionRange(offset,offset + query.length);
+        selectSource(offset, offset + query.length);
       };
       return button;
     }));
@@ -1870,12 +2330,21 @@ const appTitlebar = document.querySelector<HTMLElement>('.app-titlebar')!;
 const workspaceBar = document.createElement('div'); workspaceBar.className = 'workspace-topbar'; workspaceBar.hidden = true;
 const projectTrail = document.createElement('div'); projectTrail.className = 'project-trail';
 const projectNameControl = document.getElementById('project-name') as HTMLButtonElement;
-projectNameControl.title = 'Rename project'; projectTrail.append(projectNameControl);
+function setProjectName(name: string): void {
+  projectNameControl.textContent = name;
+  projectNameControl.ariaLabel = name;
+  projectNameControl.title = `Rename project: ${name}`;
+}
+projectTrail.append(projectNameControl);
 const workspaceActions = document.createElement('div');
 workspaceActions.className = 'workspace-actions';
+const exportProjectButton = workspaceShell.querySelector<HTMLButtonElement>('#export-project')!;
+exportProjectButton.title = 'Export project ZIP';
 type PaneName='agent'|'editor'|'preview';
 type PaneLayout=Record<PaneName,boolean>;
 const layoutStorageKey='refract.workspace-panes.v1';
+const compactWorkspace = window.matchMedia('(max-width:1200px)');
+let compactPreview = false;
 let paneLayout:PaneLayout={agent:true,editor:true,preview:true};
 try {
   const saved:unknown=JSON.parse(localStorage.getItem(layoutStorageKey) || 'null');
@@ -1884,33 +2353,54 @@ try {
   }
 } catch { /* Unavailable storage or invalid preferences use the default layout. */ }
 function visiblePaneLayout():PaneLayout {
-  const narrow=window.matchMedia('(max-width:1200px)').matches;
-  return {...paneLayout,preview:paneLayout.preview && !(narrow && (paneLayout.editor || paneLayout.agent))};
+  if (!compactWorkspace.matches) return {...paneLayout};
+  if (compactPreview) return {agent:false, editor:false, preview:true};
+  return {...paneLayout, preview:paneLayout.preview && !paneLayout.editor && !paneLayout.agent};
 }
 const paneButtons=new Map<PaneName,HTMLButtonElement>();
 const paneToggles=document.createElement('div');paneToggles.className='pane-toggles';paneToggles.setAttribute('role','group');paneToggles.setAttribute('aria-label','Visible panes');
 for(const [name,label,controls] of [['agent','Agent','chat'],['editor','Editor','editor-pane'],['preview','Preview','pdf-content']] as const) {
   const button=document.createElement('button');button.type='button';button.id=`pane-${name}`;
   button.className='pane-toggle';button.setAttribute('aria-label',label);button.setAttribute('aria-controls',name==='editor'?'editor-content':controls);
-  button.append(actionIcon(name));button.onclick=()=>togglePane(name);paneButtons.set(name,button);paneToggles.append(button);
+  const text = document.createElement('span'); text.textContent = label; text.setAttribute('aria-hidden', 'true');
+  button.append(actionIcon(name), text);button.onclick=()=>togglePane(name);paneButtons.set(name,button);paneToggles.append(button);
 }
 workspaceShell.querySelector('.editor-wrap')!.id='editor-content';
 const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.remove();
-workspaceActions.append(paneToggles, toolsButton);
+workspaceActions.append(paneToggles, toolsButton, exportProjectButton);
 function closeLayoutTools():void {
   showingTools=false;$('#tools-panel').hidden=true;$('#pdf-content').hidden=false;toolsButton.setAttribute('aria-expanded', 'false');
-  $('#workspace').classList.remove('tools-expanded');
-  expandTools.textContent='Expand panel';expandTools.setAttribute('aria-label','Expand tools panel');
+  setToolsExpansion(null);
 }
 function togglePane(name:PaneName):void {
   const wasVisible=displayedPaneLayout()[name];
   closeLayoutTools();
-  const next=visiblePaneLayout();next[name]=!wasVisible;
-  if(next[name] && window.matchMedia('(max-width:1200px)').matches) {
-    if(name==='preview') {next.agent=false;next.editor=false;} else next.preview=false;
+  if (compactWorkspace.matches && (compactPreview || (name === 'preview' && (paneLayout.editor || paneLayout.agent)))) {
+    compactPreview = name === 'preview' && !wasVisible;
+    if (!compactPreview && name !== 'preview') paneLayout[name] = true;
+  } else {
+    paneLayout[name] = !wasVisible;
+    if (!paneLayout.agent && !paneLayout.editor && !paneLayout.preview) paneLayout.editor = true;
   }
-  if(!next.agent && !next.editor && !next.preview) next.editor=true;
-  paneLayout=next;applyPaneLayout();
+  applyPaneLayout();
+}
+function revealSource(): void {
+  if (!displayedPaneLayout().editor) {
+    closeLayoutTools();
+    compactPreview = false;
+    paneLayout.editor = true;
+    applyPaneLayout();
+  }
+  (sourceEditor.closest('.source-container')?.hasAttribute('hidden') ? $('#file-preview') : sourceEditor).focus();
+}
+function selectSource(start: number, end: number): void {
+  editorNavigationStatus.hidden = true;
+  revealSource();
+  sourceEditor.setSelectionRange(start, end);
+  const line = sourceEditor.value.slice(0, start).split('\n').length - 1;
+  const style = getComputedStyle(sourceEditor);
+  sourceEditor.scrollTop = Math.max(0, parseFloat(style.paddingTop) + line * parseFloat(style.lineHeight) - sourceEditor.clientHeight / 3);
+  syncEditorScroll();
 }
 function applyPaneLayout(persist=true):void {
   if(!paneLayout.agent && !paneLayout.editor && !paneLayout.preview) paneLayout.editor=true;
@@ -1944,7 +2434,8 @@ function syncPaneButtons():void {
     button.setAttribute('aria-pressed',String(displayed[name]));
     const label=name==='agent'?'agent':name==='editor'?'editor':'preview';
     button.title=displayed[name]?`Hide ${label}`:`Show ${label}`;
-    if(displayed[name] && Object.values(displayed).filter(Boolean).length===1) button.title+=' (restores editor)';
+    if (name === 'preview' && compactWorkspace.matches && compactPreview && displayed.preview) button.title='Return to writing';
+    else if(displayed[name] && Object.values(displayed).filter(Boolean).length===1) button.title+=' (restores editor)';
   }
 }
 // Tool expansion is transient and must update the indicators without saving it.
@@ -1965,6 +2456,9 @@ for(const [id,icon,label] of [['deleted-projects','trash','Deleted projects'],['
 }
 document.querySelector('.sidebar-footer')!.remove();
 $('#outline-toggle').replaceChildren(actionIcon('next'),document.createTextNode('Outline'));
+$('#collapse').setAttribute('aria-controls', 'project-side');
+$('#collapse').setAttribute('aria-expanded', 'true');
+$('#collapse').title = 'Collapse sidebar';
 $('#compile').title='Compile document';
 // Enable interaction only after all handlers have been registered.
 document.body.inert=false;
@@ -2003,12 +2497,12 @@ const workspaceResize = document.getElementById("workspace")!;
 const editorResize = document.querySelector<HTMLElement>(".editor-pane")!;
 const chatResize = document.getElementById("chat")!;
 resizeHandle("sidebar-resize", "x", delta => {
-  sidebarResize.style.setProperty("--sidebar-width", `${Math.max(150, Math.min(window.innerWidth - 400, sidebarResize.offsetWidth + delta))}px`);
+  sidebarResize.style.setProperty("--sidebar-width", `${Math.max(150, Math.min(Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth + delta))}px`);
 });
 resizeHandle("workspace-resize", "x", delta => {
   const available = workspaceResize.clientWidth - 32;
   const width = Math.max(300, Math.min(available - 260, editorResize.offsetWidth + delta));
-  editorResize.style.flex = `0 0 ${width}px`;
+  editorResize.style.setProperty('--editor-width', `${width}px`);
 });
 resizeHandle("chat-resize", "y", delta => {
   chatResize.style.height = `${Math.max(220, Math.min(editorResize.clientHeight - 100, chatResize.offsetHeight - delta))}px`;
@@ -2024,7 +2518,7 @@ function updateResizeAccessibility(): void {
     handle.setAttribute('aria-valuenow', String(value));
     handle.setAttribute('aria-valuetext', `${value} pixels`);
   };
-  setRange('sidebar-resize', sidebarResize, 150, window.innerWidth - 400, sidebarResize.offsetWidth);
+  setRange('sidebar-resize', sidebarResize, 150, Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth);
   setRange('workspace-resize', editorResize, 300, workspaceResize.clientWidth - 292, editorResize.offsetWidth);
   const fraction = window.matchMedia('(max-width:1200px)').matches ? .55 : .65;
   setRange('chat-resize', chatResize, 220, Math.floor(editorResize.clientHeight * fraction), chatResize.offsetHeight);
@@ -2043,6 +2537,11 @@ updateResizeAccessibility();
 const settingsDialog = document.querySelector<HTMLDialogElement>('#settings-dialog')!;
 const updateTrack = document.querySelector<HTMLSelectElement>('#update-track')!;
 const updateStatus = document.querySelector<HTMLParagraphElement>('#update-status')!;
+const updateError = document.createElement('p');
+updateError.className = 'field-error';
+updateError.setAttribute('role', 'alert');
+updateError.hidden = true;
+updateStatus.after(updateError);
 const updateDownload = document.querySelector<HTMLDivElement>('#update-download')!;
 const updateProgress = document.querySelector<HTMLProgressElement>('#update-progress')!;
 const updatePercent = document.querySelector<HTMLSpanElement>('#update-percent')!;
@@ -2143,18 +2642,32 @@ codexCancel.onclick = async () => {
   finally { codexCancel.disabled = false; await refreshCodexAccount(); }
 };
 let restartingUpdate = false;
+let pendingUpdateOperation: 'check' | 'track' | undefined;
 let settingsPoll: ReturnType<typeof setInterval> | undefined;
-function renderUpdateStatus(status: import('./src/updates.cjs').UpdateStatus): void {
+let updateStatusRequest = 0;
+function setUpdateError(message = ''): void {
+  updateError.hidden = !message;
+  updateError.textContent = message;
+}
+function renderUpdateStatus(status: import('./src/updates.cjs').UpdateStatus, syncTrack = true): void {
   showDownloadProgress(updateDownload, updateProgress, updatePercent, status.phase === 'downloading', status.downloadPercent);
   restartUpdate.hidden = status.phase !== 'ready' && status.phase !== 'restarting';
   restartUpdate.disabled = restartingUpdate || status.phase !== 'ready' || updateTrack.disabled;
-  updateTrack.value = status.track;
+  if (syncTrack) updateTrack.value = status.track;
   if (updateStatus.textContent !== status.message) updateStatus.textContent = status.message;
 }
 async function refreshUpdateStatus(): Promise<void> {
-  try { renderUpdateStatus(await store.updateStatus()); }
+  const request = ++updateStatusRequest;
+  try {
+    const status = await store.updateStatus();
+    if (request === updateStatusRequest && settingsDialog.open && (!pendingUpdateOperation || status.phase === 'downloading')) {
+      renderUpdateStatus(status, pendingUpdateOperation !== 'track');
+    }
+  }
   catch {
+    if (request !== updateStatusRequest || !settingsDialog.open || pendingUpdateOperation) return;
     updateDownload.hidden = true;
+    restartUpdate.hidden = true;
     updateStatus.textContent = 'Could not read update status. Close settings and try again.';
   }
 }
@@ -2164,31 +2677,44 @@ $('#settings').onclick = () => {
     void refreshCodexAccount();
     codexSettingsPoll = setInterval(() => void refreshCodexAccount(), 300);
   }
-  settingsPoll = setInterval(() => { if (!restartingUpdate) void refreshUpdateStatus(); }, 2000);
+  settingsPoll = setInterval(() => { if (!updateTrack.disabled || pendingUpdateOperation) void refreshUpdateStatus(); }, 2000);
 };
 $('#settings-close').onclick = () => settingsDialog.close();
-settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); clearInterval(codexSettingsPoll); $('#settings').focus(); });
+settingsDialog.addEventListener('close', () => { clearInterval(settingsPoll); clearInterval(codexSettingsPoll); ++updateStatusRequest; setUpdateError(); $('#settings').focus(); });
 updateTrack.onchange = async () => {
+  ++updateStatusRequest; setUpdateError();
+  pendingUpdateOperation = 'track';
   restartUpdate.hidden = true;
   updateDownload.hidden = true;
   updateTrack.disabled = true; checkUpdates.disabled = true;
   updateStatus.textContent = 'Saving track and checking for updates...';
   try { renderUpdateStatus(await store.updateTrack(updateTrack.value)); }
-  catch { await refreshUpdateStatus(); updateStatus.textContent = 'Could not save the update track. Please try again.'; }
-  finally { updateTrack.disabled = false; checkUpdates.disabled = false; await refreshUpdateStatus(); }
+  catch { setUpdateError('Could not save the update track. Please try again.'); }
+  finally {
+    pendingUpdateOperation = undefined;
+    updateTrack.disabled = false; checkUpdates.disabled = false; await refreshUpdateStatus();
+    if (settingsDialog.open && document.activeElement === document.body) updateTrack.focus();
+  }
 };
 
 checkUpdates.onclick = async () => {
+  ++updateStatusRequest; setUpdateError();
+  pendingUpdateOperation = 'check';
   restartUpdate.disabled = true;
   checkUpdates.disabled = true; updateTrack.disabled = true;
   updateStatus.textContent = 'Checking for updates...';
   try { renderUpdateStatus(await store.updateCheck()); }
-  catch { updateStatus.textContent = 'Could not check for updates. Please try again.'; }
-  finally { checkUpdates.disabled = false; updateTrack.disabled = false; await refreshUpdateStatus(); }
+  catch { setUpdateError('Could not check for updates. Please try again.'); }
+  finally {
+    pendingUpdateOperation = undefined;
+    checkUpdates.disabled = false; updateTrack.disabled = false; await refreshUpdateStatus();
+    if (settingsDialog.open && document.activeElement === document.body) checkUpdates.focus();
+  }
 };
 
 restartUpdate.onclick = async () => {
   if (restartingUpdate) return;
+  ++updateStatusRequest; setUpdateError();
   restartingUpdate = true;
   restartUpdate.disabled = true; checkUpdates.disabled = true; updateTrack.disabled = true;
   updateStatus.textContent = 'Saving your work and restarting to update...';
@@ -2196,6 +2722,7 @@ restartUpdate.onclick = async () => {
   catch {
     restartingUpdate = false; checkUpdates.disabled = false; updateTrack.disabled = false;
     await refreshUpdateStatus();
-    updateStatus.textContent = 'Could not restart to update. Please try again.';
+    setUpdateError('Could not restart to update. Please try again.');
+    if (settingsDialog.open && document.activeElement === document.body) (restartUpdate.hidden ? checkUpdates : restartUpdate).focus();
   }
 };
