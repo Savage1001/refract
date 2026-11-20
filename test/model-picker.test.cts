@@ -136,6 +136,8 @@ test('browsing, cross-provider search and Escape preserve the send target', asyn
   assert.match(await choice(page, 'Favorite models').locator('.model-filter-star').evaluate(el => getComputedStyle(el).maskImage), /favorite-star\.svg/);
   await search(page).fill('6.2');
   assert.equal(await page.getByRole('button', {name: 'GPT 6.2', exact: true}).count(), 2);
+  await search(page).fill('gpt-6.2');
+  assert.equal(await page.getByRole('button', {name: 'GPT 6.2', exact: true}).count(), 2);
   await search(page).press('Enter');
   assert.equal(await activeProvider(page), 'codex');
   assert.equal(await page.locator('button:focus').getAttribute('aria-label'), 'GPT 6.2');

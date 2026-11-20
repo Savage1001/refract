@@ -349,7 +349,7 @@ function updateTrigger(): void {
   else if (!installed(id)) label = `${labels[id]} unavailable`;
   else if (state.loadFailed) label = 'Preferences unavailable';
   else if (model) label = model.label;
-  else if (state.status === 'loading') label = preferences?.model ?? 'Loading models…';
+  else if (state.status === 'loading') label = preferences?.model ? modelNameFromId(preferences.model) : 'Loading models…';
   else if (preferences?.model) label = `${modelNameFromId(preferences.model)} (unavailable)`;
   else if (state.status === 'error') label = 'Models unavailable';
 
@@ -403,7 +403,11 @@ function providerStatus(id: Provider): HTMLElement | undefined {
 }
 function matchesQuery(model: Model, id: Provider, terms: string[]): boolean {
   const text = [model.label, model.id, model.source, model.description, labels[id]].filter(Boolean).join(' ').toLowerCase();
-  return terms.every(term => text.includes(term) || (formatModelName(term) && model.label.toLowerCase().includes(formatModelName(term))));
+  const label = model.label.toLowerCase();
+  return terms.every(term => {
+    const normalized = formatModelName(term);
+    return text.includes(term) || (normalized !== '' && label.includes(normalized));
+  });
 }
 function modelRow(id: Provider, model: Model, available: boolean): HTMLElement {
   const {preferences} = states[id];
