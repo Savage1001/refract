@@ -1023,7 +1023,17 @@ async function navigatePdfSource(canvas:HTMLCanvasElement,clientX:number,clientY
     selectSource(offset,offset+lines[result.line-1].length);
   } catch(error){if(active?.id===id && revision===version)report('find PDF source',error);}
 }
-pdfArea.addEventListener('dblclick',event=>{if((event.target as HTMLElement).closest('a,button,input,select,textarea'))return;const canvas=(event.target as HTMLElement).closest<HTMLCanvasElement>('.pdf-pages canvas');if(canvas)void navigatePdfSource(canvas,event.clientX,event.clientY);});
+pdfArea.addEventListener('mousedown', event => {
+  // A second press jumps to source instead of starting native word selection.
+  if (event.button === 0 && event.detail === 2 && active && compiledProject === active.id
+      && (event.target as HTMLElement).closest('.pdf-text-layer')) event.preventDefault();
+});
+pdfArea.addEventListener('dblclick', event => {
+  const target = event.target as HTMLElement;
+  if (target.closest('a,button,input,select,textarea')) return;
+  const canvas = target.closest('.pdf-page-frame')?.querySelector('canvas');
+  if (canvas) void navigatePdfSource(canvas, event.clientX, event.clientY);
+});
 pdfArea.addEventListener('keydown',event=>{
   if((event.key!=='Enter' && event.key!==' ') || !active || compiledProject!==active.id)return;
   const canvas=(event.target as HTMLElement).closest<HTMLCanvasElement>('.pdf-pages canvas');if(!canvas)return;
@@ -1143,7 +1153,7 @@ async function compilePreview(force=false) {
     }
     const bytes = Uint8Array.from(atob(result.pdf), c => c.charCodeAt(0));
     const pdfModulePath: string = '../node_modules/pdfjs-dist/build/pdf.mjs';
-    const pdfjs = await import(pdfModulePath);
+    const pdfjs: typeof import('pdfjs-dist') = await import(pdfModulePath);
     pdfjs.GlobalWorkerOptions.workerSrc = '../node_modules/pdfjs-dist/build/pdf.worker.mjs';
     const doc = pendingPdf = await pdfjs.getDocument({ data: bytes, isEvalSupported:false }).promise;
     const container = document.createElement('div'); container.className = 'pdf-pages';
@@ -1165,12 +1175,14 @@ async function compilePreview(force=false) {
       // Keep the page geometry independent of the canvas backing resolution.
       frame.style.aspectRatio = `${base.width} / ${base.height}`;
       frame.append(canvas);
-      void page.getTextContent().then(({items}) => {
-        const text = document.createElement('div');
-        text.className = 'pdf-accessible-text';
-        text.textContent = items.map(item => 'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join('').trim();
-        if (text.textContent) frame.append(text);
-      }).catch(error => console.error('Could not read PDF page text', error));
+      const textLayer = document.createElement('div');
+      textLayer.className = 'pdf-text-layer';
+      // PDF.js positions text in unscaled PDF units. Follow the displayed page width.
+      const naturalWidth = base.width / base.userUnit;
+      textLayer.style.setProperty('--scale-factor', `calc(100cqw / ${naturalWidth}px)`);
+      const text = new pdfjs.TextLayer({container:textLayer, textContentSource:page.streamTextContent(), viewport:base});
+      void text.render().then(() => frame.append(textLayer))
+        .catch(error => console.error('Could not render PDF page text', error));
       const annotations=await page.getAnnotations({intent:'display'});
       for(const annotation of annotations){
         if(annotation.subtype!=='Link' || (!annotation.url && !annotation.dest))continue;
