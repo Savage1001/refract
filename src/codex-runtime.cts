@@ -116,7 +116,8 @@ class CodexRuntime extends events.EventEmitter {
       if(options?.tools)config['mcp_servers.refract']={url:options.tools.url,http_headers:{Authorization:`Bearer ${options.tools.token}`},required:true,default_tools_approval_mode:'approve',tool_timeout_sec:300,tools:{project_read:{output_token_limit:32768},project_read_many:{output_token_limit:32768},conversation_read:{output_token_limit:32768}}};
       if(options?.reasoningEffort)config.model_reasoning_effort=options.reasoningEffort;
       if(options?.fastMode !== undefined) {config.service_tier=options.fastMode ? 'fast' : 'default';config['features.fast_mode']=true;}
-      const params={cwd:this.cwd,approvalPolicy:'never',sandbox:'workspace-write',model:options?.model ?? null,config};
+      const params={cwd:this.cwd,approvalPolicy:'never',sandbox:'workspace-write',model:options?.model ?? null,config,
+        ...(options?.developerInstructions ? {developerInstructions: options.developerInstructions} : {})};
       const result=await this.request(sessionId ? 'thread/resume' : 'thread/start',sessionId ? {...params,threadId:sessionId,excludeTurns:true} : params);
       threadId=result.thread?.id;if(!threadId)throw new Error('Codex returned no thread ID');try{onSession?.(threadId);}catch{}
       if(signal?.aborted)throw new Error('Assistant operation cancelled.');

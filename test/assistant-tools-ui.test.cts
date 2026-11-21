@@ -31,8 +31,11 @@ test('desktop wires direct tools into both providers, saves compiler changes and
         const read = await call('project_read',{path:'main.tex'});
         await call('project_edit',{path:'main.tex',sha256:read.sha256,oldText:read.content.includes('Introduction') ? 'Introduction' : 'First confirmed edit',newText:read.content.includes('Introduction') ? 'First confirmed edit' : 'Second confirmed edit'});
         const engine = read.content.includes('Introduction') ? 'xelatex' : 'lualatex';
+        const previousEngine = engine === 'xelatex' ? 'pdflatex' : 'xelatex';
+        if (!prompt.includes(`start of this turn is ${previousEngine}`)) throw new Error('Wrong initial engine in prompt');
+        if (args[7] === 'codex' && !options.developerInstructions?.includes(`start of this turn is ${previousEngine}`)) throw new Error('Missing Codex developer instructions');
         const change = await call('project_set_engine', {engine});
-        if (change.engine !== engine || change.changed !== true) throw new Error('Expected the project engine to change');
+        if (change.engine !== engine || change.previousEngine !== previousEngine || change.changed !== true) throw new Error('Expected the project engine to change');
         const repeated = await call('project_set_engine', {engine});
         if (repeated.changed !== false) throw new Error('Selecting the same engine should be a no-op');
         if (compilerAvailable) {

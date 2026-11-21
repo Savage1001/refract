@@ -18,7 +18,8 @@ interface WorkspaceStore {
 interface ToolOptions {
   performance?: InstanceType<typeof import('./assistant-performance.cjs').AssistantPerformance>;
   history?: () => Promise<{messages:Array<{role:string;text?:string;attachments?:Array<{token:string;name:string}>}>}>;
-  setEngine?: (engine: LatexEngine) => Promise<{engine: LatexEngine; changed: boolean}>;
+  initialEngine?: LatexEngine;
+  setEngine?: (engine: LatexEngine) => Promise<{engine: LatexEngine; previousEngine: LatexEngine | null; changed: boolean}>;
 }
 const MAX_BYTES = 2 * 1024 * 1024;
 const fileName = z.string().min(1).max(1024).refine(name => !name.split(/[\\/]/).some(part => part.startsWith('.')), 'Private project files are unavailable');
@@ -26,10 +27,11 @@ const hash = (text: string) => crypto.createHash('sha256').update(text).digest('
 const result = (value: unknown) => ({content: [{type: 'text' as const, text: JSON.stringify(value)}]});
 const engineSelectionPolicy =
   'Choose the fastest LaTeX engine that fully meets the user, template, package, font, language and output requirements. ' +
-  'Prefer pdfLaTeX when it meets those requirements and there is no project-specific evidence that another engine is faster. ' +
+  'For a speed request, check the document and template first. If they are compatible with pdfLaTeX and currently use XeLaTeX or LuaLaTeX, switch to pdfLaTeX and build, unless project timings favor another engine. ' +
+  'Refract’s small-document Windows benchmarks found pdfLaTeX faster than both alternatives. Use project-specific measurements when available. ' +
   'When the document needs XeLaTeX or LuaLaTeX, choose the fastest compatible option based on its requirements and any existing timings. ' +
-  'Keep the current engine when it meets the requirements and a switch offers no clear benefit. ' +
-  'After switching, build and check for compatibility warnings and required output features. Restore the previous engine if the new one proves unsuitable, and tell the user which engine you selected.';
+  'For a routine build, keep a compatible current engine. ' +
+  'After switching, build and check for compatibility warnings and required output features. If the new engine proves unsuitable, restore the previous engine reported by the tool when one is available. Tell the user which engine you selected.';
 
 // Every operation is scoped to one project and one assistant turn. No arbitrary
 // commands are exposed here; those remain in the provider's normal sandbox.
@@ -89,6 +91,7 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
   const workspace = createWorkspaceTools(store, id);
   const token = crypto.randomBytes(32).toString('hex');
   let closing = false;
+  let successfulBuild = false;
   let closeJob: Promise<void> | undefined;
   let busyBuild = false;
   const active = new Set<Promise<void>>();
@@ -132,7 +135,9 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
         try { return result(await track(()=>workspace.exclusive(work))); } finally { busyBuild = false; }
       };
       mcp.registerTool('build', {description: 'Compile with the active Refract engine and root. Reuses a validated unchanged successful build unless force=true. Build once after a coherent batch of edits. Compiler output is bounded; set logLimit for more.', inputSchema: {force:z.boolean().default(false),logLimit:z.number().int().min(1000).max(250000).default(12000)}}, ({force,logLimit}) => runBuild(async()=>{
+        successfulBuild = false;
         const value=await build(force);
+        successfulBuild = !!value && typeof value === 'object' && 'ok' in value && value.ok === true;
         if(value && typeof value==='object' && 'log' in value && typeof value.log==='string')return {...value,log:value.log.slice(-logLimit),logTruncated:value.log.length>logLimit,logCharacters:value.log.length};
         return value;
       }));
@@ -140,7 +145,11 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
       if (setEngine) mcp.registerTool('project_set_engine', {
         description: 'Change the current project’s saved LaTeX engine. Future builds and the editor use this selection. ' + engineSelectionPolicy,
         inputSchema: z.strictObject({engine: z.enum(toolchain.latexEngines)}),
-      }, async ({engine}) => result(await track(() => workspace.exclusive(() => setEngine(engine)))));
+      }, async ({engine}) => result(await track(() => workspace.exclusive(async () => {
+        const change = await setEngine(engine);
+        if (change.changed) successfulBuild = false;
+        return change;
+      }))));
       mcp.registerTool('package_lookup', {description: 'Check availability of a TeX package in the configured TeX environment.', inputSchema: {name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.sty$/)}}, ({name}) => runBuild(() => lookup(name)));
       res.once('close', () => { clients.delete(mcp); void mcp.close(); });
       await mcp.connect(transport);
@@ -153,10 +162,18 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
   await new Promise<void>((resolve, reject) => {server.once('error', reject); server.listen(0, '127.0.0.1', () => {server.removeListener('error', reject); resolve();});});
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Could not start assistant tools');
+  const engineInstructions = options.setEngine
+    ? (options.initialEngine ? `The current project's LaTeX engine at the start of this turn is ${options.initialEngine}. ` : '') +
+      'If asked to compile, call the Refract build tool and check its result before replying, even when the current engine and source need no changes. ' +
+      'Use that tool for compilation so the result matches the editor. Call project_set_engine only to change the saved engine. ' +
+      engineSelectionPolicy
+    : undefined;
   return {
     connection: {url: `http://127.0.0.1:${address.port}/mcp`, token},
+    hasSuccessfulBuild: () => successfulBuild,
+    engineInstructions,
     instructions: 'Use refract project_list, project_read, and project_edit for direct project operations. Prefer project_read_many and project_edit_many to batch independent files into one tool call. Read only relevant excerpts; follow nextOffset when needed. Each edit needs the full-file SHA-256 from a read. Inspect every batch result: successful edits remain applied if another fails. On a failed edit, read again and correct the match before retrying. Use conversation_read for older conversation context omitted from a handoff excerpt. Use build and package_lookup for the configured TeX environment. Finish a coherent batch of edits before building once; reuse a successful unchanged result. Use force=true if a new compiler run is explicitly needed. Keep shell output targeted and bounded; batch independent commands. Never claim success without checking the result. Inspect build warnings; logTruncated indicates a shortened log and logLimit can request more. Do not claim visual inspection unless performed. Never install into or modify shared TinyTeX. If a dependency is unavailable, explain the blocker or use a suitable project-local dependency with its license; do not remove document content solely to compile.' +
-      (options.setEngine ? ' Use project_set_engine to save a different engine for this project. ' + engineSelectionPolicy : ''),
+      (engineInstructions ? ' ' + engineInstructions : ''),
     close() { return closeJob ??= (async () => {
       closing = true;
       const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

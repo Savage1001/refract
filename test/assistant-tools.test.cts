@@ -92,9 +92,10 @@ test('the compiler tool accepts only supported engines for the current project',
   const store = new ProjectStore(root), project = await store.create('Engine tool');
   const bridge = await startAssistantTools(store, project.id,
     async () => ({engine: (await store.metadata(project.id)).engine}), async () => ({}), {
+      initialEngine: 'pdflatex',
       setEngine: async engine => {
         await store.setEngine(project.id, engine);
-        return {engine, changed: true};
+        return {engine, previousEngine: 'pdflatex', changed: true};
       }
     });
   t.after(() => bridge.close());
@@ -105,6 +106,7 @@ test('the compiler tool accepts only supported engines for the current project',
   t.after(() => client.close());
   const change = (args: Record<string, unknown>) => client.callTool({name: 'project_set_engine', arguments: args});
   assert.match(bridge.instructions, /project_set_engine/);
+  assert.match(bridge.instructions, /start of this turn is pdflatex/);
   assert.equal((await change({engine: '../pdflatex.exe'})).isError, true);
   assert.equal((await change({engine: 'xelatex', projectId: 'another-project'})).isError, true);
   assert.equal((await store.metadata(project.id)).engine, undefined);

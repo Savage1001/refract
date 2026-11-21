@@ -1,5 +1,6 @@
 const { UpdateService } = require('./src/updates.cjs');
-const { texBin } = require('./src/tex-toolchain.cjs');
+import texToolchain = require('./src/tex-toolchain.cjs');
+const {texBin, isLatexEngine} = texToolchain;
 const { app, BrowserWindow, ipcMain, MessageChannelMain, dialog, shell, nativeTheme, safeStorage } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -510,6 +511,7 @@ app.whenReady().then(async () => {
       const preferences = snapshot ?? await (provider === 'codex' ? accountMode ? accountPreferences : codexPreferences : openCodePreferences).load();
       const project = await store.destinationDir(id);
       const launch = accountMode ? accountCodexLaunch(await codexAccount.connection(), project) : undefined;
+      const initialEngine = (await store.metadata(id)).engine || 'pdflatex';
       signal.throwIfAborted();
       const bridge = await startAssistantTools(store, id, async (force=false) => {
         await require('./src/document-images.cjs').materializeDocumentImages(store,id);
@@ -520,20 +522,23 @@ app.whenReady().then(async () => {
       }, name => lookupPackage(name,project,texBin(),signal),{
         performance: metrics,
         history: () => chats.load(id, chatId),
+        initialEngine: isLatexEngine(initialEngine) ? initialEngine : undefined,
         setEngine: engine => enqueue(async () => {
           signal.throwIfAborted();
           await store.destinationDir(id);
           const previous = (await store.metadata(id)).engine || 'pdflatex';
           signal.throwIfAborted();
-          if (previous === engine) return {engine, changed: false};
+          if (previous === engine) return {engine, previousEngine: engine, changed: false};
           await store.setEngine(id, engine);
           if (!event.sender.isDestroyed()) event.sender.send('projects:engine-changed', {projectId: id, engine});
-          return {engine, changed: true};
+          return {engine, previousEngine: isLatexEngine(previous) ? previous : null, changed: true};
         })
       });
       try {return await chats.send(id,prompt,chatId,attachments,signal,status=>{
         if(!event.sender.isDestroyed())event.sender.send('chat:progress',{projectId:id,chatId,status});
-      }, {model: preferences.model ?? undefined, reasoningEffort: preferences.reasoningEffort ?? undefined, ...(provider === 'codex' ? {fastMode: preferences.fastMode} : {}), tools:bridge.connection, performance:metrics, launch}, provider,bridge.instructions);}
+      }, {model: preferences.model ?? undefined, reasoningEffort: preferences.reasoningEffort ?? undefined, ...(provider === 'codex' ? {
+        fastMode: preferences.fastMode, developerInstructions: bridge.engineInstructions, hasSuccessfulBuild: bridge.hasSuccessfulBuild
+      } : {}), tools:bridge.connection, performance:metrics, launch}, provider,bridge.instructions);}
       finally {await bridge.close();}
     },metrics);} finally {
       if (accountMode) accountTurns--;

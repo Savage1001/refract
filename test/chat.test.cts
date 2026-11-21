@@ -15,6 +15,25 @@ test('sessions are bound to the active project workspace', async t => {
  assert.equal(calls[0].session,null); assert.equal(calls[1].session,'new-session');
  for (const call of calls) { assert.equal(call.cwd,store.projectDir(project.id)); assert.ok(call.prompt.includes(call.cwd)); }
 });
+test('an unverified compilation claim gets one correction in the same session', async t => {
+ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-build-claim-'));
+ t.after(() => fs.rm(root, {recursive:true,force:true}));
+ const store = new ProjectStore(root), project = await store.create('Paper');
+ for (const repair of [true, false]) {
+  const calls: Array<{session: string | null; prompt: string}> = [];
+  let verified = false;
+  const service = new ChatService(store, async (_cwd, session, prompt) => {
+   calls.push({session,prompt});
+   verified = repair && calls.length === 2;
+   return {sessionId:'build-session',text:repair ? 'I kept the source unchanged and built with XeLaTeX.' : 'I kept the source unchanged and built it with XeLaTeX.'};
+  });
+  const chat = await service.send(project.id, 'Build the paper.', 'default', [], undefined, undefined, {hasSuccessfulBuild: () => verified});
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].session, 'build-session');
+  assert.match(calls[1].prompt, /call the Refract build tool now/);
+  assert.match(chat.messages.at(-1).text, repair ? /built with XeLaTeX/ : /couldn’t verify/);
+ }
+});
 test('switching Codex connections carries history into a new thread', async t => {
  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-chat-connection-'));
  t.after(() => fs.rm(root,{recursive:true,force:true}));
