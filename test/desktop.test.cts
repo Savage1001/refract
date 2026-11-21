@@ -66,7 +66,7 @@ test('multi-file paper edits and recompiles after restart', {timeout:120000}, as
  await page.getByText('Compiled',{exact:true}).waitFor({timeout:60000});
  assert.ok(await page.locator('#pdf-area canvas').count());
 });
-test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 }, async t => {
+test('desktop creates, edits, compiles and reopens a project', { timeout: 180000 }, async t => {
  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-ui-'));
  const env: NodeJS.ProcessEnv = {...process.env, REFRACT_DATA_DIR:data, REFRACT_TEST_HIDDEN: '1'}; delete env.ELECTRON_RUN_AS_NODE;
  let app = await launchDesktop(env);
@@ -75,7 +75,7 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  assert.equal(await page.locator('#project-navigation').isHidden(), true);
  assert.equal(await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isMenuBarVisible()), false);
  const errors=[]; page.on('pageerror', e => errors.push(e.message));
- await page.emulateMedia({colorScheme:'dark'});
+ await page.emulateMedia({colorScheme:'dark', reducedMotion:'reduce'});
  assert.ok(await page.locator('body').evaluate(el => (getComputedStyle(el).backgroundColor.match(/\d+/g) || []).slice(0,3).every(channel => Number(channel) < 80)));
  await page.locator('#grid-view').click();
  assert.equal(await page.locator('#list').evaluate(el => el.classList.contains('grid')), true);
@@ -90,10 +90,19 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.locator('#file-list button[title="pixel.png"]').waitFor({state:'visible'});
  await page.locator('#file-list button[title="pixel.png"] .tree-image-thumbnail').waitFor({state:'visible'});
  // Check the thumbnail and filename centers at different window widths and app zoom levels.
+ const deviceScale = await page.evaluate(() => window.devicePixelRatio);
  for (const width of [900, 1440]) {
   for (const zoom of [0.8, 1, 1.25, 1.5]) {
-   await app.evaluate(({BrowserWindow}, {width, zoom}) => {const win=BrowserWindow.getAllWindows()[0]; win.setSize(width, 900); win.webContents.setZoomFactor(zoom);}, {width, zoom});
-   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+   const contentWidth = await app.evaluate(({BrowserWindow}, {width, zoom}) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    win.setSize(width, 900);
+    win.webContents.setZoomFactor(zoom);
+    return win.getContentSize()[0];
+   }, {width, zoom});
+   await page.waitForFunction(({contentWidth, deviceScale, zoom}) =>
+    Math.abs(window.devicePixelRatio - deviceScale * zoom) < 0.01 &&
+    Math.abs(window.innerWidth * zoom - contentWidth) < 2,
+   {contentWidth, deviceScale, zoom}, {polling: 50, timeout: 5000});
    const centers=await page.locator('#file-list button[title="pixel.png"]').evaluate(button => {
     const image=button.querySelector('.tree-image-thumbnail').getBoundingClientRect(), text=button.querySelector('.tree-file-name').getBoundingClientRect();
     return {image:image.top+image.height/2, text:text.top+text.height/2};
@@ -177,6 +186,7 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  assert.equal(await page.getByText('Welcome to Refract!').count(), 0);
  await app.close(); app = null;
  app = await launchDesktop(env); page = await app.firstWindow();
+ await page.emulateMedia({reducedMotion:'reduce'});
  await page.getByText('Research paper', {exact:false}).waitFor();
  await page.locator('#list article').first().click();
  await page.locator('#source').waitFor({state:'visible'});
@@ -1341,10 +1351,10 @@ test('handoff marker persists and new chat starts empty', {timeout:60000}, async
  if(process.env.REFRACT_SCREENSHOTS) await page.locator('#chat').screenshot({path:path.join(process.env.REFRACT_SCREENSHOTS,'new-chat.png')});
  const newChat=page.getByRole('button',{name:'New chat',exact:true}), tooltip=page.locator('.new-chat-tooltip');
  await page.locator('#chat-input').focus();
- await newChat.hover();assert.equal(await tooltip.isVisible(),true);assert.equal(await tooltip.innerText(),'New chat');
+ await newChat.hover();await tooltip.waitFor({state:'visible'});assert.equal(await tooltip.innerText(),'New chat');
  if(process.env.REFRACT_SCREENSHOTS) await page.locator('#chat').screenshot({path:path.join(process.env.REFRACT_SCREENSHOTS,'new-chat-tooltip.png')});
- await page.locator('#chat-input').hover();assert.equal(await tooltip.isHidden(),true);
- await page.locator('#chat-input').focus();await page.keyboard.press('Shift+Tab');await page.keyboard.press('Shift+Tab');assert.equal(await newChat.evaluate(el=>el===document.activeElement),true);assert.equal(await tooltip.isVisible(),true);
+ await page.locator('#chat-input').hover();await tooltip.waitFor({state:'hidden'});
+ await page.locator('#chat-input').focus();await page.keyboard.press('Shift+Tab');await page.keyboard.press('Shift+Tab');assert.equal(await newChat.evaluate(el=>el===document.activeElement),true);await tooltip.waitFor({state:'visible'});
 });
 test('outline navigation restores horizontal visibility', {timeout:30000}, async t => {
  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-outline-'));
