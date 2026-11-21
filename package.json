@@ -10,6 +10,7 @@
     "verify:tex-sources": "npm run build && node build/scripts/verify-tex-sources.cjs",
     "benchmark:tools": "npm run build && node build/scripts/benchmark-assistant-tools.cjs",
     "benchmark:pipeline": "npm run build && node build/scripts/benchmark-agent-pipeline.cjs",
+    "benchmark:changes": "npm run build && node build/scripts/benchmark-agent-changes.cjs",
     "build:win": "npm run build && electron-builder --win --dir",
     "build:installer": "npm run build && electron-builder --win nsis"
   },

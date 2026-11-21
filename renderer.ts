@@ -393,97 +393,97 @@ document.addEventListener('focusin', event => {
   if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus();
 });
 let fileTreeRequest = 0, renderedTree = '', renderedTreeProject = '';
-const folderRowMotions = new Set<Animation>();
-const fileTreePresses = new Set<number>();
-// Bound the retained disclosure and the number of rows sampled per toggle.
-const maxFolderExitRows = 64;
-const maxMeasuredFollowingRows = 48;
+let sidebarDisclosure: {surface: HTMLElement; trigger: HTMLElement; animation: Animation; settle(): void} | undefined;
+const sidebarPresses = new Set<number>();
 
-function settleFolderRows(): void {
-  for (const animation of folderRowMotions) animation.cancel();
-  folderRowMotions.clear();
-}
-
-// Pause the whole row group through the native click so a neighboring row
-// cannot move across the pressed control between pointerdown and pointerup.
+// Hold the visible frame through a press so a moving row cannot slip out
+// from under the pointer before the click is delivered.
 document.addEventListener('pointerdown', event => {
-  if (!(event.target instanceof Element) || !event.target.closest('#file-list .file-tree-row')) return;
-  if (!fileTreePresses.size) {
-    for (const animation of folderRowMotions) {
-      if (!isMoving(animation)) continue;
-      const hitTime = animation.currentTime;
-      animation.pause();
-      // A pending pause can otherwise advance one more compositor frame.
-      animation.currentTime = hitTime;
-    }
+  if (!(event.target instanceof Element) || !event.target.closest('#files-surface')) return;
+  const animation = sidebarDisclosure?.animation;
+  if (!sidebarPresses.size && isMoving(animation)) {
+    const hitTime = animation.currentTime;
+    animation.pause();
+    animation.currentTime = hitTime;
   }
-  fileTreePresses.add(event.pointerId);
+  sidebarPresses.add(event.pointerId);
 }, {capture:true});
 
-function resumeFolderRows(): void {
-  if (fileTreePresses.size || !folderRowMotions.size) return;
+function resumeSidebarDisclosure(): void {
+  if (sidebarPresses.size || !sidebarDisclosure) return;
   requestAnimationFrame(() => {
-    if (fileTreePresses.size) return;
-    for (const animation of folderRowMotions) if (animation.playState === 'paused') animation.play();
+    const animation = sidebarDisclosure?.animation;
+    if (!sidebarPresses.size && animation?.playState === 'paused') animation.play();
   });
 }
 
 for (const type of ['pointerup', 'pointercancel'] as const) {
   window.addEventListener(type, event => {
-    if (fileTreePresses.delete(event.pointerId)) resumeFolderRows();
+    if (sidebarPresses.delete(event.pointerId)) resumeSidebarDisclosure();
   }, {capture:true});
 }
 window.addEventListener('blur', () => {
-  fileTreePresses.clear();
-  resumeFolderRows();
+  sidebarPresses.clear();
+  resumeSidebarDisclosure();
 });
+document.getElementById('files-surface')!.addEventListener('wheel', () => sidebarDisclosure?.settle(), {passive:true});
 document.addEventListener('focusin', event => {
-  if (folderRowMotions.size && !fileTreePresses.size && event.target instanceof Element &&
-      event.target.matches('#file-list :focus-visible')) settleFolderRows();
+  const motion = sidebarDisclosure;
+  if (motion && !sidebarPresses.size && event.target instanceof Element && event.target !== motion.trigger &&
+      event.target.matches('#files-surface :focus-visible')) motion.settle();
 });
 
-function toggleFolderWithMotion(folder: HTMLDetailsElement, children: HTMLElement, event: MouseEvent): void {
-  if (!folder.open) {
-    // Following rows must clear the space before children become interactive.
-    settleFolderRows();
+function toggleSidebarDisclosure(trigger: HTMLElement, surface: HTMLElement, folder?: HTMLDetailsElement): void {
+  const expanded = folder ? !folder.open : trigger.getAttribute('aria-expanded') !== 'true';
+  if (!expanded && surface.contains(document.activeElement)) trigger.focus({preventScroll:true});
+  if (sidebarDisclosure?.surface !== surface) sidebarDisclosure?.settle();
+  const previous = sidebarDisclosure;
+
+  const applyState = () => {
+    if (folder) folder.open = expanded;
+    else trigger.setAttribute('aria-expanded', String(expanded));
+  };
+  const settleSurface = () => {
+    if (!folder) surface.hidden = !expanded;
+    surface.inert = !folder && !expanded;
+    delete surface.dataset.disclosureMotion;
+  };
+  if (!motionEnabled() || !trigger.checkVisibility()) {
+    sidebarDisclosure?.settle();
+    applyState();
+    settleSurface();
     return;
   }
-  if (!motionEnabled() || !folder.classList.contains('folder-motion')) return;
-  const fileList = document.getElementById('file-list')!;
-  const viewport = fileList.getBoundingClientRect();
-  const atTop = fileList.scrollTop === 0;
-  const height = children.getBoundingClientRect().height;
-  if (!height) return;
-  const rows: {row:Element;top:number;translate:number}[] = [];
-  let remaining = maxMeasuredFollowingRows;
-  for (let row = folder.parentElement?.closest('.file-tree-row'); row && remaining; row = row.parentElement?.closest('.file-tree-row')) {
-    for (let following = row.nextElementSibling; following && remaining; following = following.nextElementSibling) {
-      remaining--;
-      const bounds = following.getBoundingClientRect();
-      if (bounds.top > viewport.bottom + height) break;
-      if (bounds.bottom < viewport.top) continue;
-      const translate = atTop && activeMotion.has(following)
-        ? parseFloat(getComputedStyle(following).translate.split(' ')[1] ?? '0') : 0;
-      rows.push({row:following, top:bounds.top, translate});
-    }
+
+  // Clip a large folder at the visible edge. Switching to its intrinsic
+  // height after opening only adds rows below the scroll viewport.
+  const limit = folder
+    ? Math.max(0, document.getElementById('file-list')!.getBoundingClientRect().bottom - trigger.getBoundingClientRect().bottom)
+    : Infinity;
+  // A closed native details can retain cached descendant geometry.
+  const from = expanded && !previous ? 0 : Math.min(surface.getBoundingClientRect().height, limit);
+  sidebarDisclosure = undefined;
+  previous?.animation.cancel();
+  surface.dataset.disclosureMotion = '';
+  surface.hidden = false;
+  surface.inert = !expanded;
+  applyState();
+  const to = expanded ? Math.min(surface.getBoundingClientRect().height, limit) : 0;
+  if (Math.abs(from - to) < .5) {
+    settleSurface();
+    return;
   }
-  if (!remaining || rows.some(({row}) => ownsVisibleFocus(row))) return;
-  event.preventDefault();
-  for (const {row} of rows) stopMotion(row);
-  folder.open = false;
-  // At the scroll origin, following rows move by exactly the disclosed
-  // height. Scrolled trees also need to account for native scroll anchoring.
-  const moves = rows.map(({row, top, translate}) => ({
-    row, offset:atTop ? height + translate : top - row.getBoundingClientRect().top
-  }));
-  for (const {row, offset} of moves) {
-    if (Math.abs(offset) <= .5) continue;
-    const animation = playMotion(row, [{translate:`0 ${offset}px`}, {translate:'0'}]);
-    if (fileTreePresses.size) animation.pause();
-    folderRowMotions.add(animation);
-    const clear = () => { folderRowMotions.delete(animation); };
-    void animation.finished.then(clear, clear);
-  }
+
+  const animation = playMotion(surface, [{height:from + 'px'}, {height:to + 'px'}], {...motionTiming(), fill:'both'});
+  if (sidebarPresses.size) animation.pause();
+  const settle = () => {
+    if (sidebarDisclosure?.animation !== animation) return;
+    sidebarDisclosure = undefined;
+    settleSurface();
+    animation.cancel();
+  };
+  sidebarDisclosure = {surface, trigger, animation, settle};
+  void animation.finished.then(settle, settle);
 }
 
 async function refreshFiles(remappedFocus?: string) {
@@ -511,20 +511,23 @@ async function refreshFiles(remappedFocus?: string) {
     row.append(control, actions);
     return row;
   }
-  function renderNodes(items): {list:HTMLDivElement; rowCount:number} {
+  function renderNodes(items): HTMLDivElement {
     const list = document.createElement('div'); list.className = 'file-tree';
-    let rowCount = items.length;
     for (const item of items) {
       if (item.children) {
         const folder = document.createElement('details'); folder.dataset.path = item.path; folder.open = folderStates.get(item.path) ?? true;
         const label = document.createElement('summary'), folderIcon = document.createElementNS('http://www.w3.org/2000/svg','svg'), folderPath = document.createElementNS('http://www.w3.org/2000/svg','path'), folderName = document.createElement('span');
         folderIcon.setAttribute('viewBox','0 0 24 24'); folderIcon.setAttribute('aria-hidden','true'); folderIcon.setAttribute('class','folder-icon'); folderPath.setAttribute('d','M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'); folderIcon.append(folderPath); folderName.textContent=item.name; const disclosure=actionIcon('next');disclosure.classList.add('folder-chevron');label.append(disclosure,folderIcon,folderName); label.title = item.path;
         label.oncontextmenu = event => { menuFolder=item.path; $('#file-menu').hidden=true; showFileContextMenu($('#folder-menu'), event); };
-        const {list:children, rowCount:childCount} = renderNodes(item.children);
-        rowCount += childCount;
-        folder.classList.toggle('folder-motion', childCount > 0 && childCount <= maxFolderExitRows);
-        label.addEventListener('click', event => toggleFolderWithMotion(folder, children, event));
-        folder.append(label, children);
+        const content = document.createElement('div');
+        content.className = 'folder-content';
+        content.append(renderNodes(item.children));
+        label.addEventListener('click', event => {
+          if (event.defaultPrevented) return;
+          event.preventDefault();
+          toggleSidebarDisclosure(label, content, folder);
+        });
+        folder.append(label, content);
         list.append(addActions(folder, item, true));
       } else {
         const button = document.createElement('button'), icon = document.createElement('span'), name = document.createElement('span');
@@ -543,7 +546,7 @@ async function refreshFiles(remappedFocus?: string) {
         button.oncontextmenu = event => { menuFile = item.path; $('#folder-menu').hidden=true; showFileContextMenu($('#file-menu'), event); }; list.append(addActions(button, item, false));
       }
     }
-    return {list, rowCount};
+    return list;
   }
   const fileList = document.getElementById('file-list')!;
   const focused = document.activeElement?.closest<HTMLElement>('#file-list button, #file-list summary')
@@ -551,7 +554,8 @@ async function refreshFiles(remappedFocus?: string) {
   const row = focused?.closest('.file-tree-row');
   const focusedPath = row?.firstElementChild?.getAttribute('data-path');
   const destination = focused === remapOrigin ? remappedFocus : undefined;
-  fileList.replaceChildren(renderNodes(nodes).list);
+  if (sidebarDisclosure && fileList.contains(sidebarDisclosure.surface)) sidebarDisclosure.settle();
+  fileList.replaceChildren(renderNodes(nodes));
   if (focused && document.activeElement === document.body) {
     const replacement = Array.from(fileList.querySelectorAll<HTMLElement>('[data-path]')).find(item => item.dataset.path === (destination ?? focusedPath));
     if (destination && replacement) {
@@ -832,6 +836,7 @@ function displaySidebarTab(files: boolean): void {
   if (!incoming.hidden) return;
   // Both tabs fill the same space. Switch live controls before painting the
   // entrance so an old control can never cover the other tab's hit target.
+  sidebarDisclosure?.settle();
   $('#files-surface').hidden = !files;
   $('#chat-list').hidden = files;
   playLayoutMotion($('#sidebar-content'), .8);
@@ -1907,13 +1912,8 @@ $('#collapse').onclick = () => {
     }
   }
 };
-$('#outline-toggle').onclick = () => {
-  const list = $('#outline-list');
-  stopMotion(list);
-  list.hidden = !list.hidden;
-  if (!list.hidden) playLayoutMotion(list, .8);
-  $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden));
-};
+const outlineToggle = document.getElementById('outline-toggle')!;
+outlineToggle.onclick = () => toggleSidebarDisclosure(outlineToggle, document.getElementById('outline-list')!);
 function setProjectView(view: 'grid' | 'list', persist = true): void {
   $('#list').classList.toggle('grid', view === 'grid');
   for (const choice of ['grid', 'list'] as const) {
@@ -2774,7 +2774,7 @@ for(const [id,icon,label] of [['deleted-projects','trash','Deleted projects'],['
   const button=document.getElementById(id)!;button.replaceChildren(actionIcon(icon));button.title=label;button.setAttribute('aria-label',label);
 }
 document.querySelector('.sidebar-footer')!.remove();
-$('#outline-toggle').replaceChildren(actionIcon('next'),document.createTextNode('Outline'));
+outlineToggle.replaceChildren(actionIcon('next'),document.createTextNode('Outline'));
 $('#collapse').setAttribute('aria-controls', 'project-side');
 $('#collapse').setAttribute('aria-expanded', 'true');
 $('#collapse').title = 'Collapse sidebar';

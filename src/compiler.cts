@@ -1,8 +1,85 @@
 const { texBin } = require('./tex-toolchain.cjs');
 const { spawn } = require('node:child_process');
-const fs = require('node:fs/promises');
-const path = require('node:path');
+import fs = require('node:fs/promises');
+import path = require('node:path');
+import sources = require('./source-cache.cjs');
+const {mapLimited} = sources;
 const { cancelProcess } = require('./chat.cjs');
+
+type CompileResult = {
+  ok: boolean;
+  log: string;
+  exitCode: number | null;
+  arguments?: string[];
+  pdf?: string;
+};
+
+async function validateBuildDirectory(root: string): Promise<void> {
+  const info = await fs.lstat(root);
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('Invalid compilation directory');
+  let directories = [root];
+  while (directories.length) {
+    const entries = await mapLimited(directories, async directory =>
+      (await fs.readdir(directory)).map(name => path.join(directory, name)));
+    const children = await mapLimited(entries.flat(), async file => {
+      const stat = await fs.lstat(file);
+      if (stat.isSymbolicLink()) throw new Error('Links are not allowed in the compilation directory');
+      if (stat.isDirectory()) return file;
+      if (!stat.isFile() || stat.nlink > 1) throw new Error('Only unlinked regular files are allowed in the compilation directory');
+    });
+    directories = children.filter((child): child is string => child !== undefined);
+  }
+}
+
+async function removeBuildFiles(directory: string, names: string[]): Promise<void> {
+  const results = await Promise.allSettled(names.map(name => fs.rm(path.join(directory, name), {force: true})));
+  for (const result of results) if (result.status === 'rejected') throw result.reason;
+}
+
+async function firstPassComplete(projectDir: string, outputDir: string, executable: string, aux: string, log: string): Promise<boolean> {
+  const engine = path.basename(executable).toLowerCase().replace(/\.exe$/, '');
+  if (!['pdflatex', 'xelatex', 'lualatex'].includes(engine)) return false;
+  // Plain LaTeX bookkeeping is safe to ignore. Any other auxiliary commands
+  // may feed the next pass, even when the package doesn't ask for a rerun.
+  if (!/^\\relax[ \t]*\r?\n\\gdef \\@abspage@last\{[1-9]\d*\}\r?\n?$/.test(aux)) return false;
+  if (/(?:\brerun\b|\bre-run\b|run (?:La)?TeX again|undefined (?:references|citations)|^No file (?!main\.aux\.$))/im.test(log)) return false;
+  try {
+    const recorder = path.join(outputDir, 'main.fls');
+    const info = await fs.lstat(recorder);
+    if (!info.isFile() || info.nlink > 1 || info.size > 8 * 1024 * 1024) return false;
+    const files = await fs.readFile(recorder, 'utf8');
+    // LuaLaTeX can lowercase the Windows drive letter on recorder INPUT paths
+    // while preserving its original case on OUTPUT paths.
+    const resolveRecordPath = (file: string) => {
+      const absolute = path.resolve(projectDir, file);
+      return process.platform === 'win32' ? absolute.replace(/^[a-z]:/, drive => drive.toUpperCase()) : absolute;
+    };
+    const standardOutputs = new Set(['main.aux', 'main.log', 'main.pdf', 'main.xdv']
+      .map(name => resolveRecordPath(path.join(outputDir, name))));
+    const records = files.split(/\r?\n/);
+    const auxPath = resolveRecordPath(path.join(outputDir, 'main.aux'));
+    // Imported projects can contain an old main.aux that TeX reads before
+    // creating the new one. The next pass will see the new contents instead.
+    if (records.some(line => /^INPUT (?:.*[\\/])?main\.aux$/i.test(line) &&
+        resolveRecordPath(line.slice(6)) !== auxPath)) return false;
+    const outputs = new Set(records.filter(line => line.startsWith('OUTPUT '))
+      .map(line => resolveRecordPath(line.slice(7))));
+    // A package may write a state file without using the main aux or logging a
+    // warning. Keep the second pass whenever the recorder lists extra outputs,
+    // except LuaLaTeX's transient font-cache write probe outside the project.
+    if (!outputs.has(auxPath)) return false;
+    for (const file of outputs) {
+      if (standardOutputs.has(file)) continue;
+      const relative = path.relative(projectDir, file);
+      if (engine !== 'lualatex' || path.basename(file) !== 'm_t_x_t_e_s_t.tmp' ||
+          (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))) return false;
+      if (await fs.lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function runCompilerProcess(command:string, commandArgs:string[], cwd:string, env:NodeJS.ProcessEnv, signal?:AbortSignal): Promise<{code:number|null;output:string}> {
   return new Promise((resolve,reject)=>{
@@ -17,7 +94,10 @@ async function runCompilerProcess(command:string, commandArgs:string[], cwd:stri
     child.on('close',code=>{signal?.removeEventListener('abort',cancel);resolve({code:cancelled ? null : code,output:cancelled ? output+'\nCompilation cancelled.' : output});});
   });
 }
-async function compile(projectDir, options: { executable?: string; rootFile?: string; draftMode?: boolean; signal?:AbortSignal } = {}) {
+async function compile(
+  projectDir: string,
+  options: {executable?: string; rootFile?: string; draftMode?: boolean; signal?: AbortSignal} = {}
+): Promise<CompileResult> {
   if (options.signal?.aborted) return {ok:false,log:'Compilation cancelled.',exitCode:null};
   const rootInfo=await fs.lstat(projectDir);
   if(rootInfo.isSymbolicLink() || !rootInfo.isDirectory())throw new Error('Invalid project directory');
@@ -30,23 +110,12 @@ async function compile(projectDir, options: { executable?: string; rootFile?: st
   }
   const outputDir = path.resolve(projectDir, '.refract-build');
   try {await fs.mkdir(outputDir);} catch(error) {if(error.code!=='EEXIST')throw error;}
-  const validateBuild=async (dir:string):Promise<void>=>{
-    const info=await fs.lstat(dir);if(info.isSymbolicLink() || !info.isDirectory())throw new Error('Invalid compilation directory');
-    for(const entry of await fs.readdir(dir,{withFileTypes:true})) {
-      const child=path.join(dir,entry.name),stat=await fs.lstat(child);
-      if(stat.isSymbolicLink())throw new Error('Links are not allowed in the compilation directory');
-      if(stat.isDirectory())await validateBuild(child);
-      else if(!stat.isFile() || stat.nlink>1)throw new Error('Only unlinked regular files are allowed in the compilation directory');
-    }
-  };
-  await validateBuild(outputDir);
+  await validateBuildDirectory(outputDir);
   if (options.signal?.aborted) return {ok:false,log:'Compilation cancelled.',exitCode:null};
   const executable = options.executable || path.join(texBin(), 'pdflatex.exe');
   const pdfPath = path.join(outputDir, 'main.pdf');
   const syncFiles=['main.synctex.gz','main.synctex','main.synctex(busy)','main.synctex.gz(busy)'];
-  const clearSync=async()=>{for(const name of syncFiles)await fs.rm(path.join(outputDir,name),{force:true});};
-  for (const name of ['main.pdf', 'main.log', 'main.aux', 'main.bbl', 'main.bcf']) await fs.rm(path.join(outputDir, name), { force: true });
-  await clearSync();
+  await removeBuildFiles(outputDir, ['main.pdf', 'main.log', 'main.aux', 'main.bbl', 'main.bcf', 'main.fls', ...syncFiles]);
   // Read the filename as inert characters so TeX syntax in valid filenames
   // (including percent signs and braces) cannot change the input expression.
   const draftDirectory=path.join(outputDir,'refract-internal');
@@ -82,26 +151,46 @@ async function compile(projectDir, options: { executable?: string; rootFile?: st
       env.FONTCONFIG_FILE=config;
     }
   }
-  const run = (command, commandArgs, cwd = projectDir) => runCompilerProcess(command,commandArgs,cwd,env,options.signal);
   let log = '';
   let exitCode: number | null = null;
-  const step = async (command, commandArgs, cwd = projectDir) => { const result = await run(command, commandArgs, cwd); exitCode = result.code; log = (log + '\n' + result.output).slice(-250000); return result.code === 0; };
-  let success=false;
+  const step = async (command: string, commandArgs: string[], cwd = projectDir) => {
+    const result = await runCompilerProcess(command, commandArgs, cwd, env, options.signal);
+    exitCode = result.code;
+    log = (log + '\n' + result.output).slice(-250000);
+    return result.code === 0;
+  };
+  const failed = () => ({arguments: args, ok: false, log, exitCode});
+  let success = false;
   try {
-  if (!await step(executable, args)) return {arguments:args,ok:false,log,exitCode};
-  const aux = await fs.readFile(path.join(outputDir,'main.aux'),'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
-  const bcf = await fs.stat(path.join(outputDir,'main.bcf')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
-  if (bcf) {
-    const biber = path.join(path.dirname(executable), process.platform === 'win32' ? 'biber.exe' : 'biber');
-    if (!await step(biber, ['--input-directory', outputDir, '--output-directory', outputDir, 'main'])) return {arguments:args,ok:false,log,exitCode};
-  } else if (/\\bibdata\{/.test(aux)) {
-    const bibtex = path.join(path.dirname(executable), process.platform === 'win32' ? 'bibtex.exe' : 'bibtex');
-    if (!await step(bibtex, ['main'], outputDir)) return {arguments:args,ok:false,log,exitCode};
+    if (!await step(executable, args)) return failed();
+    const [aux, bcf] = await Promise.all([
+      fs.readFile(path.join(outputDir, 'main.aux'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; }),
+      fs.stat(path.join(outputDir, 'main.bcf')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })
+    ]);
+    const bibtexRequired = /\\bibdata\{/.test(aux);
+    if (bcf) {
+      const biber = path.join(path.dirname(executable), process.platform === 'win32' ? 'biber.exe' : 'biber');
+      if (!await step(biber, ['--input-directory', outputDir, '--output-directory', outputDir, 'main'])) return failed();
+    } else if (bibtexRequired) {
+      const bibtex = path.join(path.dirname(executable), process.platform === 'win32' ? 'bibtex.exe' : 'bibtex');
+      if (!await step(bibtex, ['main'], outputDir)) return failed();
+    }
+    const bibliography = bcf || bibtexRequired;
+    const needsSecondPass = bibliography || !await firstPassComplete(projectDir, outputDir, executable, aux, log);
+    if (needsSecondPass && !await step(executable, args)) return failed();
+    if (bibliography && !await step(executable, args)) return failed();
+    if (options.signal?.aborted) return {...failed(), log: log + '\nCompilation cancelled.', exitCode: null};
+    try {
+      const bytes = await fs.readFile(pdfPath);
+      if (!bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new Error('Invalid PDF');
+      const pdf = bytes.toString('base64');
+      success = true;
+      return {arguments: args, ok: true, pdf, log, exitCode};
+    } catch {
+      return {...failed(), log: 'Compilation finished without producing a PDF.\n' + log};
+    }
+  } finally {
+    if (!success) await removeBuildFiles(outputDir, [...syncFiles, 'main.pdf']);
   }
-  if (!await step(executable,args)) return {arguments:args,ok:false,log,exitCode};
-  if ((bcf || /\\bibdata\{/.test(aux)) && !await step(executable,args)) return {arguments:args,ok:false,log,exitCode};
-  try { const bytes=await fs.readFile(pdfPath); if (!bytes.subarray(0,5).equals(Buffer.from('%PDF-'))) throw new Error('Invalid PDF'); const pdf=bytes.toString('base64');success=true;return {arguments:args,ok:true,pdf,log,exitCode}; }
-  catch { return {arguments:args,ok:false,exitCode,log:'Compilation finished without producing a PDF.\n'+log}; }
-  } finally {if(!success){await clearSync();await fs.rm(pdfPath,{force:true});}}
 }
-module.exports = { compile, runCompilerProcess };
+export = { compile, runCompilerProcess };

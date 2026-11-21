@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const compiler = require('../src/compiler.cjs');
+import compiler = require('../src/compiler.cjs');
 const compile = compiler.compile;
 const runCompilerProcess = compiler.runCompilerProcess;
 test('cancelling a compiler process stops it and reports cancellation', {timeout:15000}, async t=>{
@@ -61,6 +61,31 @@ test('configured TeX compiles the default project', async t => {
  assert.equal(Buffer.from(result.pdf, 'base64').subarray(0, 5).toString(), '%PDF-');
  const sync=require('node:zlib').gunzipSync(await fs.readFile(path.join(store.projectDir(project.id),'.refract-build','main.synctex.gz'))).toString('utf8');
  assert.match(sync,/SyncTeX Version:/);assert.match(sync,/Input:\d+:.*main\.tex/);
+});
+
+test('pdfLaTeX skips an idle pass and retains passes that consume generated state', async t => {
+ const executable = path.join(process.env.REFRACT_TEX_BIN || 'missing-tex', 'pdflatex.exe');
+ try { await fs.access(executable); } catch { return t.skip('External TeX is not configured'); }
+ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'refract-compile-passes-'));
+ t.after(() => fs.rm(root, {recursive: true, force: true}));
+ const build = async (body: string) => {
+  await fs.writeFile(path.join(root, 'main.tex'), String.raw`\documentclass{article}\begin{document}` + body + String.raw`\end{document}`);
+  const result = await compile(root, {executable});
+  assert.equal(result.ok, true, result.log);
+  return result.log.split('This is pdfTeX').slice(1);
+ };
+ assert.equal((await build('A standalone paragraph.')).length, 1);
+ const references = await build(String.raw`\tableofcontents\section{Example}\label{sec:example}See Section~\ref{sec:example}.`);
+ assert.equal(references.length, 2);
+ assert.doesNotMatch(references[1], /undefined references/);
+ const generatedFile = await build(String.raw`\IfFileExists{refract-pass.dat}{Second pass.}{First pass.}
+\newwrite\refractdata
+\immediate\openout\refractdata=refract-pass.dat
+\immediate\write\refractdata{Generated state}
+\immediate\closeout\refractdata`);
+ assert.equal(generatedFile.length, 2);
+ await fs.writeFile(path.join(root, 'main.aux'), '\\relax\n');
+ assert.equal((await build('A paragraph in an imported project.')).length, 2);
 });
 
 test('compilation resolves BibTeX references with configured TeX', async t => {

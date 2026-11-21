@@ -340,11 +340,14 @@ function publishReadiness(): void {
 }
 function updateTrigger(): void {
   const id = activeId();
+  const signInRequired = !pending() && (!id || (id === 'codex' && !installed(id))) &&
+    provider.dataset.pickerStatus !== 'error' && provider.dataset.codexSignInRequired === 'true';
   const state = id && states[id];
   const model = id && selectedModel(id);
   const preferences = state?.preferences;
   let label = 'Choose a model';
   if (pending()) label = 'Checking providers…';
+  else if (signInRequired) label = 'Sign in';
   else if (!id) label = provider.dataset.pickerStatus === 'error' ? 'Provider check failed' : 'No providers found';
   else if (!installed(id)) label = `${labels[id]} unavailable`;
   else if (state.loadFailed) label = 'Preferences unavailable';
@@ -360,7 +363,8 @@ function updateTrigger(): void {
   const identity = model?.disambiguator ?? model?.source ?? '';
   const fullLabel = [id && installed(id) ? labels[id] : '', label, identity !== labels[id] || model?.disambiguator ? identity : '', options].filter(Boolean).join(' · ');
   trigger.replaceChildren();
-  if (id) trigger.append(providerLogo(id));
+  const logo = signInRequired ? 'codex' : id;
+  if (logo) trigger.append(providerLogo(logo));
   trigger.append(element('span', 'model-trigger-label', label));
   if (model?.disambiguator) trigger.append(element('span', 'model-trigger-options', identity));
   if (options && model && installed(id)) trigger.append(element('span', 'model-trigger-options', options));

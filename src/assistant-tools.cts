@@ -25,6 +25,14 @@ const MAX_BYTES = 2 * 1024 * 1024;
 const fileName = z.string().min(1).max(1024).refine(name => !name.split(/[\\/]/).some(part => part.startsWith('.')), 'Private project files are unavailable');
 const hash = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
 const result = (value: unknown) => ({content: [{type: 'text' as const, text: JSON.stringify(value)}]});
+interface Replacement { oldText: string; newText: string }
+const replacement = {oldText: z.string().min(1).max(MAX_BYTES), newText: z.string().max(MAX_BYTES)};
+const editSchema = {
+  path: fileName,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  ...replacement,
+  additional: z.array(z.object(replacement)).max(7).optional(),
+};
 const engineSelectionPolicy =
   'Choose the fastest LaTeX engine that fully meets the user, template, package, font, language and output requirements. ' +
   'For a speed request, check the document and template first. If they are compatible with pdfLaTeX and currently use XeLaTeX or LuaLaTeX, switch to pdfLaTeX and build, unless project timings favor another engine. ' +
@@ -68,15 +76,31 @@ function createWorkspaceTools(store: WorkspaceStore, id: string) {
       await store.destinationDir(id); const files = await store.files(id);
       return {files: files.slice(0, 10000), ...(files.length > 10000 ? {truncated: true} : {})};
     }),
-    edit: (name: string, expectedHash: string, oldText: string, newText: string) => serialize(async () => {
-      if (!oldText || oldText === newText) throw new Error('Supply a nonempty exact match and a different replacement');
+    edit: (name: string, expectedHash: string | undefined, oldText: string, newText: string, additional: Replacement[] = []) => serialize(async () => {
       const before = await read(name);
-      if (before.sha256 !== expectedHash) throw new Error('File changed since it was read; read again before editing');
-      const at = before.content.indexOf(oldText);
-      if (at < 0 || before.content.indexOf(oldText, at + 1) >= 0) throw new Error('Expected exactly one match; read the file and supply more context');
-      const content = before.content.slice(0, at) + newText + before.content.slice(at + oldText.length);
+      if (expectedHash !== undefined && before.sha256 !== expectedHash) throw new Error('File changed since it was read; read again before editing');
+      const crlf = before.content.includes('\r\n') && !/(^|[^\r])\n/.test(before.content);
+      const edits = [{oldText, newText}, ...additional].map(edit => {
+        if (crlf) {
+          edit = {oldText: edit.oldText.replace(/\r?\n/g, '\r\n'), newText: edit.newText.replace(/\r?\n/g, '\r\n')};
+        }
+        if (!edit.oldText || edit.oldText === edit.newText) throw new Error('Supply a nonempty exact match and a different replacement');
+        if (edit.newText.includes('\0') || Buffer.from(edit.newText).toString('utf8') !== edit.newText) throw new Error('Replacement must be valid Unicode text without NUL bytes');
+        const start = before.content.indexOf(edit.oldText);
+        if (start < 0 || before.content.indexOf(edit.oldText, start + 1) >= 0) throw new Error('Expected exactly one match; read the file and supply more context');
+        return {start, end: start + edit.oldText.length, text: edit.newText};
+      }).sort((a, b) => a.start - b.start);
+      let end = 0;
+      const parts: string[] = [];
+      for (const edit of edits) {
+        if (edit.start < end) throw new Error('Replacements overlap; supply disjoint passages');
+        parts.push(before.content.slice(end, edit.start), edit.text);
+        end = edit.end;
+      }
+      parts.push(before.content.slice(end));
+      const content = parts.join('');
       if (Buffer.byteLength(content) > MAX_BYTES) throw new Error('Edited file exceeds 2 MiB');
-      if (content.includes('\0') || Buffer.from(content).toString('utf8') !== content) throw new Error('Replacement must be valid Unicode text without NUL bytes');
+      if (Buffer.from(content).toString('utf8') !== content) throw new Error('Edit must preserve valid Unicode text');
       await store.write(id, name, content);
       const after = await read(name);
       if (after.content !== content) throw new Error('Edit verification failed; read the file again');
@@ -119,12 +143,31 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
       };
       const excerpt = (file:{path:string;sha256:string;content:string},offset=0,limit=16000)=>({path:file.path,sha256:file.sha256,offset,totalCharacters:file.content.length,nextOffset:offset+limit<file.content.length ? offset+limit : null,content:file.content.slice(offset,offset+limit)});
       const range = {offset:z.number().int().min(0).max(MAX_BYTES).default(0),limit:z.number().int().min(1).max(65536).default(16000)};
-      mcp.registerTool('project_read', {description: 'Read a bounded excerpt of project text (default 16000 characters). SHA-256 covers the whole file for editing. Follow nextOffset for more context.', inputSchema: {path: fileName,...range}}, async ({path,offset,limit}) => result(await track(async()=>excerpt(await workspace.read(path),offset,limit))));
+      mcp.registerTool('project_read', {
+        description: 'Read project text and its full-file SHA-256. Follow nextOffset for more text. With find, return context around an exact match starting at offset.',
+        inputSchema: {path: fileName, ...range, find: z.string().min(1).max(256).optional()},
+      }, async ({path,offset,limit,find}) => result(await track(async () => {
+        const file = await workspace.read(path);
+        if (find === undefined) return excerpt(file, offset, limit);
+        const matchOffset = file.content.indexOf(find, offset);
+        if (matchOffset < 0) return {...excerpt(file, offset, 0), nextOffset: null, matchOffset: null};
+        const before = Math.min(120, Math.floor((Math.max(limit, find.length) - find.length) / 2));
+        return {...excerpt(file, Math.max(0, matchOffset - before), Math.min(limit, Math.max(600, find.length))), matchOffset,
+          nextOffset: file.content.indexOf(find, matchOffset + 1) < 0 ? null : matchOffset + 1};
+      })));
       mcp.registerTool('project_read_many', {description:'Read up to 8 independent files in one call. Each excerpt defaults to 8000 characters; errors are reported per file. Prefer this to separate calls.',inputSchema:{paths:z.array(fileName).min(1).max(8),limit:z.number().int().min(1).max(8000).default(8000)}},async({paths,limit})=>result(await track(async()=>(await workspace.readMany(paths)).map(file=>'error' in file ? file : excerpt(file,0,limit)))));
       mcp.registerTool('project_list', {description: 'List project files directly, without starting a shell.', inputSchema: {}}, async () => result(await track(()=>workspace.list())));
-      mcp.registerTool('project_edit', {description: 'Apply one exact replacement and verify the saved file. Read first; use the returned SHA-256. Fails on stale content, zero matches, or multiple matches. Preserves all other bytes.', inputSchema: {path: fileName, sha256: z.string().regex(/^[0-9a-f]{64}$/), oldText: z.string().min(1).max(MAX_BYTES), newText: z.string().max(MAX_BYTES)}}, async ({path, sha256, oldText, newText}) => result(await track(()=>workspace.edit(path, sha256, oldText, newText))));
-      const editSchema=z.object({path:fileName,sha256:z.string().regex(/^[0-9a-f]{64}$/),oldText:z.string().min(1).max(MAX_BYTES),newText:z.string().max(MAX_BYTES)});
-      mcp.registerTool('project_edit_many',{description:'Apply up to 8 independent exact edits in one call. Each edit is verified separately; successes remain applied if another fails. Inspect every result. Build once after the complete batch.',inputSchema:{edits:z.array(editSchema).min(1).max(8)}},async({edits})=>result(await track(()=>Promise.all(edits.map(async edit=>{try{return await workspace.edit(edit.path,edit.sha256,edit.oldText,edit.newText);}catch(error){return {path:edit.path,applied:false,error:String(error.message)};}})))));
+      mcp.registerTool('project_edit', {
+        description: 'Replace unique exact text and verify the save. When path and old text are known, edit directly; if you read the file, supply its SHA-256. Use additional for disjoint replacements in the same file, validated together.',
+        inputSchema: editSchema,
+      }, async ({path,sha256,oldText,newText,additional}) => result(await track(() => workspace.edit(path,sha256,oldText,newText,additional))));
+      mcp.registerTool('project_edit_many',{
+        description:'Batch up to 8 files. Each file is verified independently; successful files stay changed if another fails.',
+        inputSchema:{edits:z.array(z.object(editSchema)).min(1).max(8)},
+      },async({edits})=>result(await track(()=>Promise.all(edits.map(async edit=>{
+        try {return await workspace.edit(edit.path,edit.sha256,edit.oldText,edit.newText,edit.additional);}
+        catch(error) {return {path:edit.path,applied:false,error:String(error.message)};}
+      })))));
       if(options.history)mcp.registerTool('conversation_read',{description:'Read a bounded page of earlier messages in the active conversation when the handoff excerpt is insufficient.',inputSchema:{offset:z.number().int().min(0).default(0),limit:z.number().int().min(1).max(16000).default(8000)}},async({offset,limit})=>result(await track(async()=>{
         const {messages}=await options.history!();const text=messages.filter(m=>m.role==='user'||m.role==='assistant').map(m=>`${m.role}: ${m.text || ''}${m.attachments?.length ? '\nAttachments: '+m.attachments.map(a=>`.refract-attachments/${a.token} (${a.name})`).join(', ') : ''}`).join('\n\n');
         return {offset,nextOffset:offset+limit<text.length ? offset+limit : null,totalCharacters:text.length,content:text.slice(offset,offset+limit)};
@@ -172,7 +215,7 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
     connection: {url: `http://127.0.0.1:${address.port}/mcp`, token},
     hasSuccessfulBuild: () => successfulBuild,
     engineInstructions,
-    instructions: 'Use refract project_list, project_read, and project_edit for direct project operations. Prefer project_read_many and project_edit_many to batch independent files into one tool call. Read only relevant excerpts; follow nextOffset when needed. Each edit needs the full-file SHA-256 from a read. Inspect every batch result: successful edits remain applied if another fails. On a failed edit, read again and correct the match before retrying. Use conversation_read for older conversation context omitted from a handoff excerpt. Use build and package_lookup for the configured TeX environment. Finish a coherent batch of edits before building once; reuse a successful unchanged result. Use force=true if a new compiler run is explicitly needed. Keep shell output targeted and bounded; batch independent commands. Never claim success without checking the result. Inspect build warnings; logTruncated indicates a shortened log and logLimit can request more. Do not claim visual inspection unless performed. Never install into or modify shared TinyTeX. If a dependency is unavailable, explain the blocker or use a suitable project-local dependency with its license; do not remove document content solely to compile.' +
+     instructions: 'Prefer refract tools. Edit directly when the request gives the file and exact old text. Otherwise read targeted context (find for known text), then edit with the returned SHA-256. Batch files with *_many and same-file replacements with additional. A successful edit verifies the save. On failure, reread before retrying; check each batch result. Use conversation_read for omitted history. Use build for requested compilation; batch edits first and check warnings. Only claim visual inspection if performed. Preserve document content and shared TinyTeX; report missing dependencies or use a licensed project-local copy.' +
       (engineInstructions ? ' ' + engineInstructions : ''),
     close() { return closeJob ??= (async () => {
       closing = true;
