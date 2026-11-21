@@ -84,6 +84,8 @@ test('pdfLaTeX skips an idle pass and retains passes that consume generated stat
 \immediate\write\refractdata{Generated state}
 \immediate\closeout\refractdata`);
  assert.equal(generatedFile.length, 2);
+ await fs.writeFile(path.join(root, 'main.aux'), '\\relax\n');
+ assert.equal((await build('A paragraph in an imported project.')).length, 2);
 });
 
 test('compilation resolves BibTeX references with configured TeX', async t => {

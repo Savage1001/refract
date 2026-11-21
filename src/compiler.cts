@@ -6,6 +6,14 @@ import sources = require('./source-cache.cjs');
 const {mapLimited} = sources;
 const { cancelProcess } = require('./chat.cjs');
 
+type CompileResult = {
+  ok: boolean;
+  log: string;
+  exitCode: number | null;
+  arguments?: string[];
+  pdf?: string;
+};
+
 async function validateBuildDirectory(root: string): Promise<void> {
   const info = await fs.lstat(root);
   if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('Invalid compilation directory');
@@ -41,12 +49,18 @@ async function firstPassComplete(projectDir: string, outputDir: string, executab
     if (!info.isFile() || info.nlink > 1 || info.size > 8 * 1024 * 1024) return false;
     const files = await fs.readFile(recorder, 'utf8');
     const standardOutputs = new Set(['main.aux', 'main.log', 'main.pdf', 'main.xdv'].map(name => path.join(outputDir, name)));
-    const outputs = new Set(files.split(/\r?\n/).filter(line => line.startsWith('OUTPUT '))
+    const records = files.split(/\r?\n/);
+    const auxPath = path.join(outputDir, 'main.aux');
+    // Imported projects can contain an old main.aux that TeX reads before
+    // creating the new one. The next pass will see the new contents instead.
+    if (records.some(line => /^INPUT (?:.*[\\/])?main\.aux$/i.test(line) &&
+        path.resolve(projectDir, line.slice(6)) !== auxPath)) return false;
+    const outputs = new Set(records.filter(line => line.startsWith('OUTPUT '))
       .map(line => path.resolve(projectDir, line.slice(7))));
     // A package may write a state file without using the main aux or logging a
     // warning. Keep the second pass whenever the recorder lists extra outputs,
     // except LuaLaTeX's transient font-cache write probe outside the project.
-    if (!outputs.has(path.join(outputDir, 'main.aux'))) return false;
+    if (!outputs.has(auxPath)) return false;
     for (const file of outputs) {
       if (standardOutputs.has(file)) continue;
       const relative = path.relative(projectDir, file);
@@ -73,7 +87,10 @@ async function runCompilerProcess(command:string, commandArgs:string[], cwd:stri
     child.on('close',code=>{signal?.removeEventListener('abort',cancel);resolve({code:cancelled ? null : code,output:cancelled ? output+'\nCompilation cancelled.' : output});});
   });
 }
-async function compile(projectDir: string, options: { executable?: string; rootFile?: string; draftMode?: boolean; signal?:AbortSignal } = {}) {
+async function compile(
+  projectDir: string,
+  options: {executable?: string; rootFile?: string; draftMode?: boolean; signal?: AbortSignal} = {}
+): Promise<CompileResult> {
   if (options.signal?.aborted) return {ok:false,log:'Compilation cancelled.',exitCode:null};
   const rootInfo=await fs.lstat(projectDir);
   if(rootInfo.isSymbolicLink() || !rootInfo.isDirectory())throw new Error('Invalid project directory');
