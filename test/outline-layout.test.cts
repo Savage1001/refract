@@ -13,6 +13,9 @@ for (const theme of ['light', 'dark'] as const) {
     for (const expanded of [false,true]) {
      const toggle = page.locator('#outline-toggle');
      if (await toggle.getAttribute('aria-expanded') !== String(expanded)) await toggle.click();
+     await page.locator('#outline-list').evaluate(async list => {
+      await Promise.allSettled(list.getAnimations().map(animation => animation.finished));
+     });
      const geometry = await page.locator('#outline').evaluate(el => {
       const sidebar = document.querySelector<HTMLElement>('.sidebar')!;
       const bounds = sidebar.getBoundingClientRect();

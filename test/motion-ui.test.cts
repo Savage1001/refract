@@ -257,51 +257,52 @@ test('Find and the composer show keyboard focus immediately and motion can be di
   }
 });
 
-test('folder keyboard order and sidebar exit hit testing match the live layout', {timeout:20000}, async () => {
+test('folder motion preserves sibling hit targets and keyboard order on reversal', {timeout:20000}, async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
     await page.evaluate(() => {
       const state = (window as unknown as {fixture:{files:Record<string,string>}}).fixture;
       state.files['z-last.tex'] = '% A file after the folder';
-      state.files['z-next.tex'] = '% The next moving sibling';
       for (let index = 0; index < 4; index++) state.files[`sections/notes-${index}.tex`] = '% Nested notes';
     });
     await openProject(page);
     const folder = page.locator('#file-list summary').first();
-    const exit = await folder.evaluate((summary: HTMLElement) => {
+    const exit = await folder.evaluate((summary:HTMLElement) => {
       const details = summary.parentElement as HTMLDetailsElement;
-      if (!details.open) summary.click();
-      getComputedStyle(details, '::details-content').clipPath;
+      const content = details.querySelector<HTMLElement>('.folder-content')!;
       const next = document.querySelector<HTMLButtonElement>('#file-list button[title="z-last.tex"]')!;
       const oldTop = next.getBoundingClientRect().top;
       summary.click();
-      const style = getComputedStyle(details, '::details-content');
+      const motion = content.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      motion.pause();
+      motion.currentTime = 0;
+      const startTop = next.getBoundingClientRect().top;
+      motion.currentTime = 70;
       const {left,top,width,height} = next.getBoundingClientRect();
-      const state = {position:style.position, pointer:style.pointerEvents,
-        paintingExit:!details.open && style.contentVisibility === 'visible' && style.clipPath !== 'inset(0px 0px 100%)',
-        continuousTop:Math.abs(oldTop-top) < 1,
-        siblingMoving:next.parentElement!.getAnimations().some(animation => animation.id === 'refract-motion'),
-        liveFileOwnsPointer:next.contains(document.elementFromPoint(left+width/2, top+height/2)),
-        liveFileHasBacking:getComputedStyle(next.parentElement!).backgroundColor !== 'rgba(0, 0, 0, 0)'};
-      // Reopen during an observable mid-fold frame, independently of test runner timing.
-      for (const animation of document.getElementById('file-list')!.getAnimations({subtree:true})) {
-        if (animation.id !== 'refract-motion') continue;
-        animation.pause();
-        animation.currentTime = 50;
-      }
-      return state;
+      const state = {
+        closing:!details.open && content.inert,
+        continuousTop:Math.abs(oldTop - startTop) < 1,
+        siblingMoving:top < startTop,
+        liveFileOwnsPointer:next.contains(document.elementFromPoint(left + width / 2, top + height / 2))
+      };
+      summary.click();
+      const reopening = content.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      reopening.pause();
+      reopening.currentTime = 0;
+      return {...state, reopened:details.open && !content.inert,
+        continuousReversal:Math.abs(top - next.getBoundingClientRect().top) < 1};
     });
-    assert.deepEqual(exit, {position:'absolute', pointer:'none', paintingExit:true, continuousTop:true,
-      siblingMoving:true, liveFileOwnsPointer:true, liveFileHasBacking:true});
-    await folder.press('Enter');
+    assert.deepEqual(exit, {closing:true, continuousTop:true, siblingMoving:true, liveFileOwnsPointer:true,
+      reopened:true, continuousReversal:true});
+    await folder.focus();
     await page.keyboard.press('Tab');
     assert.deepEqual(await page.locator('#file-list button[title="sections/abstract.tex"]').evaluate(file => {
       const {left,top,width,height} = file.getBoundingClientRect();
-      return {focused:file === document.activeElement, opacity:getComputedStyle(file.closest('details')!, '::details-content').opacity,
-        ownsPointer:file.contains(document.elementFromPoint(left+width/2, top+height/2)),
-        siblingSettled:document.querySelector('#file-list button[title="z-last.tex"]')!.parentElement!
-          .getAnimations().every(animation => animation.id !== 'refract-motion')};
-    }), {focused:true, opacity:'1', ownsPointer:true, siblingSettled:true});
+      const content = file.closest('.folder-content')!;
+      return {focused:file === document.activeElement,
+        ownsPointer:file.contains(document.elementFromPoint(left + width / 2, top + height / 2)),
+        settled:!content.hasAttribute('data-disclosure-motion')};
+    }), {focused:true, ownsPointer:true, settled:true});
     await page.keyboard.press('Tab');
     const action = page.getByRole('button', {name:'Actions for sections/abstract.tex',exact:true});
     assert.deepEqual(await action.evaluate(button => ({
@@ -309,17 +310,6 @@ test('folder keyboard order and sidebar exit hit testing match the live layout',
     })), {focused:true, opacity:'1'});
     await page.locator('#file-list button[title="main.tex"]').click();
     await page.locator('#outline-list button').first().waitFor();
-    const outline = page.locator('#outline-list');
-    await page.locator('#outline-toggle').click();
-    assert.deepEqual(await outline.evaluate(list => {
-      const toggle = document.getElementById('outline-toggle')!;
-      const {left,top,width,height} = toggle.getBoundingClientRect();
-      return {hidden:(list as HTMLElement).hidden, display:getComputedStyle(list).display,
-        rowRectangles:list.querySelector('button')!.getClientRects().length,
-        ownsPointer:toggle.contains(document.elementFromPoint(left+width/2, top+height/2))};
-    }), {hidden:true, display:'none', rowRectangles:0, ownsPointer:true});
-    await page.locator('#outline-toggle').click();
-    assert.equal(await outline.isVisible(), true);
     const files = await page.evaluate(() => {
       const files = document.getElementById('files-surface')!;
       const chats = document.getElementById('chat-list')!;
@@ -363,23 +353,19 @@ test('normal-speed file row edge presses keep the pointer-down frame and open th
       summary.click();
       const list = document.getElementById('file-list')!;
       const first = list.querySelector<HTMLButtonElement>('button[title="z-first.tex"]')!;
-      const rows = list.getAnimations({subtree:true}).filter(animation => animation.id === 'refract-motion');
-      // Seek into the closing motion so the press never depends on how soon the
-      // CI runner delivers the first animation frame. Leave playback at 1×.
-      for (const animation of rows) {
-        animation.pause();
-        animation.currentTime = 120;
-      }
-      await Promise.all(rows.map(animation => animation.ready));
-      window.addEventListener('pointermove', () => {
-        for (const animation of rows) animation.play();
-      }, {capture:true, once:true});
+      const content = summary.nextElementSibling!;
+      const animation = content.getAnimations().find(candidate => candidate.id === 'refract-motion')!;
+      // Seek to a deterministic closing frame, then resume at normal speed.
+      animation.pause();
+      animation.currentTime = 120;
+      await animation.ready;
+      window.addEventListener('pointermove', () => animation.play(), {capture:true, once:true});
       const read = (event:PointerEvent) => {
         if (!(event.target instanceof Element)) return;
         const file = event.target.closest<HTMLButtonElement>('button[data-path]');
         list.dataset[`${event.type}File`] = file?.dataset.path ?? '';
-        list.dataset[`${event.type}Times`] = JSON.stringify(rows.map(animation => animation.currentTime));
-        list.dataset[`${event.type}Speeds`] = JSON.stringify(rows.map(animation => animation.playbackRate));
+        list.dataset[`${event.type}Time`] = String(animation.currentTime);
+        list.dataset[`${event.type}Speed`] = String(animation.playbackRate);
       };
       // Window capture samples the live frame before the renderer's document listener.
       window.addEventListener('pointerdown', read, {capture:true, once:true});
@@ -391,15 +377,14 @@ test('normal-speed file row edge presses keep the pointer-down frame and open th
     const result = await page.locator('#file-list').evaluate(list => {
       const values = (list as HTMLElement).dataset;
       return {down:values.pointerdownFile, up:values.pointerupFile,
-        downTimes:JSON.parse(values.pointerdownTimes ?? '[]') as number[],
-        upTimes:JSON.parse(values.pointerupTimes ?? '[]') as number[],
-        speeds:JSON.parse(values.pointerdownSpeeds ?? '[]') as number[]};
+        downTime:Number(values.pointerdownTime), upTime:Number(values.pointerupTime),
+        speed:Number(values.pointerdownSpeed)};
     });
     assert.equal(result.down, 'z-first.tex');
     assert.equal(result.up, result.down);
-    assert.deepEqual(result.speeds, [1,1]);
-    assert.ok(result.downTimes.every(time => time >= 120 && time < 200));
-    assert.deepEqual(result.upTimes, result.downTimes, 'Both rows must freeze at their pointer-down frame');
+    assert.equal(result.speed, 1);
+    assert.ok(result.downTime >= 120 && result.downTime < 200);
+    assert.equal(result.upTime, result.downTime, 'The region must stay frozen at its pointer-down frame');
     await page.waitForFunction(() => document.querySelector('#file-list button.active-file')?.getAttribute('data-path') === 'z-first.tex');
     assert.equal(await page.locator('#source').inputValue(), '% First moving file');
     assert.deepEqual(errors, []);
@@ -649,7 +634,7 @@ test('a delayed Tools result leaves a newer layout fade in charge', {timeout:150
   }
 });
 
-test('large folder collapse leaves native layout and paints no retained rows', {timeout:30000}, async context => {
+test('large folders animate the visible extent and restore the full scroll range', {timeout:30000}, async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
     await page.evaluate(() => {
@@ -662,25 +647,106 @@ test('large folder collapse leaves native layout and paints no retained rows', {
     });
     await openProject(page);
     const folder = page.locator('#file-list summary').first();
-    const collapse = () => folder.evaluate(async (summary:HTMLElement) => {
+    const result = await folder.evaluate(async (summary:HTMLElement) => {
       const details = summary.closest('details')!;
-      const following = document.querySelector('#file-list button[title="z-0000.tex"]')!;
-      const start = await new Promise<number>(resolve => requestAnimationFrame(resolve));
+      const content = details.querySelector<HTMLElement>('.folder-content')!;
+      const fileList = document.getElementById('file-list')!;
+      const viewport = fileList.getBoundingClientRect();
+      const available = viewport.bottom - summary.getBoundingClientRect().bottom;
+      const natural = content.getBoundingClientRect().height;
+      const motion = () => content.getAnimations().find(animation => animation.id === 'refract-motion')!;
       summary.click();
-      const disclosure = getComputedStyle(details, '::details-content').contentVisibility;
-      const {left,top,width,height} = following.getBoundingClientRect();
-      const ownsPointer = following.contains(document.elementFromPoint(left+width/2, top+height/2));
-      const moving = following.parentElement!.getAnimations().some(animation => animation.id === 'refract-motion');
-      const next = await new Promise<number>(resolve => requestAnimationFrame(resolve));
-      return {closed:!details.open, disclosure, ownsPointer, moving, firstFrame:Math.round(next-start)};
+      const closing = motion();
+      closing.pause();
+      const duration = Number(closing.effect!.getTiming().duration);
+      closing.currentTime = 0;
+      const closedStart = content.getBoundingClientRect().height;
+      closing.currentTime = duration / 2;
+      const closedMid = content.getBoundingClientRect().height;
+      const hasExit = !details.open && content.inert &&
+        getComputedStyle(details, '::details-content').contentVisibility === 'visible';
+      closing.finish();
+      await closing.finished;
+      const closed = getComputedStyle(details, '::details-content').contentVisibility === 'hidden' &&
+        !content.hasAttribute('data-disclosure-motion');
+      summary.click();
+      const opening = motion();
+      opening.pause();
+      opening.currentTime = duration / 2;
+      const openedMid = content.getBoundingClientRect().height;
+      opening.currentTime = duration;
+      const openedEnd = content.getBoundingClientRect().height;
+      opening.finish();
+      await opening.finished;
+      return {natural,available,closedStart,closedMid,closed,hasExit,openedMid,openedEnd,
+        intrinsic:content.getBoundingClientRect().height, running:motion() !== undefined};
     });
-    const animated = await collapse();
+    assert.ok(result.natural > result.available * 10);
+    assert.ok(Math.abs(result.closedStart - result.available) < 1);
+    assert.ok(result.closedMid > 0 && result.closedMid < result.available);
+    assert.equal(result.hasExit, true);
+    assert.equal(result.closed, true);
+    assert.ok(result.openedMid > 0 && result.openedMid < result.available);
+    assert.ok(Math.abs(result.openedEnd - result.available) < 1);
+    assert.equal(result.intrinsic, result.natural);
+    assert.equal(result.running, false);
+
     await page.emulateMedia({reducedMotion:'reduce'});
     await folder.press('Enter');
-    const reduced = await collapse();
-    for (const {closed, disclosure, ownsPointer, moving} of [animated, reduced])
-      assert.deepEqual({closed, disclosure, ownsPointer, moving}, {closed:true, disclosure:'hidden', ownsPointer:true, moving:false});
-    context.diagnostic(`Large folder collapse first sampled frame: ${animated.firstFrame} ms with motion, ${reduced.firstFrame} ms with reduced motion.`);
+    assert.deepEqual(await folder.evaluate(summary => {
+      const details = summary.closest('details')!;
+      return {open:details.open, content:getComputedStyle(details, '::details-content').contentVisibility,
+        animating:details.querySelector('.folder-content')!.hasAttribute('data-disclosure-motion')};
+    }), {open:false, content:'hidden', animating:false});
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a long outline moves smoothly, reverses in place, and yields to keyboard focus and reduced motion', {timeout:20000}, async () => {
+  const source = Array.from({length:600}, (_, index) => `\\section{Heading ${index}}`).join('\n');
+  const {browser, page, errors} = await fixture.openHeadlessUi('dark', {source, pdf:''});
+  try {
+    await openProject(page);
+    const toggle = page.locator('#outline-toggle');
+    const result = await toggle.evaluate((button:HTMLButtonElement) => {
+      const list = document.getElementById('outline-list')!;
+      const before = button.getBoundingClientRect().top;
+      const scrolls = list.scrollHeight > list.clientHeight;
+      list.querySelector('button')!.focus();
+      button.click();
+      const motion = () => list.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      const exit = motion();
+      exit.pause();
+      exit.currentTime = 0;
+      const start = button.getBoundingClientRect().top;
+      exit.currentTime = Number(exit.effect!.getTiming().duration) / 2;
+      const mid = button.getBoundingClientRect().top;
+      const closed = list.inert && !list.hidden && document.activeElement === button &&
+        button.getAttribute('aria-expanded') === 'false';
+      button.click();
+      const entry = motion();
+      entry.pause();
+      entry.currentTime = 0;
+      const reversed = button.getBoundingClientRect().top;
+      return {scrolls,continuous:Math.abs(before - start) < 1, moved:mid > start, closed,
+        continuousReversal:Math.abs(reversed - mid) < 1, opening:!list.inert && button.getAttribute('aria-expanded') === 'true'};
+    });
+    assert.deepEqual(result, {scrolls:true, continuous:true, moved:true, closed:true, continuousReversal:true, opening:true});
+    await page.keyboard.press('Tab');
+    const first = page.getByRole('button', {name:'Heading 0', exact:true});
+    await first.waitFor();
+    assert.equal(await first.evaluate(row => row === document.activeElement), true);
+    const outline = page.locator('#outline-list');
+    assert.equal(await outline.getAttribute('data-disclosure-motion'), null);
+    await toggle.press('Enter');
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await outline.waitFor({state:'hidden'});
+    assert.equal(await outline.getAttribute('data-disclosure-motion'), null);
+    await toggle.press('Enter');
+    assert.equal(await outline.isVisible(), true);
+    assert.equal(await outline.getAttribute('data-disclosure-motion'), null);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
@@ -737,30 +803,37 @@ test('sidebar motion does not repeatedly lay out a 24-page PDF', {timeout:30000}
       });
       return {...frames, layouts:(await layoutCount()) - before};
     };
-    const toggleFolders = async () => {
-      const before = await layoutCount();
-      await page.locator('#file-list summary').first().evaluate(async (folder: HTMLElement) => {
-        for (let toggle = 0; toggle < 8; toggle++) {
-          folder.click();
-          await new Promise(resolve => setTimeout(resolve, 165));
-        }
-      });
-      return (await layoutCount()) - before;
-    };
     const animated = await cycle();
-    const animatedFolders = await toggleFolders();
+    const disclosureGeometry = await page.evaluate(async () => {
+      const canvases = [...document.querySelectorAll('.pdf-pages canvas')];
+      const surfaces = [document.getElementById('source')!, ...canvases];
+      const geometry = () => JSON.stringify(surfaces.map(surface => surface.getBoundingClientRect().toJSON()));
+      const before = geometry();
+      const folder = document.querySelector<HTMLElement>('#file-list summary')!;
+      const outline = document.getElementById('outline-toggle')!;
+      for (const trigger of [folder, outline]) {
+        trigger.click();
+        const surface = document.querySelector('[data-disclosure-motion]')!;
+        const animation = surface.getAnimations().find(candidate => candidate.id === 'refract-motion')!;
+        animation.pause();
+        animation.currentTime = Number(animation.effect!.getTiming().duration) / 2;
+        if (geometry() !== before) return false;
+        animation.finish();
+        await animation.finished;
+        if (geometry() !== before) return false;
+      }
+      return true;
+    });
     await page.emulateMedia({reducedMotion:'reduce'});
     const reduced = await cycle();
-    const reducedFolders = await toggleFolders();
     context.diagnostic(`24-page PDF, collapse + expand: ${animated.layouts} animated layouts / ${reduced.layouts} reduced-motion layouts. Longest sampled frames: ${animated.longestFrame} ms / ${reduced.longestFrame} ms.`);
     assert.ok(animated.expanded > animated.collapsed);
     assert.equal(animated.movingEdge, true);
     assert.equal(animated.panelMoving, true);
     assert.equal(animated.edgeStartsAtOldSide, true);
     assert.equal(animated.overflow, false);
-    assert.ok(animated.layouts <= reduced.layouts + 6, 'Motion must not drive renderer layout on every frame');
-    context.diagnostic(`Eight folder toggles: ${animatedFolders} animated layouts / ${reducedFolders} reduced-motion layouts.`);
-    assert.ok(animatedFolders <= reducedFolders + 6, 'Folder motion must leave native disclosure layout unanimated');
+    assert.ok(animated.layouts <= reduced.layouts + 6, 'Sidebar width motion must not drive renderer layout on every frame');
+    assert.equal(disclosureGeometry, true, 'Disclosure motion must leave the editor and PDF geometry unchanged');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

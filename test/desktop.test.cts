@@ -111,7 +111,7 @@ test('desktop creates, edits, compiles and reopens a project', { timeout: 90000 
  await page.getByRole('button', {name:'Close pixel.png'}).click();
  assert.equal(await page.locator('#file-tabs .file-tab').count(), 1);
  await page.locator('#outline-toggle').click();
- assert.equal(await page.locator('#outline-list').isHidden(), true);
+ await page.locator('#outline-list').waitFor({state:'hidden'});
  await page.locator('#outline-toggle').click();
  await page.locator('#project-name').click();
  await page.locator('#rename-name').fill('Research paper');
