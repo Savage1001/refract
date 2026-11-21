@@ -20,6 +20,7 @@ test('desktop wires direct tools into both providers, saves compiler changes and
     ChatService.prototype.send = function(...args) {
       const runner = async (_cwd,_session,prompt,_images,_signal,_progress,_persist,options) => {
         if (!options.tools || !prompt.includes('project_edit')) throw new Error('Missing direct tool capability');
+        if (!prompt.includes('Choose the fastest LaTeX engine that fully meets')) throw new Error('Missing engine selection guidance');
         const connection = options.tools;
         const call = async (name,arguments_) => {
           const response = await fetch(connection.url,{method:'POST',headers:{Authorization:`Bearer ${connection.token}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:arguments_}})});

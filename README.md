@@ -87,7 +87,7 @@ The package lookup uses the configured `kpsewhich` with the project working dire
 
 ### Fast assistant tools
 
-The assistant can use `project_set_engine` to switch the current project between pdfLaTeX, XeLaTeX and LuaLaTeX when the document requires a different compiler. The selection is saved in Project Info and used by subsequent editor and assistant builds.
+The assistant can use `project_set_engine` to select the fastest compiler that meets the document’s requirements. It checks the build after switching between pdfLaTeX, XeLaTeX and LuaLaTeX. The selection is saved in Project Info and used by subsequent editor and assistant builds.
 
 Both providers receive a temporary authenticated MCP connection named `refract` for each response. `project_list`, `project_read`, and `project_edit` operate directly on the active project, avoiding a new shell process for each file operation. `project_read_many` and `project_edit_many` batch up to eight independent files into one call. `build` and `package_lookup` call the configured build interface directly. The connection expires when the response finishes, including cancellation; a resumed conversation receives a fresh connection. The token is supplied through the provider process environment or per-thread app-server configuration, and is not saved in Refract chat or project configuration.
 
