@@ -1,6 +1,7 @@
 import path = require('node:path');
 import url = require('node:url');
 import playwright = require('playwright');
+import type { BrowserContextOptions } from 'playwright';
 
 interface ReviewProject { id:string; name:string; rootFile:string; created:string; engine:string; draftMode:boolean }
 interface ReviewComment { id:string; file:string; quote:string; text:string; resolved:boolean; created:string; replies:{text:string}[] }
@@ -72,16 +73,18 @@ function installFixture(data:{pdf:string; source:string}):void {
  };
 }
 
-function fixtureDocument(): {pdf:string;source:string} {
+function fixtureDocument(pageCount: number): {pdf:string;source:string} {
  const source='\\documentclass[11pt]{article}\n\\usepackage[margin=1in]{geometry}\n\\title{Spectral methods}\n\\author{Research notes}\n\\date{Working draft}\n\\begin{document}\n\\maketitle\n\\section{Introduction}\nA stable spectral approximation for fluid dynamics.\n\\end{document}\n';
  // This fixture exercises real PDF rendering independently of the installed compiler.
  const stream = 'BT /F1 24 Tf 72 690 Td (Spectral methods) Tj /F1 12 Tf 0 -28 Td (Research notes) Tj 0 -20 Td (Working draft) Tj /F1 16 Tf 0 -52 Td (1 Introduction) Tj /F1 12 Tf 0 -25 Td (A stable spectral approximation for fluid dynamics.) Tj ET\n';
+ const pages = Array.from({length:pageCount}, (_, index) => `${index + 5} 0 R`).join(' ');
  const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
-  '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
-  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+  `<< /Type /Pages /Count ${pageCount} /Kids [${pages}] >>`,
   '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>',
-  `<< /Length ${stream.length} >>\nstream\n${stream}endstream`
+  `<< /Length ${stream.length} >>\nstream\n${stream}endstream`,
+  ...Array.from({length:pageCount}, () =>
+   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>')
  ];
  let pdf = '%PDF-1.4\n';
  const offsets = objects.map((object, index) => {
@@ -94,12 +97,14 @@ function fixtureDocument(): {pdf:string;source:string} {
  return {pdf:Buffer.from(pdf, 'ascii').toString('base64'),source};
 }
 
-async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: {pdf:string;source:string}) {
+async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: {pdf:string;source:string},
+  options: Pick<BrowserContextOptions, 'reducedMotion' | 'recordVideo' | 'viewport'> & {pageCount?:number} = {}) {
  const browser=await playwright.chromium.launch({channel:'msedge',headless:true,args:['--allow-file-access-from-files']});
  try {
-  const context=await browser.newContext({viewport:{width:1440,height:900},colorScheme,locale:'en-US',timezoneId:'UTC'});
+  const {pageCount = 1, ...contextOptions} = options;
+  const context=await browser.newContext({viewport:{width:1440,height:900},colorScheme,locale:'en-US',timezoneId:'UTC', ...contextOptions});
   await context.route(/^https?:/,route=>route.abort());
-  await context.addInitScript(installFixture,fixtureData ?? fixtureDocument());
+  await context.addInitScript(installFixture,fixtureData ?? fixtureDocument(pageCount));
   const page=await context.newPage();const errors:string[]=[];
   page.on('pageerror',error=>errors.push(error.message));
   page.on('dialog',dialog=>{errors.push(dialog.message());void dialog.dismiss();});

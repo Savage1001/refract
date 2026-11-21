@@ -114,9 +114,9 @@ test('headless selected states and picker dismissal agree', {timeout:60000}, asy
    const favorite=catalog.locator('.model-favorite');
    await favorite.click();assert.equal(await favorite.evaluate(el=>el===document.activeElement),true);
    await choice.click();const effort=page.getByRole('radio',{name:'High',exact:true});await effort.click();assert.equal(await effort.evaluate(el=>el===document.activeElement),true);
-   await page.getByRole('button',{name:'Close model picker',exact:true}).focus();await page.keyboard.press('Tab');assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');
+   await page.getByRole('button',{name:'Close model picker',exact:true}).focus();await page.keyboard.press('Tab');await page.locator('.model-panel').waitFor({state:'hidden'});assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');
    await page.locator('.model-trigger').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').evaluate(el=>el===document.activeElement),true);
-   await page.locator('.model-trigger').click();await page.locator('#source').click({position:{x:10,y:10}});assert.equal(await page.locator('.model-panel').isVisible(),false);assert.equal(await page.locator('#source').evaluate(el=>el===document.activeElement),true);
+   await page.locator('.model-trigger').click();await page.locator('#source').click({position:{x:10,y:10}});await page.locator('.model-panel').waitFor({state:'hidden'});assert.equal(await page.locator('#source').evaluate(el=>el===document.activeElement),true);
    await page.locator('.model-trigger').click();await page.locator('#pane-editor').click();await page.locator('#pane-agent').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.model-trigger').getAttribute('aria-expanded'),'false');await page.locator('#pane-editor').click();await page.locator('#pane-agent').click();
   }
   assert.deepEqual(errors,[]);
@@ -219,7 +219,7 @@ test('headless sidebar action geometry and explicit workspace layouts', {timeout
 
 test('headless icon controls share idle and hover colors in both themes', {timeout:60000}, async()=>{
  for (const theme of ['light','dark'] as const) {
-  const {browser,page}=await fixture.openHeadlessUi(theme,{pdf:'',source:'% Icon appearance sample'});
+  const {browser,page}=await fixture.openHeadlessUi(theme,{pdf:'',source:'% Icon appearance sample'},{reducedMotion:'reduce'});
   try {
    const colors=await page.locator('html').evaluate(el=>{
     const style=getComputedStyle(el);
@@ -279,7 +279,7 @@ test('headless project search has its own row and retains content search', {time
    assert.equal(await search.inputValue(),'');
    assert.equal(await search.evaluate(el=>el===document.activeElement),true);
    await page.locator('#chats-tab').click();
-   assert.equal(await search.isVisible(),false);
+   await search.waitFor({state:'hidden'});
    await page.locator('#files-tab').click();
    assert.equal(await search.isVisible(),true);
    await page.locator('.sidebar').evaluate(el=>(el as HTMLElement).style.setProperty('--sidebar-width','150px'));
@@ -461,6 +461,7 @@ test('headless project actions duplicate the selected home project in either vie
   for(const view of ['list','grid']) {
    await page.locator(`#${view}-view`).click();
    await actions.press('Enter');
+   await duplicate.waitFor();
    assert.equal(await duplicate.locator('svg[aria-hidden="true"]').count(),1);
    assert.equal(await remove.locator('svg[aria-hidden="true"]').count(),1);
    await duplicate.click();

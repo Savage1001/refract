@@ -308,6 +308,13 @@ body:has(#projects:not([hidden])) .app-titlebar {
   min-height:0;
 }
 
+#sidebar-content,#files-surface {
+  display:flex;
+  flex:1;
+  flex-direction:column;
+  min-height:0;
+}
+
 .tabs {
   display:flex;
   align-items:center;
@@ -2057,8 +2064,13 @@ main {
   .model-panel :is(button,input,select):focus-visible { outline-color:Highlight; }
 }
 .model-panel .model-search input:focus-visible { outline:none; }
+.model-search:has(input:focus-visible) {
+  outline:2px solid var(--picker-focus);
+  outline-offset:1px;
+}
 @media(forced-colors:active) {
   .model-search:focus-within { border-color:Highlight; }
+  .model-search:has(input:focus-visible) { outline-color:Highlight; }
 }
 .model-panel-compact { height:auto; min-height:min(214px,var(--picker-height,214px)); }
 .model-panel-compact .model-content { flex:1 1 auto; grid-template-columns:40px minmax(0,1fr); }
@@ -3300,4 +3312,285 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 }
 
 .settings-section { border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:14px; }
+
+.sidebar:has(>.sidebar-motion-edge) { border-right-color:transparent; }
+.find-exit-edge {
+  position:absolute;
+  z-index:1;
+  inset:0 0 auto;
+  height:1px;
+  background:var(--accent);
+  opacity:0;
+  pointer-events:none;
+}
+
+.sidebar-motion-surface {
+  position:absolute;
+  z-index:0;
+  inset:0;
+  background:color-mix(in srgb, var(--sidebar), var(--text) 12%);
+  transform-origin:left;
+  opacity:0;
+  pointer-events:none;
+}
+
+.sidebar:has(>.sidebar-motion-surface) #project-side { position:relative; z-index:1; }
+
+.sidebar-motion-edge {
+  position:absolute;
+  z-index:2;
+  inset-block:0;
+  right:-1px;
+  width:1px;
+  background:var(--border);
+  pointer-events:none;
+}
+@media (forced-colors:active) {
+  .sidebar-motion-edge { forced-color-adjust:none; background:CanvasText; }
+}
+
+@media (prefers-reduced-motion:no-preference) {
+  :root {
+    --motion-control-ms:120;
+    --motion-control:calc(var(--motion-control-ms) * 1ms);
+    --motion-overlay:150ms;
+    --motion-layout-ms:200;
+    --motion-layout:calc(var(--motion-layout-ms) * 1ms);
+    --motion-ease:cubic-bezier(.2,.7,.2,1);
+  }
+
+  /* Keep keyboard outlines immediate. Only transition painted control states. */
+  :is(button, summary, input, select, textarea:not(#source), .project-search, #list article, .pdf-annotation-link),
+  :is(button, summary)>:is(.ui-icon, .folder-icon, .fast-icon, svg[aria-hidden=true]) {
+    transition:background-color var(--motion-control) ease-out,
+      border-color var(--motion-control) ease-out, color var(--motion-control) ease-out,
+      box-shadow var(--motion-control) ease-out, scale var(--motion-control) var(--motion-ease),
+      filter var(--motion-control) ease-out;
+  }
+
+  button:enabled:active:not([aria-disabled=true], [aria-haspopup], .project-open, .project-name) {
+    filter:brightness(.92);
+  }
+
+  button:enabled:active:not([aria-disabled=true], [aria-haspopup]) > :is(.ui-icon, svg[aria-hidden=true]) {
+    scale:.94;
+    pointer-events:none;
+  }
+
+  .composer {
+    transition:border-color var(--motion-control) ease-out;
+  }
+
+  /* Resizing the live editor and PDF once keeps sidebar motion cheap. */
+  .sidebar:not(.collapsed) .brand-home {
+    animation:motion-surface var(--motion-layout) var(--motion-ease);
+    &:focus-visible { opacity:1!important; }
+  }
+  .sidebar:not(.collapsed) .brand-home span {
+    animation:motion-sidebar-label var(--motion-layout) var(--motion-ease);
+  }
+  @keyframes motion-sidebar-label {
+    from { translate:-4px 0; }
+  }
+  #collapse .ui-icon {
+    transition:scale var(--motion-layout) var(--motion-ease), color var(--motion-control) ease-out;
+  }
+  .sidebar.collapsed #collapse .ui-icon { scale:.86; }
+
+  :is(#outline-toggle .ui-icon, .file-tree .folder-chevron) {
+    transition:transform var(--motion-overlay) var(--motion-ease), color var(--motion-control) ease-out;
+  }
+
+  :is(#file-list .file-tree-actions, .model-favorite) {
+    transition:opacity var(--motion-control) ease-out, background-color var(--motion-control) ease-out,
+      color var(--motion-control) ease-out, scale var(--motion-control) var(--motion-ease);
+  }
+
+  :is(#file-list .file-tree-actions, .model-favorite):focus-visible {
+    opacity:1;
+    transition-property:background-color, color, scale;
+  }
+
+  .resize-handle::after {
+    transition:background-color var(--motion-control) ease-out;
+  }
+
+  .settings-download progress[value]::-webkit-progress-value {
+    transition:width var(--motion-layout) var(--motion-ease);
+  }
+
+  /*
+   * Discrete properties keep an exiting overlay painted for its fade. Closed
+   * surfaces stop receiving focus and pointer input as soon as their state changes.
+   */
+  :is(.file-menu, .model-panel, dialog) {
+    opacity:1;
+    scale:1;
+    transition:opacity var(--motion-overlay) var(--motion-ease),
+      scale var(--motion-overlay) var(--motion-ease),
+      display var(--motion-overlay) allow-discrete, overlay var(--motion-overlay) allow-discrete;
+  }
+
+  .file-menu { transform-origin:top left; }
+  .model-panel { transform-origin:top right; }
+  .model-panel[data-placement=above] { transform-origin:bottom right; }
+  .model-panel[data-placement=overlay] { transform-origin:center; }
+
+  :is(.file-menu[hidden], .model-panel[hidden], dialog:not([open])) {
+    opacity:0;
+    scale:.98;
+    pointer-events:none;
+    interactivity:inert;
+  }
+
+  /* A keyboard reopen may interrupt an almost-transparent exit frame. */
+  :is(.file-menu:not([hidden]), .model-panel:not([hidden]), dialog[open]):has(:focus-visible) {
+    transition:scale var(--motion-overlay) var(--motion-ease);
+  }
+
+  dialog::backdrop {
+    opacity:1;
+    transition:opacity var(--motion-overlay) ease-out,
+      display var(--motion-overlay) allow-discrete, overlay var(--motion-overlay) allow-discrete;
+  }
+
+  dialog:not([open])::backdrop {
+    opacity:0;
+    pointer-events:none;
+  }
+
+  .project-actions::details-content {
+    opacity:0;
+    scale:.98;
+    transform-origin:top right;
+    interactivity:inert;
+    transition:opacity var(--motion-overlay) var(--motion-ease),
+      scale var(--motion-overlay) var(--motion-ease),
+      content-visibility var(--motion-overlay) allow-discrete;
+  }
+
+  .project-actions[open]::details-content {
+    opacity:1;
+    scale:1;
+    interactivity:auto;
+  }
+
+  .project-actions[open]:has(.project-action-menu :focus-visible)::details-content {
+    transition:scale var(--motion-overlay) var(--motion-ease);
+  }
+
+  @starting-style {
+    :is(.file-menu:not([hidden]), .model-panel:not([hidden]), dialog[open]) {
+      opacity:.78;
+      scale:.98;
+    }
+
+    dialog[open]::backdrop { opacity:0; }
+  }
+
+  /* Find receives focus on open. Animate its border while leaving the field
+     and its focus indicator at full opacity from the first frame. */
+  .editor-find {
+    opacity:1;
+    transition:border-color var(--motion-overlay) var(--motion-ease);
+  }
+
+  .latex-completions {
+    opacity:1;
+    translate:0;
+    transition:opacity var(--motion-control) var(--motion-ease),
+      translate var(--motion-control) var(--motion-ease);
+  }
+
+  .latex-completions[hidden] {
+    opacity:0;
+    translate:0 -3px;
+    pointer-events:none;
+    interactivity:inert;
+    transition:opacity var(--motion-control) var(--motion-ease),
+      translate var(--motion-control) var(--motion-ease), display var(--motion-control) allow-discrete;
+  }
+
+  @starting-style {
+    .editor-find:not([hidden]) { border-bottom-color:color-mix(in srgb, var(--accent) 55%, var(--border)); }
+    .latex-completions:not([hidden]) { opacity:.65; translate:0 -3px; }
+  }
+
+  /* Native disclosure semantics settle before paint so Enter then Tab can
+     always reach the first disclosed control. */
+  :is(.file-alternatives, .version-comparison, .comment-reply-form, .raw-output, .compile-error details)[open] {
+    &::details-content { animation:motion-surface var(--motion-overlay) var(--motion-ease); }
+    &:has(:focus-visible):not(:has(> summary:focus-visible))::details-content { opacity:1!important; }
+  }
+
+  #file-list { isolation:isolate; }
+  #file-list .file-tree-row { background:var(--sidebar); }
+
+  /* Fold departing rows behind the live rows, where no stale control can be
+     painted over the target that now owns the pointer. */
+  .raw-output { position:relative; }
+  :is(.folder-motion,.raw-output)::details-content { clip-path:inset(0); }
+  :is(.folder-motion,.raw-output):not([open])::details-content {
+    position:absolute;
+    inset:100% 0 auto;
+    opacity:0;
+    clip-path:inset(0 0 100% 0);
+    pointer-events:none;
+    interactivity:inert;
+    transition:clip-path var(--motion-overlay) var(--motion-ease), opacity var(--motion-overlay) ease-out,
+      content-visibility var(--motion-overlay) allow-discrete;
+  }
+  .folder-motion:not([open])::details-content { z-index:-1; }
+  .raw-output:not([open]) :is(.log-controls,.log-filter-empty) { visibility:hidden; }
+
+  .new-chat-tooltip {
+    display:block;
+    visibility:hidden;
+    pointer-events:none;
+    opacity:0;
+    translate:0 3px;
+    transition:opacity var(--motion-control) ease-out, translate var(--motion-control) var(--motion-ease),
+      visibility var(--motion-control) allow-discrete;
+  }
+
+  .new-chat-action:hover .new-chat-tooltip,#new-chat:focus-visible+.new-chat-tooltip {
+    visibility:visible;
+    opacity:1;
+    translate:0;
+  }
+
+  /* Override keyframe values while a keyboard target is focused. Keeping the
+     timeline alive prevents the entrance from restarting on blur. */
+  :is(#projects, #workspace, .workspace-topbar, .model-catalog, .model-settings-group) {
+    animation:motion-surface var(--motion-overlay) var(--motion-ease);
+    &:has(:focus-visible) { opacity:1!important; }
+  }
+
+  @keyframes motion-surface {
+    from { opacity:.8; }
+  }
+
+  :is(#image-preview, #file-preview, .project-empty,
+    .settings-download, #restart-update, .preview-status, .chat-progress, .field-error, .draft-attachment,
+    .compile-error, .project-page-thumbnail, .recovery-success) {
+    animation:motion-appear var(--motion-overlay) var(--motion-ease);
+    &:is(:focus-visible, :has(:focus-visible)) { opacity:1!important; }
+  }
+
+  @keyframes motion-appear {
+    from { opacity:0; }
+  }
+
+  .message-arriving {
+    animation:motion-appear var(--motion-layout) var(--motion-ease);
+    &:has(:focus-visible) { opacity:1!important; }
+  }
+
+  .message-arriving.user { animation-name:motion-message; }
+
+  @keyframes motion-message {
+    from { opacity:0; translate:0 5px; }
+  }
+
+}
 .codex-account-actions { display:flex; flex-wrap:wrap; gap:8px; }

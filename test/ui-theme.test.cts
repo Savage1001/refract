@@ -53,7 +53,7 @@ test('standard palette stays coherent across light and dark app surfaces', { tim
   };
   for (const mode of ['light', 'dark'] as const) {
    await app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, mode);
-   await page.emulateMedia({ colorScheme: mode });
+   await page.emulateMedia({ colorScheme: mode, reducedMotion: 'reduce' });
    if (await page.locator('#workspace').isVisible()) await page.locator('#home').click();
    assert.equal(await page.locator('#project-navigation').isHidden(), true);
    const background = (selector: string) => page.locator(selector).evaluate(el => getComputedStyle(el).backgroundColor);

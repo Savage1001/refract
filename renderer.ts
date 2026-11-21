@@ -7,6 +7,97 @@ function actionIcon(name:ActionIcon):SVGSVGElement {
   const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;
 }
 declare const store: any;
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const uiMotionId = 'refract-motion';
+const activeMotion = new Map<Element, Animation>();
+type MotionDuration = '--motion-layout-ms' | '--motion-control-ms';
+const motionTimings = new Map<MotionDuration, KeyframeAnimationOptions>();
+
+function motionEnabled(): boolean {
+  return !reducedMotion.matches && document.visibilityState === 'visible';
+}
+
+function stopMotion(surface: Element): void {
+  activeMotion.get(surface)?.cancel();
+}
+
+function isMoving(animation?: Animation): boolean {
+  return !!animation && (animation.pending || animation.playState === 'running');
+}
+
+function ownsVisibleFocus(surface: Element): boolean {
+  const focus = document.activeElement;
+  return !!focus?.matches(':focus-visible') && surface.contains(focus);
+}
+
+function motionTiming(duration: MotionDuration = '--motion-layout-ms'): KeyframeAnimationOptions {
+  const cached = motionTimings.get(duration);
+  if (cached) return cached;
+  const style = getComputedStyle(document.documentElement);
+  const timing = {
+    id: uiMotionId,
+    duration: Number(style.getPropertyValue(duration)),
+    easing: style.getPropertyValue('--motion-ease').trim()
+  };
+  motionTimings.set(duration, timing);
+  return timing;
+}
+
+function playMotion(surface: Element, keyframes: Keyframe[], timing = motionTiming()): Animation {
+  stopMotion(surface);
+  const animation = surface.animate(keyframes, timing);
+  activeMotion.set(surface, animation);
+  const finish = () => {
+    if (activeMotion.get(surface) !== animation) return;
+    activeMotion.delete(surface);
+  };
+  void animation.finished.then(finish, finish);
+  return animation;
+}
+
+// Commit geometry before fading the live content so pointer and keyboard input
+// always reach the current layout. Only opacity changes on animation frames.
+function playLayoutMotion(surface: Element, from = .82, previous?: Animation): Animation | undefined {
+  if (!motionEnabled() || !surface.checkVisibility() || ownsVisibleFocus(surface)) return;
+  const currentOpacity = Number(getComputedStyle(surface).opacity);
+  const previousSurface = previous?.effect instanceof KeyframeEffect && previous.effect.target;
+  const carriedOpacity = isMoving(previous) && previousSurface ? Number(getComputedStyle(previousSurface).opacity) : from;
+  const opacity = isMoving(activeMotion.get(surface)) ? currentOpacity : Math.min(currentOpacity, carriedOpacity);
+  previous?.cancel();
+  return playMotion(surface, [{opacity}, {opacity:1}]);
+}
+
+function stopUiMotion(): void {
+  for (const animation of activeMotion.values()) animation.cancel();
+}
+
+reducedMotion.addEventListener('change', () => {
+  if (reducedMotion.matches) stopUiMotion();
+});
+
+document.addEventListener('focusin', event => {
+  if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) return;
+  for (let surface: Element | null = event.target; surface; surface = surface.parentElement) {
+    if (activeMotion.get(surface)?.playState !== 'paused') stopMotion(surface);
+  }
+});
+
+let workspaceMotion: Animation | undefined;
+
+function playWorkspaceMotion(surface: Element, interrupt = true, focusSafeSurface?: Element): void {
+  if (!interrupt && isMoving(workspaceMotion)) return;
+  const target = ownsVisibleFocus(surface) ? focusSafeSurface : surface;
+  if (!target) {
+    if (interrupt) workspaceMotion?.cancel();
+    return;
+  }
+  const next = playLayoutMotion(target, .82, workspaceMotion);
+  if (!next) return;
+  workspaceMotion = next;
+  const clear = () => { if (workspaceMotion === next) workspaceMotion = undefined; };
+  void next.finished.then(clear, clear);
+}
+
 let projects = [], active = null, currentFile = 'main.tex', opening = 0, projectOpening = 0, currentChat = 'default';
 let revision = 0, compileTimer = null, compileRunning = false, compileQueued = false;
 let restoringProject: string | null = null;
@@ -302,6 +393,99 @@ document.addEventListener('focusin', event => {
   if (!(event.target as Element).closest('#file-menu, #folder-menu')) dismissFileMenus();
 });
 let fileTreeRequest = 0, renderedTree = '', renderedTreeProject = '';
+const folderRowMotions = new Set<Animation>();
+const fileTreePresses = new Set<number>();
+// Bound the retained disclosure and the number of rows sampled per toggle.
+const maxFolderExitRows = 64;
+const maxMeasuredFollowingRows = 48;
+
+function settleFolderRows(): void {
+  for (const animation of folderRowMotions) animation.cancel();
+  folderRowMotions.clear();
+}
+
+// Pause the whole row group through the native click so a neighboring row
+// cannot move across the pressed control between pointerdown and pointerup.
+document.addEventListener('pointerdown', event => {
+  if (!(event.target instanceof Element) || !event.target.closest('#file-list .file-tree-row')) return;
+  if (!fileTreePresses.size) {
+    for (const animation of folderRowMotions) {
+      if (!isMoving(animation)) continue;
+      const hitTime = animation.currentTime;
+      animation.pause();
+      // A pending pause can otherwise advance one more compositor frame.
+      animation.currentTime = hitTime;
+    }
+  }
+  fileTreePresses.add(event.pointerId);
+}, {capture:true});
+
+function resumeFolderRows(): void {
+  if (fileTreePresses.size || !folderRowMotions.size) return;
+  requestAnimationFrame(() => {
+    if (fileTreePresses.size) return;
+    for (const animation of folderRowMotions) if (animation.playState === 'paused') animation.play();
+  });
+}
+
+for (const type of ['pointerup', 'pointercancel'] as const) {
+  window.addEventListener(type, event => {
+    if (fileTreePresses.delete(event.pointerId)) resumeFolderRows();
+  }, {capture:true});
+}
+window.addEventListener('blur', () => {
+  fileTreePresses.clear();
+  resumeFolderRows();
+});
+document.addEventListener('focusin', event => {
+  if (folderRowMotions.size && !fileTreePresses.size && event.target instanceof Element &&
+      event.target.matches('#file-list :focus-visible')) settleFolderRows();
+});
+
+function toggleFolderWithMotion(folder: HTMLDetailsElement, children: HTMLElement, event: MouseEvent): void {
+  if (!folder.open) {
+    // Following rows must clear the space before children become interactive.
+    settleFolderRows();
+    return;
+  }
+  if (!motionEnabled() || !folder.classList.contains('folder-motion')) return;
+  const fileList = document.getElementById('file-list')!;
+  const viewport = fileList.getBoundingClientRect();
+  const atTop = fileList.scrollTop === 0;
+  const height = children.getBoundingClientRect().height;
+  if (!height) return;
+  const rows: {row:Element;top:number;translate:number}[] = [];
+  let remaining = maxMeasuredFollowingRows;
+  for (let row = folder.parentElement?.closest('.file-tree-row'); row && remaining; row = row.parentElement?.closest('.file-tree-row')) {
+    for (let following = row.nextElementSibling; following && remaining; following = following.nextElementSibling) {
+      remaining--;
+      const bounds = following.getBoundingClientRect();
+      if (bounds.top > viewport.bottom + height) break;
+      if (bounds.bottom < viewport.top) continue;
+      const translate = atTop && activeMotion.has(following)
+        ? parseFloat(getComputedStyle(following).translate.split(' ')[1] ?? '0') : 0;
+      rows.push({row:following, top:bounds.top, translate});
+    }
+  }
+  if (!remaining || rows.some(({row}) => ownsVisibleFocus(row))) return;
+  event.preventDefault();
+  for (const {row} of rows) stopMotion(row);
+  folder.open = false;
+  // At the scroll origin, following rows move by exactly the disclosed
+  // height. Scrolled trees also need to account for native scroll anchoring.
+  const moves = rows.map(({row, top, translate}) => ({
+    row, offset:atTop ? height + translate : top - row.getBoundingClientRect().top
+  }));
+  for (const {row, offset} of moves) {
+    if (Math.abs(offset) <= .5) continue;
+    const animation = playMotion(row, [{translate:`0 ${offset}px`}, {translate:'0'}]);
+    if (fileTreePresses.size) animation.pause();
+    folderRowMotions.add(animation);
+    const clear = () => { folderRowMotions.delete(animation); };
+    void animation.finished.then(clear, clear);
+  }
+}
+
 async function refreshFiles(remappedFocus?: string) {
   if (!active) return;
   const remapOrigin = remappedFocus ? contextMenuOrigin : null;
@@ -327,15 +511,20 @@ async function refreshFiles(remappedFocus?: string) {
     row.append(control, actions);
     return row;
   }
-  function renderNodes(items) {
+  function renderNodes(items): {list:HTMLDivElement; rowCount:number} {
     const list = document.createElement('div'); list.className = 'file-tree';
+    let rowCount = items.length;
     for (const item of items) {
       if (item.children) {
         const folder = document.createElement('details'); folder.dataset.path = item.path; folder.open = folderStates.get(item.path) ?? true;
         const label = document.createElement('summary'), folderIcon = document.createElementNS('http://www.w3.org/2000/svg','svg'), folderPath = document.createElementNS('http://www.w3.org/2000/svg','path'), folderName = document.createElement('span');
         folderIcon.setAttribute('viewBox','0 0 24 24'); folderIcon.setAttribute('aria-hidden','true'); folderIcon.setAttribute('class','folder-icon'); folderPath.setAttribute('d','M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'); folderIcon.append(folderPath); folderName.textContent=item.name; const disclosure=actionIcon('next');disclosure.classList.add('folder-chevron');label.append(disclosure,folderIcon,folderName); label.title = item.path;
         label.oncontextmenu = event => { menuFolder=item.path; $('#file-menu').hidden=true; showFileContextMenu($('#folder-menu'), event); };
-        folder.append(label, renderNodes(item.children));
+        const {list:children, rowCount:childCount} = renderNodes(item.children);
+        rowCount += childCount;
+        folder.classList.toggle('folder-motion', childCount > 0 && childCount <= maxFolderExitRows);
+        label.addEventListener('click', event => toggleFolderWithMotion(folder, children, event));
+        folder.append(label, children);
         list.append(addActions(folder, item, true));
       } else {
         const button = document.createElement('button'), icon = document.createElement('span'), name = document.createElement('span');
@@ -354,7 +543,7 @@ async function refreshFiles(remappedFocus?: string) {
         button.oncontextmenu = event => { menuFile = item.path; $('#folder-menu').hidden=true; showFileContextMenu($('#file-menu'), event); }; list.append(addActions(button, item, false));
       }
     }
-    return list;
+    return {list, rowCount};
   }
   const fileList = document.getElementById('file-list')!;
   const focused = document.activeElement?.closest<HTMLElement>('#file-list button, #file-list summary')
@@ -362,7 +551,7 @@ async function refreshFiles(remappedFocus?: string) {
   const row = focused?.closest('.file-tree-row');
   const focusedPath = row?.firstElementChild?.getAttribute('data-path');
   const destination = focused === remapOrigin ? remappedFocus : undefined;
-  fileList.replaceChildren(renderNodes(nodes));
+  fileList.replaceChildren(renderNodes(nodes).list);
   if (focused && document.activeElement === document.body) {
     const replacement = Array.from(fileList.querySelectorAll<HTMLElement>('[data-path]')).find(item => item.dataset.path === (destination ?? focusedPath));
     if (destination && replacement) {
@@ -477,7 +666,7 @@ async function openProject(p) {
   const request = ++projectOpening;
   saveEditorView();saveChatDraft();const chatRequest=++chatOpening;chatLoading=true;
   ++opening;
-  ++searchRequest; clearTimeout(searchTimer); $('#file-search').hidden = !$('#files-tab').classList.contains('active'); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
+  ++searchRequest; clearTimeout(searchTimer); $('#file-search-input').value = ''; clearFileSearch.hidden = true; $('#file-search-results').replaceChildren();
   attachments = []; openFiles = []; clearEditor(); currentChat = 'default'; active = p;
   suspendPickerForProject(p.id);
   restoreChatDraft(p.id,currentChat); $('#chat-messages').replaceChildren(); revision++; setEditorReadOnly(chatBusy.has(p.id) || restoringProject === p.id); $('#send').disabled=true; updateCancelButton();updateChatProgress(); $('#projects').hidden = true; $('#workspace').hidden = false; workspaceBar.hidden = false;
@@ -589,6 +778,7 @@ $('#home').onclick = async () => {
   saveEditorView(); saveChatDraft(); ++chatOpening; chatLoading = false; ++opening;
   active = null; suspendPickerForProject(); clearFilePreview(); closeLayoutTools();
   releasePdf(pdfDocument); pdfDocument = null; pdfRenderRevision++;
+  stopUiMotion();
   $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true;
   const focusProject = (projectId = id) => {
     const previous = Array.from(document.querySelectorAll<HTMLButtonElement>('.project-open')).find(button => button.dataset.projectId === projectId);
@@ -637,8 +827,27 @@ $('#source').addEventListener('click', updateActiveLine);
 $('#source').addEventListener('keyup', updateActiveLine);
 $('#search').oninput = renderProjects;
 $('#clear-search').onclick = () => { $('#search').value = ''; renderProjects(); $('#search').focus(); };
-$('#files-tab').onclick = () => { $('#file-search').hidden = false; void runProjectSearch(); $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true'); $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = false; $('#outline').hidden = false; $('#chat-list').hidden = true; };
-$('#chats-tab').onclick = () => { $('#file-search').hidden = true; ++searchRequest; clearTimeout(searchTimer); $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true'); $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false'); $('#file-list').hidden = true; $('#outline').hidden = true; $('#chat-list').hidden = false; };
+function displaySidebarTab(files: boolean): void {
+  const incoming: HTMLElement = $(files ? '#files-surface' : '#chat-list');
+  if (!incoming.hidden) return;
+  // Both tabs fill the same space. Switch live controls before painting the
+  // entrance so an old control can never cover the other tab's hit target.
+  $('#files-surface').hidden = !files;
+  $('#chat-list').hidden = files;
+  playLayoutMotion($('#sidebar-content'), .8);
+}
+$('#files-tab').onclick = () => {
+  displaySidebarTab(true);
+  void runProjectSearch();
+  $('#files-tab').classList.add('active'); $('#files-tab').setAttribute('aria-pressed','true');
+  $('#chats-tab').classList.remove('active'); $('#chats-tab').setAttribute('aria-pressed','false');
+};
+$('#chats-tab').onclick = () => {
+  displaySidebarTab(false);
+  ++searchRequest; clearTimeout(searchTimer);
+  $('#chats-tab').classList.add('active'); $('#chats-tab').setAttribute('aria-pressed','true');
+  $('#files-tab').classList.remove('active'); $('#files-tab').setAttribute('aria-pressed','false');
+};
 store.list().then(p => { projects = p; renderProjects(); }).catch(error => report('load projects', error));
 let compiledProject = null, compiledPdf: string | null = null, compileLog = '';
 type PdfDocument = import('pdfjs-dist').PDFDocumentProxy;
@@ -831,7 +1040,8 @@ window.addEventListener('resize',()=>{if(pdfDocument){if(pdfFitMode==='page') fi
 updatePdfControls();
 const pendingDraftSaves=new Set<string>();
 const versionFileOptions = new WeakMap<HTMLButtonElement, readonly string[]>();
-let showingTools = false, selectedTool = 'logs';
+type ToolTab = 'info' | 'comments' | 'versions' | 'logs';
+let showingTools = false, selectedTool: ToolTab = 'logs';
 let updateBuildOutput: (() => void) | undefined;
 function defaultBuildOutputView() { return {expanded:false, query:'', issuesOnly:false, wrap:true}; }
 let buildOutputView = defaultBuildOutputView();
@@ -971,11 +1181,13 @@ async function compilePreview(force=false) {
     }
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
     const readingPage = Math.min(pdfDocument ? pdfPage : requestedPdfPage, doc.numPages);
+    const firstPreview = pdfDocument === null;
     const previouslyFocused = Array.from(pdfArea.querySelectorAll('.pdf-pages canvas')).indexOf(document.activeElement);
     previewStatus.hidden = true; previewError?.remove(); previewError = undefined;
     compiledProject = id; compiledPdf = result.pdf;
     releasePdf(pdfDocument);
     $('#pdf-area').replaceChildren(container);pdfDocument=doc;pdfPageCount=doc.numPages;pdfPage=readingPage;changePdfZoom(pdfZoom,pdfFitMode);if(pdfFitMode==='page') fitPdfPage();goToPdfPage(readingPage);
+    if (firstPreview) playWorkspaceMotion(container, false);
     if (previouslyFocused >= 0) container.querySelectorAll('canvas')[Math.min(previouslyFocused, doc.numPages - 1)]?.focus({preventScroll:true});
     $('#download').disabled = false; $('#compile').textContent = 'Compiled';
   } catch (error) {
@@ -1093,7 +1305,7 @@ async function signInFromPicker(): Promise<void> {
   }
 }
 window.addEventListener('codex-connection-changed', () => { if (active) retryChatProviders(); });
-function renderChat(chat) {
+function renderChat(chat, animateReply = false) {
   chatAnnouncement.textContent = '';
   const saved = chat.provider || (chat.sessionId || chat.messages.length ? 'codex' : null);
   const staged = active && readChatDraft(draftKey(active.id,currentChat)).provider;
@@ -1109,7 +1321,7 @@ function renderChat(chat) {
     title.textContent = 'Welcome to Refract!'; intro.textContent = 'Ask about your LaTeX, research, or writing.';
     pane.replaceChildren(close, title, intro); return;
   }
-  pane.replaceChildren(...chat.messages.map(message => {
+  pane.replaceChildren(...chat.messages.map((message, index: number) => {
     if (message.role === 'handoff') {
       const marker = document.createElement('div'); marker.className = 'provider-handoff';
       const labels: Record<string,string> = {codex:'Codex',opencode:'OpenCode'};
@@ -1120,6 +1332,7 @@ function renderChat(chat) {
       return marker;
     }
     const block = document.createElement('div'); block.className = `message ${message.role}`;
+    if (animateReply && index === chat.messages.length - 1 && message.role !== 'user') block.classList.add('message-arriving');
     const content=document.createElement('div');content.textContent=message.text;block.append(content);
     if(message.role==='assistant') void assistantFormatter.then(format=>{if(content.isConnected) {
       content.className='formatted-response';content.innerHTML=format(message.text);
@@ -1166,7 +1379,7 @@ async function sendChat() {
   attachments = []; renderAttachments();
   $('#chat-input').value = ''; $('#send').disabled = true; chatProgress.set(id,{chatId,status:'Preparing…'});updateChatProgress(); updateCancelButton(); setEditorReadOnly(true);
   saveChatDraft();
-  const pending = document.createElement('div'); pending.className = 'message user'; pending.textContent = prompt;
+  const pending = document.createElement('div'); pending.className = 'message user message-arriving'; pending.textContent = prompt;
   if ($('#chat-messages .dismiss-welcome')) $('#chat-messages').replaceChildren(pending); else $('#chat-messages').append(pending);
   let submitted=false, chat=null;
   try {
@@ -1213,8 +1426,9 @@ async function sendChat() {
             if(currentChat===chatId) {
               const request=chatOpening, refreshed=chat || await store.chatLoad(id,chatId);
               if(active?.id===id && currentChat===chatId && request===chatOpening) {
-                renderChat(refreshed);
-                if (chat?.messages?.at(-1)?.role === 'assistant') chatAnnouncement.textContent = 'Assistant response ready.';
+                const replyArrived = chat?.messages?.at(-1)?.role === 'assistant';
+                renderChat(refreshed, replyArrived);
+                if (replyArrived) chatAnnouncement.textContent = 'Assistant response ready.';
               }
             }
             await refreshChats();revision++;scheduleCompile();
@@ -1401,6 +1615,10 @@ function highlightLatex(text) {
 // path so saving, comment anchors, compilation and undo remain consistent.
 const findPanel = document.createElement('div');
 findPanel.className = 'editor-find'; findPanel.hidden = true;
+const findExitEdge = document.createElement('span');
+findExitEdge.className = 'find-exit-edge';
+findExitEdge.setAttribute('aria-hidden', 'true');
+$('.source-container').append(findExitEdge);
 findPanel.innerHTML = '<input aria-label="Find in file" placeholder="Find"><input aria-label="Replace with" placeholder="Replace"><label><input type="checkbox" aria-label="Match case" checked> Match case</label><label><input type="checkbox" aria-label="Whole word"> Whole word</label><button type="button" aria-label="Previous match">↑</button><button type="button" aria-label="Next match">↓</button><button type="button" data-replace>Replace</button><button type="button" data-all>All</button><span role="status" aria-live="polite"></span><button type="button" aria-label="Close find">×</button>';
 const wrapLabel=document.createElement('label');wrapLabel.innerHTML='<input type="checkbox" aria-label="Wrap search" checked> Wrap';
 findPanel.insertBefore(wrapLabel,findPanel.querySelector('[aria-label="Previous match"]'));
@@ -1421,9 +1639,14 @@ function openFind() {
   if (document.activeElement===sourceEditor && selected && !selected.includes('\n')) findInput.value=selected;
   if (!displayedPaneLayout().editor) revealSource();
   findAnchor=sourceEditor.selectionStart;
+  stopMotion(findExitEdge);
   findPanel.hidden=false;findInput.focus();findInput.select();refreshFind();
 }
-function closeFind() {findPanel.hidden=true;sourceEditor.focus();}
+function closeFind() {
+  findPanel.hidden=true;
+  sourceEditor.focus();
+  if (motionEnabled()) playMotion(findExitEdge, [{opacity:.45}, {opacity:0}], motionTiming('--motion-control-ms'));
+}
 function selectFindMatch(position:number) {
   sourceEditor.setSelectionRange(position,position+findInput.value.length);
   // Measure using the editor's actual font and tab stops, including long lines.
@@ -1638,16 +1861,49 @@ const expandChat = document.createElement('button'); expandChat.type = 'button';
 expandChat.onclick = () => {
   const expanded=!$('.editor-pane').classList.contains('chat-expanded');
   closeLayoutTools();paneLayout={...paneLayout,agent:true,editor:!expanded};applyPaneLayout();
+  playWorkspaceMotion(workspaceShell, true, $('#chat-messages'));
 };
 const chatTitle = document.createElement('strong'); chatTitle.className='chat-title'; chatTitle.textContent='Conversation';
 $('.chat-header').prepend(chatTitle, expandChat);
 $('#toggle-agent').onclick = () => togglePane('agent');
+const sidebar = document.getElementById('project-navigation')!;
+const sidebarMotionSurface = document.createElement('span');
+sidebarMotionSurface.className = 'sidebar-motion-surface';
+sidebarMotionSurface.setAttribute('aria-hidden', 'true');
+const sidebarEdge = document.createElement('span');
+sidebarEdge.className = 'sidebar-motion-edge';
+sidebarEdge.setAttribute('aria-hidden', 'true');
+sidebar.append(sidebarMotionSurface, sidebarEdge);
 $('#collapse').onclick = () => {
-  const collapsed = $('.sidebar').classList.toggle('collapsed');
+  const animate = motionEnabled();
+  const start = animate ? sidebarEdge.getBoundingClientRect().left : 0;
+  const alpha = animate && isMoving(activeMotion.get(sidebarMotionSurface))
+    ? Number(getComputedStyle(sidebarMotionSurface).opacity) : .28;
+  stopMotion(sidebarEdge);
+  stopMotion(sidebarMotionSurface);
+  const collapsed = sidebar.classList.toggle('collapsed');
   $('#collapse').setAttribute('aria-expanded', String(!collapsed));
   $('#collapse').title = $('#collapse').ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  if (animate) {
+    const edge = sidebarEdge.getBoundingClientRect().left;
+    const offset = start - edge;
+    if (Math.abs(offset) > .5) {
+      const width = Math.max(1, sidebar.clientWidth);
+      playMotion(sidebarMotionSurface, [
+        {scale:`${Math.max(1, width + offset) / width} 1`, opacity:alpha},
+        {scale:'1 1', opacity:0}
+      ]);
+      playMotion(sidebarEdge, [{translate:`${offset}px 0`}, {translate:'0'}]);
+    }
+  }
 };
-$('#outline-toggle').onclick = () => { const list = $('#outline-list'); list.hidden = !list.hidden; $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden)); };
+$('#outline-toggle').onclick = () => {
+  const list = $('#outline-list');
+  stopMotion(list);
+  list.hidden = !list.hidden;
+  if (!list.hidden) playLayoutMotion(list, .8);
+  $('#outline-toggle').setAttribute('aria-expanded', String(!list.hidden));
+};
 function setProjectView(view: 'grid' | 'list', persist = true): void {
   $('#list').classList.toggle('grid', view === 'grid');
   for (const choice of ['grid', 'list'] as const) {
@@ -1656,10 +1912,16 @@ function setProjectView(view: 'grid' | 'list', persist = true): void {
     button.setAttribute('aria-pressed', String(choice === view));
   }
   if (persist) { try { localStorage.setItem('refract-project-view', view); } catch {} }
-  renderProjects();
+  $('.table-head').hidden = view === 'grid' || !$('#list').children.length;
 }
-$('#grid-view').onclick = () => setProjectView('grid');
-$('#list-view').onclick = () => setProjectView('list');
+for (const view of ['grid', 'list'] as const) {
+  const button = document.getElementById(`${view}-view`)!;
+  button.onclick = () => {
+    if (button.getAttribute('aria-pressed') === 'true') return;
+    setProjectView(view);
+    playLayoutMotion($('#list'), .72);
+  };
+}
 try { if (localStorage.getItem('refract-project-view') === 'grid') setProjectView('grid', false); } catch {}
 $('#zoom-fit').onclick = () => changePdfZoom(100,'width');
 function attachmentPreview(item:{token:string;name:string}, projectId:string):HTMLElement {
@@ -1727,7 +1989,7 @@ $('#attach').onclick = async () => {
     }
   }
 };
-function renderToolPanel() {
+function renderToolPanel(animateContent = false) {
   const body = $('#tool-body'); body.classList.remove('has-open-comparison'); body.replaceChildren();
   updateBuildOutput = undefined;
   if (toolsExpansion !== 'manual') setToolsExpansion(null);
@@ -1735,8 +1997,8 @@ function renderToolPanel() {
   $('#tool-versions').classList.toggle('active', selectedTool === 'versions'); $('#tool-versions').setAttribute('aria-pressed',String(selectedTool === 'versions'));
   $('#tool-comments').classList.toggle('active', selectedTool === 'comments'); $('#tool-comments').setAttribute('aria-pressed',String(selectedTool === 'comments'));
   $('#tool-logs').classList.toggle('active', selectedTool === 'logs'); $('#tool-logs').setAttribute('aria-pressed',String(selectedTool === 'logs'));
-  if (selectedTool === 'versions') { renderVersions(); return; }
-  if (selectedTool === 'comments') { renderComments(); return; }
+  if (selectedTool === 'versions') { void renderVersions(animateContent); return; }
+  if (selectedTool === 'comments') { void renderComments(undefined, animateContent); return; }
   if (selectedTool === 'logs') {
     const label = document.createElement('div'); label.textContent = 'Build output'; label.className = 'tool-heading';
     const log = document.createElement('pre'); log.className = 'tool-log';
@@ -1832,6 +2094,7 @@ function renderToolPanel() {
 
     engineLabel.className = 'engine-setting'; const engineHint = document.createElement('small'); engineHint.id='engine-hint'; engineHint.textContent='Choose the compiler used to build this project.'; engine.setAttribute('aria-describedby',engineHint.id); engineLabel.append(engine,engineHint); body.append(title, facts, engineLabel, draftLabel);
   }
+  if (animateContent) playWorkspaceMotion(body, false);
 }
 const toolsButton = document.querySelector<HTMLButtonElement>('#tools')!;
 toolsButton.append(actionIcon('wrench'));
@@ -1842,19 +2105,27 @@ toolsButton.onclick = () => {
   toolsButton.setAttribute('aria-expanded', String(showingTools));
   applyPaneLayout(false);
   if(showingTools) renderToolPanel();
+  playWorkspaceMotion(workspaceShell);
 };
 const expandTools = document.createElement('button'); expandTools.type='button'; expandTools.className='expand-tools'; expandTools.textContent='Expand panel'; expandTools.setAttribute('aria-label','Expand tools panel');
 let toolsExpansion: 'manual' | 'comparison' | 'logs' | null = null;
 function setToolsExpansion(value: typeof toolsExpansion): void {
+  const changed = !!toolsExpansion !== !!value;
   toolsExpansion = value;
   $('#workspace').classList.toggle('tools-expanded', !!value);
   expandTools.textContent = value ? 'Collapse panel' : 'Expand panel';
   expandTools.setAttribute('aria-label', value ? 'Collapse tools panel' : 'Expand tools panel');
+  if (changed && showingTools) playWorkspaceMotion(workspaceShell, true, $('#tool-body'));
 }
 expandTools.onclick = () => setToolsExpansion(toolsExpansion ? null : 'manual');
 $('.tool-tabs').append(expandTools);
-$('#tool-info').onclick = () => { selectedTool = 'info'; renderToolPanel(); };
-$('#tool-logs').onclick = () => { selectedTool = 'logs'; renderToolPanel(); };
+for (const tab of ['info','logs','versions','comments'] as const) {
+  $(`#tool-${tab}`).onclick = () => {
+    const changed = selectedTool !== tab;
+    selectedTool = tab;
+    renderToolPanel(changed);
+  };
+}
 
 // Compare ordered lines so repeated or moved lines are not mistaken for unchanged text.
 function comparisonLines(previous: string, current: string): [{text:string;changed:boolean}[], {text:string;changed:boolean}[]] {
@@ -1870,11 +2141,12 @@ function comparisonLines(previous: string, current: string): [{text:string;chang
   }
   return [oldRows,newRows];
 }
-async function renderVersions() {
-  if (!active) return; const id = active.id;
+let versionRenderRequest = 0;
+async function renderVersions(animateContent = false) {
+  if (!active) return; const id = active.id, request = ++versionRenderRequest;
   try {
     const versions = await store.versionList(id);
-    if (active?.id !== id || !showingTools || selectedTool !== 'versions') return;
+    if (active?.id !== id || !showingTools || selectedTool !== 'versions' || request !== versionRenderRequest) return;
     const body = document.getElementById('tool-body')!, heading = document.createElement('div');
     const focused = document.activeElement instanceof HTMLElement && body.contains(document.activeElement) ? document.activeElement.dataset.versionFocus : undefined;
     body.classList.remove('has-open-comparison'); heading.className = 'tool-heading'; heading.textContent = 'Versions'; body.replaceChildren(heading);
@@ -1977,16 +2249,16 @@ async function renderVersions() {
       const replacement = Array.from(body.querySelectorAll<HTMLButtonElement>('button[data-version-focus]')).find(button => button.dataset.versionFocus === focused && !button.disabled);
       (replacement ?? $('#tool-versions')).focus();
     }
+    if (animateContent) playWorkspaceMotion(body, false);
   } catch (error) { report('load versions', error); }
 }
-$('#tool-versions').onclick = () => { selectedTool = 'versions'; renderToolPanel(); };
 interface CommentRecord { id:string; file:string; quote:string; text:string; resolved:boolean; created?:string; anchor?:{status:string}; replies?:{text:string}[] }
 interface CommentDraftState { text:string; search:string; replies:Map<string,string>; expanded:Set<string> }
 interface CommentFocusRestore { key:string; moved:boolean }
 const commentDraftStates = new Map<string,CommentDraftState>();
 const pendingCommentActions = new Set<string>();
 let commentRenderRequest = 0;
-async function renderComments(restoreFocus?:CommentFocusRestore) {
+async function renderComments(restoreFocus?:CommentFocusRestore, animateContent = false) {
   if (!active) return; const id:string = active.id, request = ++commentRenderRequest;
   let drafts = commentDraftStates.get(id);
   if (!drafts) { drafts = {text:'',search:'',replies:new Map(),expanded:new Set()}; commentDraftStates.set(id,drafts); }
@@ -2085,9 +2357,9 @@ async function renderComments(restoreFocus?:CommentFocusRestore) {
     };
     body.replaceChildren(heading,search,text,add,list); display();
     if (focusedKey) Array.from(body.querySelectorAll<HTMLElement>('[data-comment-focus]')).find(control => control.dataset.commentFocus === focusedKey)?.focus({preventScroll:true});
+    if (animateContent) playWorkspaceMotion(body, false);
   } catch (error) { report('load comments',error); }
 }
-$('#tool-comments').onclick = () => { selectedTool = 'comments'; renderToolPanel(); };
 
 $('#source').addEventListener('select', () => { if (!active) return; const editor = $('#source'); commentSelection = {id: active.id, file: currentFile, start:editor.selectionStart, end:editor.selectionEnd, quote: editor.value.slice(editor.selectionStart, editor.selectionEnd)}; });
 
@@ -2321,7 +2593,7 @@ $('#file-search').addEventListener('keydown', event => {
   clearFileSearch.click();
 });
 async function runProjectSearch() {
-  if (!active || $('#file-search').hidden) return;
+  if (!active || $('#files-surface').hidden) return;
   const request = ++searchRequest, id = active.id, query = $('#file-search-input').value;
   if (!query.trim()) {
     fileSearchStatus.textContent = '';
@@ -2330,7 +2602,7 @@ async function runProjectSearch() {
   }
   try {
     const results = await store.search(id,query);
-    if (request !== searchRequest || active?.id !== id || $('#file-search').hidden) return;
+    if (request !== searchRequest || active?.id !== id || $('#files-surface').hidden) return;
     const count = document.createElement('p'); count.className = 'search-count'; count.textContent = `${results.length} ${results.length === 1 ? 'result' : 'results'}`;
     fileSearchStatus.textContent = results.length ? count.textContent : 'No matching files or lines.';
     $('#file-search-results').replaceChildren(count, ...results.map(result => {
@@ -2349,6 +2621,7 @@ async function runProjectSearch() {
       return button;
     }));
     if (query.trim() && !results.length) { const empty = document.createElement('p'); empty.className='search-empty'; empty.textContent='No matches. Try another search.'; $('#file-search-results').append(empty); }
+    playLayoutMotion($('#file-search-results'), .72);
   } catch (error) { if (active?.id === id) report('search project',error); }
 }
 $('#file-search-input').oninput = () => { clearFileSearch.hidden = !$('#file-search-input').value; clearTimeout(searchTimer); ++searchRequest; if ($('#file-search-input').value.trim()) searchTimer = setTimeout(runProjectSearch,200); else void runProjectSearch(); };
@@ -2396,7 +2669,9 @@ for(const [name,label,controls] of [['agent','Agent','chat'],['editor','Editor',
   const button=document.createElement('button');button.type='button';button.id=`pane-${name}`;
   button.className='pane-toggle';button.setAttribute('aria-label',label);button.setAttribute('aria-controls',name==='editor'?'editor-content':controls);
   const text = document.createElement('span'); text.textContent = label; text.setAttribute('aria-hidden', 'true');
-  button.append(actionIcon(name), text);button.onclick=()=>togglePane(name);paneButtons.set(name,button);paneToggles.append(button);
+  button.append(actionIcon(name), text);
+  button.onclick=()=>togglePane(name);
+  paneButtons.set(name,button);paneToggles.append(button);
 }
 workspaceShell.querySelector('.editor-wrap')!.id='editor-content';
 const oldAgent=workspaceShell.querySelector<HTMLButtonElement>('#toggle-agent')!;oldAgent.remove();
@@ -2416,6 +2691,7 @@ function togglePane(name:PaneName):void {
     if (!paneLayout.agent && !paneLayout.editor && !paneLayout.preview) paneLayout.editor = true;
   }
   applyPaneLayout();
+  playWorkspaceMotion(workspaceShell);
 }
 function revealSource(): void {
   if (!displayedPaneLayout().editor) {
@@ -2525,10 +2801,14 @@ function resizeHandle(id: string, axis: "x" | "y", apply: (delta: number) => voi
     }
   });
 }
-const sidebarResize = document.querySelector<HTMLElement>(".sidebar")!;
+const sidebarResize = sidebar;
 const workspaceResize = document.getElementById("workspace")!;
 const editorResize = document.querySelector<HTMLElement>(".editor-pane")!;
 const chatResize = document.getElementById("chat")!;
+document.getElementById('sidebar-resize')!.addEventListener('pointerdown', () => {
+  stopMotion(sidebarEdge);
+  stopMotion(sidebarMotionSurface);
+});
 resizeHandle("sidebar-resize", "x", delta => {
   sidebarResize.style.setProperty("--sidebar-width", `${Math.max(150, Math.min(Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth + delta))}px`);
 });
