@@ -48,15 +48,22 @@ async function firstPassComplete(projectDir: string, outputDir: string, executab
     const info = await fs.lstat(recorder);
     if (!info.isFile() || info.nlink > 1 || info.size > 8 * 1024 * 1024) return false;
     const files = await fs.readFile(recorder, 'utf8');
-    const standardOutputs = new Set(['main.aux', 'main.log', 'main.pdf', 'main.xdv'].map(name => path.join(outputDir, name)));
+    // LuaLaTeX can lowercase the Windows drive letter on recorder INPUT paths
+    // while preserving its original case on OUTPUT paths.
+    const resolveRecordPath = (file: string) => {
+      const absolute = path.resolve(projectDir, file);
+      return process.platform === 'win32' ? absolute.replace(/^[a-z]:/, drive => drive.toUpperCase()) : absolute;
+    };
+    const standardOutputs = new Set(['main.aux', 'main.log', 'main.pdf', 'main.xdv']
+      .map(name => resolveRecordPath(path.join(outputDir, name))));
     const records = files.split(/\r?\n/);
-    const auxPath = path.join(outputDir, 'main.aux');
+    const auxPath = resolveRecordPath(path.join(outputDir, 'main.aux'));
     // Imported projects can contain an old main.aux that TeX reads before
     // creating the new one. The next pass will see the new contents instead.
     if (records.some(line => /^INPUT (?:.*[\\/])?main\.aux$/i.test(line) &&
-        path.resolve(projectDir, line.slice(6)) !== auxPath)) return false;
+        resolveRecordPath(line.slice(6)) !== auxPath)) return false;
     const outputs = new Set(records.filter(line => line.startsWith('OUTPUT '))
-      .map(line => path.resolve(projectDir, line.slice(7))));
+      .map(line => resolveRecordPath(line.slice(7))));
     // A package may write a state file without using the main aux or logging a
     // warning. Keep the second pass whenever the recorder lists extra outputs,
     // except LuaLaTeX's transient font-cache write probe outside the project.

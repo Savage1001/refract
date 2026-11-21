@@ -38,10 +38,10 @@ See \cite{example}.
 `;
 
 async function benchmark(): Promise<void> {
-  const [baselineBuild, count = '12'] = process.argv.slice(2);
+  const [baselineBuild, count = '12', filter] = process.argv.slice(2);
   const samples = Number(count);
   assert.ok(baselineBuild && Number.isSafeInteger(samples) && samples >= 2,
-    'Usage: node build/scripts/benchmark-compilation.cjs <baseline build directory> [samples]');
+    'Usage: node build/scripts/benchmark-compilation.cjs <baseline build directory> [samples] [case filter]');
   const baseline = path.resolve(baselineBuild, 'src');
   const oldCompiler: typeof compiler = require(path.join(baseline, 'compiler.cjs'));
   const oldBuilds: typeof builds = require(path.join(baseline, 'build-cache.cjs'));
@@ -60,7 +60,8 @@ async function benchmark(): Promise<void> {
     {name: 'Biber (forced)', engine: 'pdflatex', source: biber},
     {name: 'Project with 121 TeX files (forced)', engine: 'pdflatex', source: plain.replace('An integral:', '\\input{sections/1/part0}\nAn integral:'), large: true},
     {name: 'Unchanged project with 121 TeX files (cached)', engine: 'pdflatex', source: plain, large: true, cached: true}
-  ];
+  ].filter(fixture => !filter || fixture.name.toLowerCase().includes(filter.toLowerCase()));
+  assert.ok(cases.length, 'No benchmark cases match the filter');
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'refract-bench-compile-'));
   // Freeze the cache's clock for reproducible hits across minute boundaries.
   // TeX runs in separate processes and retains its real system clock.
