@@ -1939,6 +1939,7 @@ sidebarToggle.onclick = () => {
 };
 
 sidebarPanel.addEventListener('focusin', () => finishSidebarMotion?.());
+window.addEventListener('resize', () => finishSidebarMotion?.());
 const outlineToggle = document.getElementById('outline-toggle')!;
 outlineToggle.onclick = () => toggleSidebarDisclosure(outlineToggle, document.getElementById('outline-list')!);
 function setProjectView(view: 'grid' | 'list', persist = true): void {

@@ -611,6 +611,15 @@ test('the sidebar clips its live content to the moving edge and reverses from it
     assert.deepEqual(reversal.closingState, {inert:true, painted:true});
     assert.equal(reversal.sameTiming, true);
     assert.equal(reversal.finished, true);
+    const settledOnResize = await page.evaluate(() => {
+      document.getElementById('collapse')!.click();
+      const sidebar = document.getElementById('project-navigation')!;
+      const sliding = sidebar.hasAttribute('data-sliding');
+      window.dispatchEvent(new Event('resize'));
+      return sliding && !sidebar.hasAttribute('data-sliding') &&
+        !document.getElementById('project-side')!.checkVisibility();
+    });
+    assert.equal(settledOnResize, true);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
