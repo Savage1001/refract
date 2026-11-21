@@ -87,7 +87,7 @@ jobs:
 
       - name: Build release installer
         if: inputs.installer_lifecycle
-        run: npm run build:installer -- --publish never
+        run: npm run build:installer -- --publish=never
       - name: Run installer lifecycle
         if: inputs.installer_lifecycle
         env:
