@@ -1897,6 +1897,8 @@ sidebarToggle.onclick = () => {
   const animate = motionEnabled();
   const toggleStart = sidebarToggle.getBoundingClientRect().left;
   const start = sidebarEdge.getBoundingClientRect().left;
+  const workspaceStart = workspaceShell.getBoundingClientRect();
+  const titleStart = projectTrail.getBoundingClientRect().left;
   const expandedWidth = sidebarPanel.getBoundingClientRect().width;
   finishSidebarMotion?.();
   const collapsed = !sidebar.classList.contains('collapsed');
@@ -1905,6 +1907,7 @@ sidebarToggle.onclick = () => {
     if (sidebar.contains(document.activeElement)) sidebarToggle.focus({preventScroll:true});
   }
   sidebar.classList.toggle('collapsed', collapsed);
+  syncTitlebarSidebarWidth();
   sidebarPanel.inert = collapsed;
   sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
   sidebarToggle.title = sidebarToggle.ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
@@ -1912,19 +1915,29 @@ sidebarToggle.onclick = () => {
   const end = sidebarEdge.getBoundingClientRect().left;
   if (!animate || Math.abs(start - end) < .5) return;
 
-  // Set workspace geometry once and reveal the fixed-width panel with a clip.
-  // Keep the closing panel painted until the edge reaches its resting position.
+  // Commit layout once. Keep the viewport's right edge fixed while the workspace
+  // follows the sidebar edge, without resizing the editor and PDF on every frame.
   if (collapsed) sidebarPanel.style.width = expandedWidth + 'px';
   sidebar.style.setProperty('--sidebar-motion-width', Math.max(start, end) - sidebar.getBoundingClientRect().left + 'px');
   sidebar.dataset.sliding = '';
-  const clipAt = (surface: Element, edge: number) =>
-    `inset(0 ${surface.getBoundingClientRect().right - edge}px 0 0)`;
-  const timing = {...motionTiming(), fill:'both' as const};
-  const animations = [sidebarMotionSurface, sidebarPanel].map(surface =>
-    playMotion(surface, [{clipPath:clipAt(surface, start)}, {clipPath:clipAt(surface, end)}], timing));
-  const edge = playMotion(sidebarEdge, [{translate:`${start - end}px 0`}, {translate:'0'}], timing);
+  const clips = [sidebarMotionSurface, sidebarPanel].map(surface => {
+    const right = surface.getBoundingClientRect().right;
+    return [start, end].map(edge => ({clipPath:`inset(0 ${right - edge}px 0 0)`}));
+  });
+  const workspaceEnd = workspaceShell.getBoundingClientRect();
   const toggleOffset = toggleStart - sidebarToggle.getBoundingClientRect().left;
+  const titleOffset = titleStart - projectTrail.getBoundingClientRect().left;
+  const timing = {...motionTiming(), fill:'both' as const};
+  const animations = [sidebarMotionSurface, sidebarPanel].map((surface, index) =>
+    playMotion(surface, clips[index], timing));
+  const edge = playMotion(sidebarEdge, [{translate:`${start - end}px 0`}, {translate:'0'}], timing);
   animations.push(playMotion(sidebarToggle, [{translate:`${toggleOffset}px 0`}, {translate:'0'}], timing));
+  animations.push(playMotion(projectTrail, [{translate:`${titleOffset}px 0`}, {translate:'0'}], timing));
+  // The workspace can independently fade when its pane layout changes.
+  animations.push(workspaceShell.animate([
+    {transformOrigin:'right center', scale:`${workspaceStart.width / workspaceEnd.width} 1`},
+    {transformOrigin:'right center', scale:'1 1'}
+  ], timing));
   const finish = () => {
     if (finishSidebarMotion !== finish) return;
     finishSidebarMotion = undefined;
@@ -2906,9 +2919,13 @@ function updateResizeAccessibility(): void {
   const fraction = window.matchMedia('(max-width:1200px)').matches ? .55 : .65;
   setRange('chat-resize', chatResize, 220, Math.floor(editorResize.clientHeight * fraction), chatResize.offsetHeight);
 }
+function syncTitlebarSidebarWidth(): void {
+  appTitlebar.style.setProperty('--titlebar-sidebar-width', `${sidebarResize.offsetWidth}px`);
+}
+
 const resizeAccessibilityObserver = new ResizeObserver(entries => {
   if (entries.some(entry => entry.target === sidebarResize)) {
-    appTitlebar.style.setProperty('--titlebar-sidebar-width', `${sidebarResize.offsetWidth}px`);
+    syncTitlebarSidebarWidth();
   }
   updateResizeAccessibility();
 });

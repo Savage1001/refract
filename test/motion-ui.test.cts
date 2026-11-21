@@ -579,35 +579,60 @@ test('the sidebar clips its live content to the moving edge and reverses from it
     const reversal = await page.evaluate(async () => {
       const panel = document.getElementById('project-side')!;
       const edge = document.querySelector('.sidebar-motion-edge')!;
+      const workspace = document.querySelector('.workspace-shell')!;
+      const title = document.querySelector('.project-trail')!;
       const button = document.getElementById('collapse')!;
       const animationFor = (element: Element) =>
         element.getAnimations().find(animation => animation.id === 'refract-motion')!;
       document.querySelector<HTMLElement>('#file-list summary')!.click();
       const folderAnimation = animationFor(document.querySelector('[data-disclosure-motion]')!);
       const expanded = edge.getBoundingClientRect().left;
+      const workspaceGap = workspace.getBoundingClientRect().left - expanded;
+      const workspaceRight = workspace.getBoundingClientRect().right;
+      const expandedTitle = title.getBoundingClientRect().left;
 
       button.click();
       const closing = animationFor(panel);
       const closingTiming = closing.effect!.getTiming();
       const folderTiming = folderAnimation.effect!.getTiming();
-      for (const element of [panel, edge]) animationFor(element).currentTime = 100;
+      for (const element of [panel, edge, workspace, title]) {
+        const animation = animationFor(element);
+        animation.pause();
+        animation.currentTime = Number(closingTiming.duration) / 2;
+      }
       const midpoint = edge.getBoundingClientRect().left;
+      const workspaceMidpoint = workspace.getBoundingClientRect();
+      const titleMidpoint = title.getBoundingClientRect().left;
       const clippedEdge = panel.getBoundingClientRect().right -
         Number.parseFloat(getComputedStyle(panel).clipPath.split(' ')[1]);
       const closingState = {inert:panel.inert, painted:panel.checkVisibility()};
 
       button.click();
       const restart = edge.getBoundingClientRect().left;
+      const workspaceRestart = workspace.getBoundingClientRect().left;
+      const titleRestart = title.getBoundingClientRect().left;
       const opening = animationFor(edge);
       opening.finish();
       await opening.finished;
       return {expanded, midpoint, clippedEdge, restart, closingState,
+        workspaceTracksEdge:Math.abs(workspaceMidpoint.left - midpoint - workspaceGap) < .5,
+        workspaceRightFixed:Math.abs(workspaceMidpoint.right - workspaceRight) < 1,
+        workspaceReverses:Math.abs(workspaceRestart - workspaceMidpoint.left) < 1,
+        titleTracksEdge:Math.abs((titleMidpoint - expandedTitle) - (midpoint - expanded)) < 1,
+        titleReverses:Math.abs(titleRestart - titleMidpoint) < 1,
+        workspaceSettled:!animationFor(workspace) && !animationFor(title),
         sameTiming:closingTiming.duration === folderTiming.duration && closingTiming.easing === folderTiming.easing,
         finished:panel.checkVisibility() && !panel.inert && getComputedStyle(panel).clipPath === 'none'};
     });
     assert.ok(reversal.midpoint < reversal.expanded);
     assert.ok(Math.abs(reversal.clippedEdge - reversal.midpoint) < 1);
     assert.ok(Math.abs(reversal.restart - reversal.midpoint) < 1);
+    assert.equal(reversal.workspaceTracksEdge, true);
+    assert.equal(reversal.workspaceRightFixed, true);
+    assert.equal(reversal.workspaceReverses, true);
+    assert.equal(reversal.titleTracksEdge, true);
+    assert.equal(reversal.titleReverses, true);
+    assert.equal(reversal.workspaceSettled, true);
     assert.deepEqual(reversal.closingState, {inert:true, painted:true});
     assert.equal(reversal.sameTiming, true);
     assert.equal(reversal.finished, true);
