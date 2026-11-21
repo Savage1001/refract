@@ -3359,20 +3359,27 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
 }
 
 .sidebar-motion-surface {
+  display:none;
   position:absolute;
-  z-index:0;
-  inset:0;
-  background:color-mix(in srgb, var(--sidebar), var(--text) 12%);
-  transform-origin:left;
-  opacity:0;
+  z-index:1;
+  inset:0 auto 0 0;
+  width:var(--sidebar-motion-width);
+  background:var(--sidebar);
   pointer-events:none;
 }
 
-.sidebar:has(>.sidebar-motion-surface) #project-side { position:relative; z-index:1; }
+.sidebar[data-sliding] { background:transparent; }
+.sidebar[data-sliding] .sidebar-motion-surface { display:block; }
+.sidebar[data-sliding] #project-side { position:relative; z-index:2; }
+.sidebar.collapsed[data-sliding] #project-side {
+  position:absolute;
+  display:flex;
+  inset:42px auto 12px 12px;
+}
 
 .sidebar-motion-edge {
   position:absolute;
-  z-index:2;
+  z-index:3;
   inset-block:0;
   right:-1px;
   width:1px;

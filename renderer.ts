@@ -1889,29 +1889,56 @@ const sidebarEdge = document.createElement('span');
 sidebarEdge.className = 'sidebar-motion-edge';
 sidebarEdge.setAttribute('aria-hidden', 'true');
 sidebar.append(sidebarMotionSurface, sidebarEdge);
-$('#collapse').onclick = () => {
+const sidebarPanel = document.getElementById('project-side')!;
+const sidebarToggle = document.getElementById('collapse')!;
+let finishSidebarMotion: (() => void) | undefined;
+
+sidebarToggle.onclick = () => {
   const animate = motionEnabled();
-  const start = animate ? sidebarEdge.getBoundingClientRect().left : 0;
-  const alpha = animate && isMoving(activeMotion.get(sidebarMotionSurface))
-    ? Number(getComputedStyle(sidebarMotionSurface).opacity) : .28;
-  stopMotion(sidebarEdge);
-  stopMotion(sidebarMotionSurface);
-  const collapsed = sidebar.classList.toggle('collapsed');
-  $('#collapse').setAttribute('aria-expanded', String(!collapsed));
-  $('#collapse').title = $('#collapse').ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
-  if (animate) {
-    const edge = sidebarEdge.getBoundingClientRect().left;
-    const offset = start - edge;
-    if (Math.abs(offset) > .5) {
-      const width = Math.max(1, sidebar.clientWidth);
-      playMotion(sidebarMotionSurface, [
-        {scale:`${Math.max(1, width + offset) / width} 1`, opacity:alpha},
-        {scale:'1 1', opacity:0}
-      ]);
-      playMotion(sidebarEdge, [{translate:`${offset}px 0`}, {translate:'0'}]);
-    }
+  const toggleStart = sidebarToggle.getBoundingClientRect().left;
+  const start = sidebarEdge.getBoundingClientRect().left;
+  const expandedWidth = sidebarPanel.getBoundingClientRect().width;
+  finishSidebarMotion?.();
+  const collapsed = !sidebar.classList.contains('collapsed');
+  if (collapsed) {
+    sidebarDisclosure?.settle();
+    if (sidebar.contains(document.activeElement)) sidebarToggle.focus({preventScroll:true});
   }
+  sidebar.classList.toggle('collapsed', collapsed);
+  sidebarPanel.inert = collapsed;
+  sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+  sidebarToggle.title = sidebarToggle.ariaLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+
+  const end = sidebarEdge.getBoundingClientRect().left;
+  if (!animate || Math.abs(start - end) < .5) return;
+
+  // Set workspace geometry once and reveal the fixed-width panel with a clip.
+  // Keep the closing panel painted until the edge reaches its resting position.
+  if (collapsed) sidebarPanel.style.width = expandedWidth + 'px';
+  sidebar.style.setProperty('--sidebar-motion-width', Math.max(start, end) - sidebar.getBoundingClientRect().left + 'px');
+  sidebar.dataset.sliding = '';
+  const clipAt = (surface: Element, edge: number) =>
+    `inset(0 ${surface.getBoundingClientRect().right - edge}px 0 0)`;
+  const timing = {...motionTiming(), fill:'both' as const};
+  const animations = [sidebarMotionSurface, sidebarPanel].map(surface =>
+    playMotion(surface, [{clipPath:clipAt(surface, start)}, {clipPath:clipAt(surface, end)}], timing));
+  const edge = playMotion(sidebarEdge, [{translate:`${start - end}px 0`}, {translate:'0'}], timing);
+  const toggleOffset = toggleStart - sidebarToggle.getBoundingClientRect().left;
+  animations.push(playMotion(sidebarToggle, [{translate:`${toggleOffset}px 0`}, {translate:'0'}], timing));
+  const finish = () => {
+    if (finishSidebarMotion !== finish) return;
+    finishSidebarMotion = undefined;
+    delete sidebar.dataset.sliding;
+    sidebar.style.removeProperty('--sidebar-motion-width');
+    sidebarPanel.style.removeProperty('width');
+    edge.cancel();
+    for (const animation of animations) animation.cancel();
+  };
+  finishSidebarMotion = finish;
+  void edge.finished.then(finish, finish);
 };
+
+sidebarPanel.addEventListener('focusin', () => finishSidebarMotion?.());
 const outlineToggle = document.getElementById('outline-toggle')!;
 outlineToggle.onclick = () => toggleSidebarDisclosure(outlineToggle, document.getElementById('outline-list')!);
 function setProjectView(view: 'grid' | 'list', persist = true): void {
@@ -2816,10 +2843,10 @@ const workspaceResize = document.getElementById("workspace")!;
 const editorResize = document.querySelector<HTMLElement>(".editor-pane")!;
 const chatResize = document.getElementById("chat")!;
 document.getElementById('sidebar-resize')!.addEventListener('pointerdown', () => {
-  stopMotion(sidebarEdge);
-  stopMotion(sidebarMotionSurface);
+  finishSidebarMotion?.();
 });
 resizeHandle("sidebar-resize", "x", delta => {
+  finishSidebarMotion?.();
   sidebarResize.style.setProperty("--sidebar-width", `${Math.max(150, Math.min(Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth + delta))}px`);
 });
 resizeHandle("workspace-resize", "x", delta => {

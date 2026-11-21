@@ -572,25 +572,45 @@ test('Tools tabs give the new body a single entry fade and retain keyboard focus
   }
 });
 
-test('a late sidebar reversal preserves the tint already on screen', async () => {
+test('the sidebar clips its live content to the moving edge and reverses from its current position', async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
     await openProject(page);
-    const reversal = await page.evaluate(() => {
-      const surface = document.querySelector('.sidebar-motion-surface')!;
+    const reversal = await page.evaluate(async () => {
+      const panel = document.getElementById('project-side')!;
       const edge = document.querySelector('.sidebar-motion-edge')!;
       const button = document.getElementById('collapse')!;
-      const fade = () => surface.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      const animationFor = (element: Element) =>
+        element.getAnimations().find(animation => animation.id === 'refract-motion')!;
+      document.querySelector<HTMLElement>('#file-list summary')!.click();
+      const folderAnimation = animationFor(document.querySelector('[data-disclosure-motion]')!);
+      const expanded = edge.getBoundingClientRect().left;
+
       button.click();
-      fade().currentTime = 140;
-      edge.getAnimations().find(animation => animation.id === 'refract-motion')!.currentTime = 140;
-      const before = Number(getComputedStyle(surface).opacity);
+      const closing = animationFor(panel);
+      const closingTiming = closing.effect!.getTiming();
+      const folderTiming = folderAnimation.effect!.getTiming();
+      for (const element of [panel, edge]) animationFor(element).currentTime = 100;
+      const midpoint = edge.getBoundingClientRect().left;
+      const clippedEdge = panel.getBoundingClientRect().right -
+        Number.parseFloat(getComputedStyle(panel).clipPath.split(' ')[1]);
+      const closingState = {inert:panel.inert, painted:panel.checkVisibility()};
+
       button.click();
-      const effect = fade().effect as KeyframeEffect;
-      return {before,after:Number(effect.getKeyframes()[0].opacity)};
+      const restart = edge.getBoundingClientRect().left;
+      const opening = animationFor(edge);
+      opening.finish();
+      await opening.finished;
+      return {expanded, midpoint, clippedEdge, restart, closingState,
+        sameTiming:closingTiming.duration === folderTiming.duration && closingTiming.easing === folderTiming.easing,
+        finished:panel.checkVisibility() && !panel.inert && getComputedStyle(panel).clipPath === 'none'};
     });
-    assert.ok(reversal.before < .05);
-    assert.equal(reversal.after, reversal.before);
+    assert.ok(reversal.midpoint < reversal.expanded);
+    assert.ok(Math.abs(reversal.clippedEdge - reversal.midpoint) < 1);
+    assert.ok(Math.abs(reversal.restart - reversal.midpoint) < 1);
+    assert.deepEqual(reversal.closingState, {inert:true, painted:true});
+    assert.equal(reversal.sameTiming, true);
+    assert.equal(reversal.finished, true);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
