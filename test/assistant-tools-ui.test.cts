@@ -55,7 +55,9 @@ test('desktop wires direct tools into both providers, saves compiler changes and
   const id: string = await page.evaluate(async()=>{const [project]=await store.list();return project.id;});
   await page.locator('#tools').click();
   await page.locator('#tool-info').click();
+  let finalBuildMinute = 0;
   for (const provider of ['codex','opencode']) {
+    finalBuildMinute = Math.floor(Date.now() / 60000);
     const chat = await page.evaluate(({id,provider})=>store.chatSend(id,'Edit the section','default',[],provider),{id,provider});
     assert.equal(chat.messages.at(-1).text,'Confirmed edit');
     const engine = provider === 'codex' ? 'xelatex' : 'lualatex';
@@ -73,7 +75,14 @@ test('desktop wires direct tools into both providers, saves compiler changes and
   assert.ok(performance.totalMs>0);assert.equal(performance.counts.toolCalls,compilerAvailable ? 5 : 4);
   assert.ok(performance.phasesMs.snapshotBefore>=0);assert.ok(performance.phasesMs.snapshotAfter>=0);
   if(compilerAvailable) {
-    const automatic=await page.evaluate(id=>store.compile(id),id);assert.equal(automatic.ok,true);assert.equal(automatic.cached,true);
+    let automatic = await page.evaluate(id => store.compile(id), id);
+    assert.equal(automatic.ok, true);
+    // A minute boundary legitimately invalidates the assistant's build cache entry.
+    if (!automatic.cached && Math.floor(Date.now() / 60000) !== finalBuildMinute) {
+      automatic = await page.evaluate(id => store.compile(id), id);
+      assert.equal(automatic.ok, true);
+    }
+    assert.equal(automatic.cached, true);
     const forced=await page.evaluate(id=>store.compile(id,true),id);assert.equal(forced.ok,true);assert.equal(forced.cached,false);
   }
 });

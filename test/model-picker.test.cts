@@ -356,6 +356,10 @@ test('picker fits narrow and short viewports and tracks layout changes', async t
   const page = await picker(t);
   const panel = page.locator('.model-panel');
   const bounds = async (width: number, height: number) => {
+    await page.waitForFunction(({width, height}) => {
+      const box = document.querySelector('.model-panel')!.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && box.left >= 0 && box.top >= 0 && box.right <= width && box.bottom <= height;
+    }, {width, height});
     const box = await panel.boundingBox();
     assert.ok(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= height);
     return box;
