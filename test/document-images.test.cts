@@ -44,6 +44,12 @@ test('reference-only images and commented or literal examples stay hidden', asyn
   await materializeDocumentImages(store, project.id);
   assert.deepEqual(await store.files(project.id), ['main.tex']);
   assert.equal(await store.read(project.id, 'main.tex'), source);
+  await store.write(project.id, 'main.tex', command);
+  await store.write(project.id, 'chapters/figures.tex', command);
+  await materializeDocumentImages(store, project.id);
+  const expected = `\\includegraphics{images/chat-${used.token}}`;
+  assert.equal(await store.read(project.id, 'main.tex'), expected);
+  assert.equal(await store.read(project.id, 'chapters/figures.tex'), expected);
 });
 
 test('a later assistant turn materializes an earlier attachment even after cancellation', async t => {

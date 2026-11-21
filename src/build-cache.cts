@@ -41,14 +41,17 @@ class BuildCache {
   }
   async run(id:string,cwd:string,options:Options,force=false):Promise<Result> {
     if(options.signal?.aborted)return {ok:false,log:'Compilation cancelled.',exitCode:null};
-    const key=await this.key(id,options),cached=this.entries.get(id);
-    if(!force && cached?.key===key && Date.now()-cached.created<60000) {
-      try {
-        const dependencies=await this.dependencies(cwd,options);
-        if(dependencies.size===cached.dependencies.size && [...dependencies].every(([file,stamp])=>cached.dependencies.get(file)===stamp)) {
-          this.entries.delete(id);this.entries.set(id,cached);return {...cached.result,cached:true};
-        }
-      } catch { /* Missing/replaced outputs and dependencies require a real build. */ }
+    const cached=this.entries.get(id);
+    const [key, dependencies]=await Promise.all([
+      this.key(id, options),
+      !force && cached && Date.now()-cached.created<60000
+        ? this.dependencies(cwd, options).catch(() => undefined)
+        : undefined
+    ]);
+    if (options.signal?.aborted) return {ok:false,log:'Compilation cancelled.',exitCode:null};
+    if (dependencies && cached?.key===key && Date.now()-cached.created<60000 &&
+        dependencies.size===cached.dependencies.size && [...dependencies].every(([file,stamp])=>cached.dependencies.get(file)===stamp)) {
+      this.entries.delete(id);this.entries.set(id,cached);return {...cached.result,cached:true};
     }
     this.entries.delete(id);
     const result=await this.compile(cwd,options);
