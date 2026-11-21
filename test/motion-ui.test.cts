@@ -57,6 +57,27 @@ test('keyboard project navigation leaves the new focus indicator fully opaque', 
   }
 });
 
+test('the project actions icon retains keyboard access in list and grid views', async () => {
+  const {browser, page, errors} = await fixture.openHeadlessUi();
+  try {
+    for (const view of ['List view', 'Grid view']) {
+      await page.getByRole('button', {name:view}).click();
+      const actions = page.locator('summary[aria-label="Actions for Spectral methods for fluid dynamics"]');
+      await actions.waitFor();
+      assert.equal(await actions.locator('svg[aria-hidden="true"]').count(), 1);
+      assert.equal(await actions.innerText(), '');
+      await actions.focus();
+      await page.keyboard.press('Enter');
+      assert.equal(await actions.evaluate(summary => summary.closest('details')?.open), true);
+      await page.keyboard.press('Escape');
+      assert.equal(await actions.evaluate(summary => !summary.closest('details')?.open && summary === document.activeElement), true);
+    }
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('overlay fades leave the app immediately interactive and preserve focus on reversal', async () => {
   const {browser, page, errors} = await fixture.openHeadlessUi();
   try {
