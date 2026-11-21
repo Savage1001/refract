@@ -71,6 +71,46 @@ test('MCP tools verify edits, reject stale/ambiguous edits, and expire on close'
   await assert.rejects(fetch(bridge.connection.url, {method:'POST'}));
 });
 
+test('targeted reads and guarded replacements preserve all unrelated bytes', async t => {
+  const parent = await fs.realpath(os.tmpdir());
+  const root = await fs.mkdtemp(path.join(parent, 'refract-guarded-edits-'));
+  t.after(async () => {
+    assert.equal(path.dirname(await fs.realpath(root)), parent);
+    await fs.rm(root, {recursive: true, force: true});
+  });
+  const store = new ProjectStore(root);
+  const {id} = await store.create('Guarded edits');
+  const file = 'main.tex';
+  const prefix = '\ufeff% unchanged audit note\r\n' + '% audit\r\n'.repeat(3000);
+  const original = prefix + 'Control\r\nPending.\r\nTreatment\r\nPending.\r\nVoltage: 7 mV.\r\n';
+  await store.write(id, file, original);
+  const bridge = await startAssistantTools(store, id, async () => ({ok: true}), async () => ({}));
+  const client = new Client({name: 'guarded-edits-test', version: '1.0.0'});
+  t.after(async () => {await client.close(); await bridge.close();});
+  await client.connect(new StreamableHTTPClientTransport(new URL(bridge.connection.url), {
+    requestInit: {headers: {Authorization: `Bearer ${bridge.connection.token}`}},
+  }));
+  const call = (name: string, args: Record<string, unknown>) => client.callTool({name, arguments: args});
+  const value = (response: Awaited<ReturnType<typeof call>>) => JSON.parse((response.content as Array<{text: string}>)[0].text);
+  const first = value(await call('project_read', {path: file, find: 'Pending.'}));
+  assert.ok(first.matchOffset > 16000 && first.content.length <= 600);
+  const second = value(await call('project_read', {path: file, find: 'Pending.', offset: first.nextOffset}));
+  assert.equal(second.sha256, first.sha256);
+  assert.equal(second.matchOffset, original.lastIndexOf('Pending.'));
+  assert.equal(second.nextOffset, null);
+  assert.equal(value(await call('project_read', {path: file, find: 'unknown'})).matchOffset, null);
+  const edit = {path: file, oldText: 'Treatment\nPending.', newText: 'Treatment\nApproved.'};
+  for (const additional of [{oldText: 'Missing', newText: 'Present'}, {oldText: 'Treatment', newText: 'Test'}]) {
+    assert.equal((await call('project_edit', {...edit, additional: [additional]})).isError, true);
+    assert.equal(await store.read(id, file), original);
+  }
+  assert.equal((await call('project_edit', {path: file, oldText: 'Pending.', newText: 'Approved.'})).isError, true);
+  const response = await call('project_edit', {...edit, additional: [{oldText: '7 mV', newText: '9 mV'}]});
+  assert.equal(value(response).applied, true);
+  assert.equal(await store.read(id, file), original.replace('Treatment\r\nPending.', 'Treatment\r\nApproved.').replace('7 mV', '9 mV'));
+  assert.equal((await call('project_edit', {path: file, sha256: second.sha256, oldText: '9 mV', newText: '11 mV'})).isError, true);
+});
+
 test('closing waits for a running tool before releasing the snapshot boundary', async t => {
   const parent = await fs.realpath(os.tmpdir()), root = await fs.mkdtemp(path.join(parent,'refract-tool-close-'));
   t.after(async()=>{assert.equal(path.dirname(await fs.realpath(root)),parent);await fs.rm(root,{recursive:true,force:true});});

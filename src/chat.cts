@@ -249,7 +249,11 @@ class ChatService {
         if(signal?.aborted) throw new Error('Assistant operation cancelled.');
         const runner = selected === 'codex' ? this.runner : this.openCodeRunner;
         const context = history ? `The following is prior conversation context. Continue with the current request after it.\n\n${history}\n\nCurrent request:\n${promptWithFiles}` : promptWithFiles;
-        const runnerPrompt = `${buildInstructions ? buildInstructions + '\n\n' : ''}Chat attachments are private reference material. Copy an attached image to a visible project folder such as images/ only when including it in the document, and use that project path in LaTeX. Preserve private originals for chat history. Refract migrates literal includegraphics references to private images before builds and after your turn; reread source after building if needed. The active Refract project workspace is ${workspace}. Use this directory for the current request; verify its files before answering questions about the project. Prior context or instructions about other projects do not describe this workspace.\n\n${context}`;
+        const workspaceInstructions = `Active Refract workspace: ${workspace}. Verify files in this workspace when answering project questions.`;
+        const attachmentInstructions = chat.messages.some(message => message.attachments?.length)
+          ? 'Chat attachments are private. To include an attached image, copy it into a visible folder and use that path in LaTeX. Keep the private original. Refract migrates literal includegraphics references to private images during builds and after the turn.'
+          : '';
+        const runnerPrompt = [buildInstructions, workspaceInstructions, attachmentInstructions, context].filter(Boolean).join('\n\n');
         options?.performance?.add('context',performance.now()-contextStarted);options?.performance?.count('contextCharacters',runnerPrompt.length);
         const execute=()=>runner(workspace, chat.sessionId, runnerPrompt, imagePaths, signal, onProgress, persistSession, options);
         let result: {sessionId?: string; text: string};
