@@ -215,7 +215,7 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
     connection: {url: `http://127.0.0.1:${address.port}/mcp`, token},
     hasSuccessfulBuild: () => successfulBuild,
     engineInstructions,
-     instructions: 'Prefer refract tools. Edit directly when the request gives the file and exact old text. Otherwise read targeted context (find for known text), then edit with the returned SHA-256. Batch files with *_many and same-file replacements with additional. A successful edit verifies the save. On failure, reread before retrying; check each batch result. Use conversation_read for omitted history. Use build for requested compilation; batch edits first and check warnings. Only claim visual inspection if performed. Preserve document content and shared TinyTeX; report missing dependencies or use a licensed project-local copy.' +
+     instructions: 'Prefer refract tools. Use project_edit directly when the request gives the file and exact old text. Otherwise read targeted context (find for known text), then edit with the returned SHA-256. Batch files with *_many and same-file replacements with additional. A successful edit verifies the save. On failure, reread before retrying; check each batch result. Use conversation_read for omitted history. Use build for requested compilation; batch edits first and check warnings. Only claim visual inspection if performed. Preserve document content and shared TinyTeX; report missing dependencies or use a licensed project-local copy.' +
       (engineInstructions ? ' ' + engineInstructions : ''),
     close() { return closeJob ??= (async () => {
       closing = true;
