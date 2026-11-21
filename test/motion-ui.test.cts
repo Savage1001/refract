@@ -627,15 +627,17 @@ test('the sidebar clips its live content to the moving edge and reverses from it
       const clippedEdge = panel.getBoundingClientRect().right -
         Number.parseFloat(getComputedStyle(panel).clipPath.split(' ')[1]);
       const closingState = {inert:panel.inert, painted:panel.checkVisibility()};
+      const midpointOpacity = Number(getComputedStyle(panel).opacity);
 
       button.click();
       const restart = edge.getBoundingClientRect().left;
+      const restartOpacity = Number(getComputedStyle(panel).opacity);
       const workspaceRestart = workspace.getBoundingClientRect().left;
       const titleRestart = title.getBoundingClientRect().left;
       const opening = animationFor(edge);
       opening.finish();
       await opening.finished;
-      return {expanded, midpoint, clippedEdge, restart, closingState,
+      return {expanded, midpoint, clippedEdge, restart, closingState, midpointOpacity, restartOpacity,
         workspaceTracksEdge:Math.abs(workspaceMidpoint.left - midpoint - workspaceGap) < .5,
         workspaceRightFixed:Math.abs(workspaceMidpoint.right - workspaceRight) < 1,
         workspaceReverses:Math.abs(workspaceRestart - workspaceMidpoint.left) < 1,
@@ -648,6 +650,8 @@ test('the sidebar clips its live content to the moving edge and reverses from it
     assert.ok(reversal.midpoint < reversal.expanded);
     assert.ok(Math.abs(reversal.clippedEdge - reversal.midpoint) < 1);
     assert.ok(Math.abs(reversal.restart - reversal.midpoint) < 1);
+    assert.ok(reversal.midpointOpacity > 0 && reversal.midpointOpacity < 1);
+    assert.equal(reversal.restartOpacity, reversal.midpointOpacity);
     assert.equal(reversal.workspaceTracksEdge, true);
     assert.equal(reversal.workspaceRightFixed, true);
     assert.equal(reversal.workspaceReverses, true);

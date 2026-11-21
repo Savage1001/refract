@@ -1900,8 +1900,10 @@ sidebarToggle.onclick = () => {
   const workspaceStart = workspaceShell.getBoundingClientRect();
   const titleStart = projectTrail.getBoundingClientRect().left;
   const expandedWidth = sidebarPanel.getBoundingClientRect().width;
+  const wasCollapsed = sidebar.classList.contains('collapsed');
+  const panelOpacity = wasCollapsed && !finishSidebarMotion ? '0' : getComputedStyle(sidebarPanel).opacity;
   finishSidebarMotion?.();
-  const collapsed = !sidebar.classList.contains('collapsed');
+  const collapsed = !wasCollapsed;
   if (collapsed) {
     sidebarDisclosure?.settle();
     if (sidebar.contains(document.activeElement)) sidebarToggle.focus({preventScroll:true});
@@ -1920,7 +1922,7 @@ sidebarToggle.onclick = () => {
   if (collapsed) sidebarPanel.style.width = expandedWidth + 'px';
   sidebar.style.setProperty('--sidebar-motion-width', Math.max(start, end) - sidebar.getBoundingClientRect().left + 'px');
   sidebar.dataset.sliding = '';
-  const clips = [sidebarMotionSurface, sidebarPanel].map(surface => {
+  const [surfaceClips, [panelStart, panelEnd]] = [sidebarMotionSurface, sidebarPanel].map(surface => {
     const right = surface.getBoundingClientRect().right;
     return [start, end].map(edge => ({clipPath:`inset(0 ${right - edge}px 0 0)`}));
   });
@@ -1928,8 +1930,13 @@ sidebarToggle.onclick = () => {
   const toggleOffset = toggleStart - sidebarToggle.getBoundingClientRect().left;
   const titleOffset = titleStart - projectTrail.getBoundingClientRect().left;
   const timing = {...motionTiming(), fill:'both' as const};
-  const animations = [sidebarMotionSurface, sidebarPanel].map((surface, index) =>
-    playMotion(surface, clips[index], timing));
+  const animations = [
+    playMotion(sidebarMotionSurface, surfaceClips, timing),
+    playMotion(sidebarPanel, [
+      {...panelStart, opacity:panelOpacity},
+      {...panelEnd, opacity:collapsed ? 0 : 1}
+    ], timing)
+  ];
   const edge = playMotion(sidebarEdge, [{translate:`${start - end}px 0`}, {translate:'0'}], timing);
   animations.push(playMotion(sidebarToggle, [{translate:`${toggleOffset}px 0`}, {translate:'0'}], timing));
   animations.push(playMotion(projectTrail, [{translate:`${titleOffset}px 0`}, {translate:'0'}], timing));
