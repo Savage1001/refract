@@ -3152,6 +3152,7 @@ dialog .dialog-actions {
 /* Shared geometry for monochrome action icons, independent of font metrics. */
 .ui-icon { width:18px; height:18px; display:block; flex:none; pointer-events:none; }
 .outline-label { display:flex; align-items:center; gap:8px; }
+#outline-toggle { flex:none; }
 #outline-toggle .ui-icon { width:14px; height:14px; }
 #outline-toggle[aria-expanded="true"] .ui-icon { transform:rotate(90deg); }
 .close-tab,.dismiss-welcome,.clear-file-search,#chat-image-close {
@@ -3404,7 +3405,7 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
   .sidebar.collapsed #collapse .ui-icon { scale:.86; }
 
   :is(#outline-toggle .ui-icon, .file-tree .folder-chevron) {
-    transition:transform var(--motion-overlay) var(--motion-ease), color var(--motion-control) ease-out;
+    transition:transform var(--motion-layout) var(--motion-ease), color var(--motion-control) ease-out;
   }
 
   :is(#file-list .file-tree-actions, .model-favorite) {
@@ -3529,14 +3530,17 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     &:has(:focus-visible):not(:has(> summary:focus-visible))::details-content { opacity:1!important; }
   }
 
-  #file-list { isolation:isolate; }
-  #file-list .file-tree-row { background:var(--sidebar); }
+  /* Keep disclosure layout inside the fixed-size sidebar. */
+  #files-surface { contain:size layout; }
+  #files-surface:has([data-disclosure-motion]) #file-list { overflow-anchor:none; }
+  .folder-content[data-disclosure-motion] { overflow:clip; }
+  .file-tree details:not([open]):has(>.folder-content[data-disclosure-motion])::details-content {
+    content-visibility:visible;
+  }
 
-  /* Fold departing rows behind the live rows, where no stale control can be
-     painted over the target that now owns the pointer. */
   .raw-output { position:relative; }
-  :is(.folder-motion,.raw-output)::details-content { clip-path:inset(0); }
-  :is(.folder-motion,.raw-output):not([open])::details-content {
+  .raw-output::details-content { clip-path:inset(0); }
+  .raw-output:not([open])::details-content {
     position:absolute;
     inset:100% 0 auto;
     opacity:0;
@@ -3546,7 +3550,6 @@ button:enabled:is(.icon, :has(>.ui-icon), .stop-chat, .model-favorite):not(:wher
     transition:clip-path var(--motion-overlay) var(--motion-ease), opacity var(--motion-overlay) ease-out,
       content-visibility var(--motion-overlay) allow-discrete;
   }
-  .folder-motion:not([open])::details-content { z-index:-1; }
   .raw-output:not([open]) :is(.log-controls,.log-filter-empty) { visibility:hidden; }
 
   .new-chat-tooltip {
