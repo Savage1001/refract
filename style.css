@@ -674,6 +674,8 @@ main {
 #import {
   display:inline-flex;
   align-items:center;
+  /* Match the visible gap from the gear inside the settings button. */
+  margin-inline-end:9px;
   width:auto;
   height:36px;
   gap:6px;
