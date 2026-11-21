@@ -932,7 +932,10 @@ main {
 .project-actions summary {
   list-style:none;
   cursor:pointer;
-  padding:6px 8px;
+  display:grid;
+  place-items:center;
+  width:32px;
+  height:32px;
   border-radius:5px;
   color:var(--muted);
   font-size:12px;
