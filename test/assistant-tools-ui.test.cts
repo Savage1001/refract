@@ -7,7 +7,7 @@ import playwright = require('playwright');
 const {test} = testModule, {_electron:electron} = playwright;
 declare const store: any;
 
-test('desktop wires direct tools into both providers and snapshots confirmed edits', {timeout:60000}, async t => {
+test('desktop wires direct tools into both providers, saves compiler changes and snapshots edits', {timeout:60000}, async t => {
   const parent = await fs.realpath(os.tmpdir()), data = await fs.mkdtemp(path.join(parent,'refract-tools-ui-'));
   const env: NodeJS.ProcessEnv = {...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'}; delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({args:[path.resolve(__dirname,'../..')],env});
@@ -29,7 +29,15 @@ test('desktop wires direct tools into both providers and snapshots confirmed edi
         };
         const read = await call('project_read',{path:'main.tex'});
         await call('project_edit',{path:'main.tex',sha256:read.sha256,oldText:read.content.includes('Introduction') ? 'Introduction' : 'First confirmed edit',newText:read.content.includes('Introduction') ? 'First confirmed edit' : 'Second confirmed edit'});
-        if(compilerAvailable)await call('build',{});
+        const engine = read.content.includes('Introduction') ? 'xelatex' : 'lualatex';
+        const change = await call('project_set_engine', {engine});
+        if (change.engine !== engine || change.changed !== true) throw new Error('Expected the project engine to change');
+        const repeated = await call('project_set_engine', {engine});
+        if (repeated.changed !== false) throw new Error('Selecting the same engine should be a no-op');
+        if (compilerAvailable) {
+          const build = await call('build', {});
+          if (!build.ok || build.engine !== engine) throw new Error(`Build did not succeed with ${engine}: ${build.log}`);
+        }
         (globalThis as any).__lastToolConnection=connection;
         return {sessionId:null,text:'Confirmed edit'};
       };
@@ -41,9 +49,15 @@ test('desktop wires direct tools into both providers and snapshots confirmed edi
   await page.evaluate(() => store.codexAccountSelect('cli'));
   await page.locator('#new').click(); await page.locator('#source').waitFor({state:'visible'});
   const id: string = await page.evaluate(async()=>{const [project]=await store.list();return project.id;});
+  await page.locator('#tools').click();
+  await page.locator('#tool-info').click();
   for (const provider of ['codex','opencode']) {
     const chat = await page.evaluate(({id,provider})=>store.chatSend(id,'Edit the section','default',[],provider),{id,provider});
     assert.equal(chat.messages.at(-1).text,'Confirmed edit');
+    const engine = provider === 'codex' ? 'xelatex' : 'lualatex';
+    await page.waitForFunction(engine => document.querySelector<HTMLSelectElement>('[aria-label="LaTeX engine"]')?.value === engine, engine);
+    const metadata = JSON.parse(await fs.readFile(path.join(data,'projects',id,'.refract.json'),'utf8'));
+    assert.equal(metadata.engine, engine);
     const connection = await app.evaluate(()=>(globalThis as any).__lastToolConnection);
     await assert.rejects(fetch(connection.url,{method:'POST',headers:{Authorization:`Bearer ${connection.token}`}}));
     assert.ok(!JSON.stringify(chat).includes(connection.token));
@@ -52,7 +66,7 @@ test('desktop wires direct tools into both providers and snapshots confirmed edi
   const versions = await page.evaluate(id=>store.versionList(id),id);
   assert.ok(versions.length>=3,'Before and after snapshots were not captured');
   const performance=await page.evaluate(id=>store.assistantPerformance(id),id);
-  assert.ok(performance.totalMs>0);assert.equal(performance.counts.toolCalls,compilerAvailable ? 3 : 2);
+  assert.ok(performance.totalMs>0);assert.equal(performance.counts.toolCalls,compilerAvailable ? 5 : 4);
   assert.ok(performance.phasesMs.snapshotBefore>=0);assert.ok(performance.phasesMs.snapshotAfter>=0);
   if(compilerAvailable) {
     const automatic=await page.evaluate(id=>store.compile(id),id);assert.equal(automatic.ok,true);assert.equal(automatic.cached,true);

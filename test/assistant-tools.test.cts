@@ -86,6 +86,33 @@ test('closing waits for a running tool before releasing the snapshot boundary', 
   release(); assert.ok(!(await building).isError); await closing; await client.close();
 });
 
+test('the compiler tool accepts only supported engines for the current project', async t => {
+  const parent = await fs.realpath(os.tmpdir()), root = await fs.mkdtemp(path.join(parent, 'refract-engine-tool-'));
+  t.after(async () => {assert.equal(path.dirname(await fs.realpath(root)), parent); await fs.rm(root, {recursive:true, force:true});});
+  const store = new ProjectStore(root), project = await store.create('Engine tool');
+  const bridge = await startAssistantTools(store, project.id,
+    async () => ({engine: (await store.metadata(project.id)).engine}), async () => ({}), {
+      setEngine: async engine => {
+        await store.setEngine(project.id, engine);
+        return {engine, changed: true};
+      }
+    });
+  t.after(() => bridge.close());
+  const client = new Client({name: 'engine-test', version: '1.0.0'});
+  await client.connect(new StreamableHTTPClientTransport(new URL(bridge.connection.url), {
+    requestInit: {headers: {Authorization: `Bearer ${bridge.connection.token}`}}
+  }));
+  t.after(() => client.close());
+  const change = (args: Record<string, unknown>) => client.callTool({name: 'project_set_engine', arguments: args});
+  assert.match(bridge.instructions, /project_set_engine/);
+  assert.equal((await change({engine: '../pdflatex.exe'})).isError, true);
+  assert.equal((await change({engine: 'xelatex', projectId: 'another-project'})).isError, true);
+  assert.equal((await store.metadata(project.id)).engine, undefined);
+  assert.equal((await change({engine: 'xelatex'})).isError, undefined);
+  const build = await client.callTool({name: 'build', arguments: {}});
+  assert.deepEqual(build.content, [{type: 'text', text: '{"engine":"xelatex"}'}]);
+});
+
 test('provider configuration is per turn and preserves existing OpenCode settings', () => {
   const tools = {url:'http://127.0.0.1:12345/mcp',token:'test-secret'};
   for (const session of [null, 'existing-session']) {

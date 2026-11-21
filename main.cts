@@ -517,7 +517,20 @@ app.whenReady().then(async () => {
         const result = await metrics.measure('build',()=>buildCache.run(id,project,options,force));
         metrics.count(result.cached ? 'buildCacheHits' : 'builds');
         return {id:crypto.randomUUID(), cached:result.cached, engine:options.engine, rootFile:options.rootFile, cwd:project, outputDirectory:path.join(project,'.refract-build'), arguments:result.arguments, environment:'Inherited environment, configured external TeX bin prepended to PATH; BIBINPUTS includes the project recursively. XeLaTeX may use a generated FONTCONFIG_FILE.', pdfPath:result.ok ? path.join(project,'.refract-build','main.pdf') : null, ok:result.ok, exitCode:result.exitCode, log:result.log};
-      }, name => lookupPackage(name,project,texBin(),signal),{performance:metrics,history:()=>chats.load(id,chatId)});
+      }, name => lookupPackage(name,project,texBin(),signal),{
+        performance: metrics,
+        history: () => chats.load(id, chatId),
+        setEngine: engine => enqueue(async () => {
+          signal.throwIfAborted();
+          await store.destinationDir(id);
+          const previous = (await store.metadata(id)).engine || 'pdflatex';
+          signal.throwIfAborted();
+          if (previous === engine) return {engine, changed: false};
+          await store.setEngine(id, engine);
+          if (!event.sender.isDestroyed()) event.sender.send('projects:engine-changed', {projectId: id, engine});
+          return {engine, changed: true};
+        })
+      });
       try {return await chats.send(id,prompt,chatId,attachments,signal,status=>{
         if(!event.sender.isDestroyed())event.sender.send('chat:progress',{projectId:id,chatId,status});
       }, {model: preferences.model ?? undefined, reasoningEffort: preferences.reasoningEffort ?? undefined, ...(provider === 'codex' ? {fastMode: preferences.fastMode} : {}), tools:bridge.connection, performance:metrics, launch}, provider,bridge.instructions);}

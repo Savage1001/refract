@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld('store', {
   chatSend: (id, prompt, chatId, attachments, provider, selection?: Omit<import('./src/codex-preferences.cjs').CodexPreferences, 'favorites'>, mode?: string) => ipcRenderer.invoke('chat:send', id, prompt, chatId, attachments, provider, selection, mode),
   chatCancel: id => ipcRenderer.invoke('chat:cancel', id),
   onChatProgress: callback => {ipcRenderer.on('chat:progress', (_event,update) => callback(update));},
+  onProjectEngineChanged: (callback: (update: {projectId: string; engine: string}) => void) => {
+    ipcRenderer.on('projects:engine-changed', (_event, update) => callback(update));
+  },
   compile: (id,force=false) => ipcRenderer.invoke('compile', id,force),
   assistantPerformance: id => ipcRenderer.invoke('assistant:performance',id),
   syncForward: (id,file,line) => ipcRenderer.invoke('synctex:forward',id,file,line),
