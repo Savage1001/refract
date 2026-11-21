@@ -115,7 +115,7 @@ async function picker(t: TestContext, mode: Mode = 'normal', selectCodex = true)
     });
   }, mode);
   await page.goto(root);
-  await page.locator('.model-trigger').click();
+  if (mode !== 'signed-out') await page.locator('.model-trigger').click();
   if (selectCodex) await page.getByRole('button', {name: 'Codex models'}).click();
   return page;
 }
@@ -610,8 +610,16 @@ test('switching Codex connections isolates pending saves and model selections', 
   assert.deepEqual(saves, [{provider: 'cli', value: {model: 'gpt-6.2', reasoningEffort: 'high', favorites: []}}]);
 });
 
-test('signed-out ChatGPT account shows the branded sign-in action', async t => {
-  const page = await picker(t, 'signed-out');
+test('signed-out Codex prompts for sign-in from the model picker trigger', async t => {
+  const page = await picker(t, 'signed-out', false);
+  const label = trigger(page).locator('.model-trigger-label');
+  assert.equal(await label.textContent(), 'Sign in');
+  await page.locator('#chat-provider').evaluate((provider: HTMLSelectElement) => {
+    provider.value = 'codex';
+    provider.dispatchEvent(new Event('providerstate'));
+  });
+  assert.equal(await label.textContent(), 'Sign in');
+  await trigger(page).click();
   const signIn = choice(page, 'Sign in with ChatGPT');
   assert.ok(await signIn.isVisible());
   await page.waitForFunction(() => document.querySelector<HTMLImageElement>('.model-sign-in img')?.naturalWidth);
@@ -619,8 +627,20 @@ test('signed-out ChatGPT account shows the branded sign-in action', async t => {
     provider.addEventListener('picker-sign-in', () => provider.setAttribute('data-sign-in-requested', 'true'));
   });
   if (process.env.REFRACT_PICKER_CAPTURE) {
-    await page.locator('.model-panel').screenshot({path: process.env.REFRACT_PICKER_CAPTURE});
+    const panel = (await page.locator('.model-panel').boundingBox())!;
+    const button = (await trigger(page).boundingBox())!;
+    const x = Math.min(panel.x, button.x) - 12;
+    const y = panel.y - 12;
+    await page.screenshot({path: process.env.REFRACT_PICKER_CAPTURE, clip: {
+      x, y, width: Math.max(panel.x + panel.width, button.x + button.width) + 12 - x,
+      height: button.y + button.height + 12 - y
+    }});
   }
   await signIn.click();
   assert.equal(await page.locator('#chat-provider').getAttribute('data-sign-in-requested'), 'true');
+  await page.locator('#chat-provider').evaluate(provider => {
+    delete provider.dataset.codexSignInRequired;
+    provider.dispatchEvent(new Event('providerstate'));
+  });
+  assert.equal(await label.textContent(), 'Codex unavailable');
 });
