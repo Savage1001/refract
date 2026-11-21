@@ -56,3 +56,40 @@ test('outline renders inline math and retains section navigation', {timeout:3000
   assert.deepEqual(errors,[]);
  } finally { await browser.close(); }
 });
+
+test('outline divider resizes the list and keeps its height when reopened', {timeout:30000}, async () => {
+ const source = Array.from({length:40}, (_, index) => `\\section{Section ${index + 1}}`).join('\n');
+ const {browser,page,errors} = await fixture.openHeadlessUi('dark', {source, pdf:''}, {reducedMotion:'reduce'});
+ try {
+  await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+  const list = page.locator('#outline-list');
+  await list.getByRole('button',{name:'Section 40', exact:true}).waitFor();
+  const divider = page.getByRole('separator',{name:'Resize outline'});
+  const bounds = (await divider.boundingBox())!;
+  const height = () => list.evaluate(el => el.getBoundingClientRect().height);
+  const initial = await height();
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x,y);
+  await page.mouse.down();
+  await page.mouse.move(x,y + 100,{steps:5});
+  await page.mouse.up();
+  const shortened = await height();
+  assert.ok(shortened <= initial - 100);
+  assert.ok(await list.evaluate(el => el.scrollHeight > el.clientHeight));
+
+  await divider.press('ArrowUp');
+  assert.equal(await height(), shortened + 10);
+  await page.locator('#outline-toggle').click();
+  await divider.waitFor({state:'hidden'});
+  await page.locator('#outline-toggle').click();
+  await divider.waitFor();
+  assert.equal(await height(), shortened + 10);
+
+  await page.reload();
+  await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
+  await list.getByRole('button',{name:'Section 40', exact:true}).waitFor();
+  assert.equal(await height(), shortened + 10);
+  assert.deepEqual(errors,[]);
+ } finally { await browser.close(); }
+});

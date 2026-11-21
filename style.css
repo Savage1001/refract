@@ -421,6 +421,7 @@ body:has(#projects:not([hidden])) .app-titlebar {
 }
 
 #outline {
+  position:relative;
   border-top:1px solid var(--border);
   margin-top:16px;
   flex:0 1 auto;
@@ -428,6 +429,32 @@ body:has(#projects:not([hidden])) .app-titlebar {
   display:flex;
   flex-direction:column;
   padding-top:8px;
+}
+
+#outline-resize {
+  position:absolute;
+  inset:-5px 0 auto;
+  height:9px;
+  cursor:row-resize;
+}
+
+#outline-resize:is(:hover,:focus-visible)::after {
+  content:"";
+  position:absolute;
+  inset:4px 0 auto;
+  border-top:1px solid var(--accent);
+}
+
+#outline:has(#outline-toggle[aria-expanded="false"]) #outline-resize {
+  visibility:hidden;
+}
+
+#files-surface.has-outline-height #file-list {
+  min-height:48px;
+}
+
+#outline-list {
+  height:var(--outline-list-height, auto);
 }
 
 .outline-label {

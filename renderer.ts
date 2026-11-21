@@ -2831,6 +2831,35 @@ resizeHandle("chat-resize", "y", delta => {
   chatResize.style.height = `${Math.max(220, Math.min(editorResize.clientHeight - 100, chatResize.offsetHeight - delta))}px`;
 });
 
+const filesSurface = document.getElementById('files-surface')!;
+const fileListForResize = document.getElementById('file-list')!;
+const outlineForResize = document.getElementById('outline')!;
+const outlineListForResize = document.getElementById('outline-list')!;
+const outlineHeightKey = 'refract-outline-list-height';
+const minOutlineListHeight = 32;
+
+function applyOutlineListHeight(height: number): void {
+  filesSurface.classList.add('has-outline-height');
+  outlineListForResize.style.setProperty('--outline-list-height', `${height}px`);
+}
+
+try {
+  const height = Number(localStorage.getItem(outlineHeightKey));
+  if (Number.isFinite(height) && height >= minOutlineListHeight) applyOutlineListHeight(height);
+} catch {}
+
+function maxOutlineListHeight(): number {
+  return Math.max(minOutlineListHeight, outlineListForResize.offsetHeight + fileListForResize.offsetHeight - 48);
+}
+
+document.getElementById('outline-resize')!.addEventListener('pointerdown', () => sidebarDisclosure?.settle());
+resizeHandle('outline-resize', 'y', delta => {
+  sidebarDisclosure?.settle();
+  const height = Math.max(minOutlineListHeight, Math.min(maxOutlineListHeight(), outlineListForResize.offsetHeight - delta));
+  applyOutlineListHeight(height);
+  try { localStorage.setItem(outlineHeightKey, String(height)); } catch {}
+});
+
 function updateResizeAccessibility(): void {
   const setRange = (id: string, target: HTMLElement, minimum: number, maximum: number, size: number): void => {
     const handle = document.getElementById(id)!;
@@ -2841,6 +2870,9 @@ function updateResizeAccessibility(): void {
     handle.setAttribute('aria-valuenow', String(value));
     handle.setAttribute('aria-valuetext', `${value} pixels`);
   };
+  const outlineHeaderHeight = outlineForResize.offsetHeight - outlineListForResize.offsetHeight;
+  setRange('outline-resize', outlineForResize, outlineHeaderHeight + minOutlineListHeight,
+    outlineHeaderHeight + maxOutlineListHeight(), outlineForResize.offsetHeight);
   setRange('sidebar-resize', sidebarResize, 150, Math.floor(window.innerWidth * .4), sidebarResize.offsetWidth);
   setRange('workspace-resize', editorResize, 300, workspaceResize.clientWidth - 292, editorResize.offsetWidth);
   const fraction = window.matchMedia('(max-width:1200px)').matches ? .55 : .65;
@@ -2852,7 +2884,7 @@ const resizeAccessibilityObserver = new ResizeObserver(entries => {
   }
   updateResizeAccessibility();
 });
-for (const pane of [sidebarResize, workspaceResize, editorResize, chatResize]) resizeAccessibilityObserver.observe(pane);
+for (const pane of [sidebarResize, workspaceResize, editorResize, chatResize, outlineForResize, fileListForResize]) resizeAccessibilityObserver.observe(pane);
 window.addEventListener('resize', updateResizeAccessibility);
 updateResizeAccessibility();
 
