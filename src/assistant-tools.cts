@@ -4,16 +4,23 @@ import http = require('node:http');
 import mcpSdk = require('@modelcontextprotocol/sdk/server/mcp.js');
 import transportSdk = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 import zod = require('zod');
+import toolchain = require('./tex-toolchain.cjs');
 const {McpServer} = mcpSdk, {StreamableHTTPServerTransport} = transportSdk, {z} = zod;
 
 export interface ToolConnection { url: string; token: string }
+type LatexEngine = typeof toolchain.latexEngines[number];
 interface WorkspaceStore {
   existingFile(id: string, name: string): Promise<string>;
   destinationDir(id: string): Promise<string>;
   files(id: string): Promise<string[]>;
   write(id: string, name: string, content: string): Promise<void>;
 }
-interface ToolOptions { performance?: InstanceType<typeof import('./assistant-performance.cjs').AssistantPerformance>; history?: () => Promise<{messages:Array<{role:string;text?:string;attachments?:Array<{token:string;name:string}>}>}> }
+interface ToolOptions {
+  performance?: InstanceType<typeof import('./assistant-performance.cjs').AssistantPerformance>;
+  history?: () => Promise<{messages:Array<{role:string;text?:string;attachments?:Array<{token:string;name:string}>}>}>;
+  initialEngine?: LatexEngine;
+  setEngine?: (engine: LatexEngine) => Promise<{engine: LatexEngine; previousEngine: LatexEngine | null; changed: boolean}>;
+}
 const MAX_BYTES = 2 * 1024 * 1024;
 const fileName = z.string().min(1).max(1024).refine(name => !name.split(/[\\/]/).some(part => part.startsWith('.')), 'Private project files are unavailable');
 const hash = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
@@ -26,6 +33,13 @@ const editSchema = {
   ...replacement,
   additional: z.array(z.object(replacement)).max(7).optional(),
 };
+const engineSelectionPolicy =
+  'Choose the fastest LaTeX engine that fully meets the user, template, package, font, language and output requirements. ' +
+  'For a speed request, check the document and template first. If they are compatible with pdfLaTeX and currently use XeLaTeX or LuaLaTeX, switch to pdfLaTeX and build, unless project timings favor another engine. ' +
+  'Refract’s small-document Windows benchmarks found pdfLaTeX faster than both alternatives. Use project-specific measurements when available. ' +
+  'When the document needs XeLaTeX or LuaLaTeX, choose the fastest compatible option based on its requirements and any existing timings. ' +
+  'For a routine build, keep a compatible current engine. ' +
+  'After switching, build and check for compatibility warnings and required output features. If the new engine proves unsuitable, restore the previous engine reported by the tool when one is available. Tell the user which engine you selected.';
 
 // Every operation is scoped to one project and one assistant turn. No arbitrary
 // commands are exposed here; those remain in the provider's normal sandbox.
@@ -86,6 +100,7 @@ function createWorkspaceTools(store: WorkspaceStore, id: string) {
       parts.push(before.content.slice(end));
       const content = parts.join('');
       if (Buffer.byteLength(content) > MAX_BYTES) throw new Error('Edited file exceeds 2 MiB');
+      if (Buffer.from(content).toString('utf8') !== content) throw new Error('Edit must preserve valid Unicode text');
       await store.write(id, name, content);
       const after = await read(name);
       if (after.content !== content) throw new Error('Edit verification failed; read the file again');
@@ -100,6 +115,7 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
   const workspace = createWorkspaceTools(store, id);
   const token = crypto.randomBytes(32).toString('hex');
   let closing = false;
+  let successfulBuild = false;
   let closeJob: Promise<void> | undefined;
   let busyBuild = false;
   const active = new Set<Promise<void>>();
@@ -162,10 +178,21 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
         try { return result(await track(()=>workspace.exclusive(work))); } finally { busyBuild = false; }
       };
       mcp.registerTool('build', {description: 'Compile with the active Refract engine and root. Reuses a validated unchanged successful build unless force=true. Build once after a coherent batch of edits. Compiler output is bounded; set logLimit for more.', inputSchema: {force:z.boolean().default(false),logLimit:z.number().int().min(1000).max(250000).default(12000)}}, ({force,logLimit}) => runBuild(async()=>{
+        successfulBuild = false;
         const value=await build(force);
+        successfulBuild = !!value && typeof value === 'object' && 'ok' in value && value.ok === true;
         if(value && typeof value==='object' && 'log' in value && typeof value.log==='string')return {...value,log:value.log.slice(-logLimit),logTruncated:value.log.length>logLimit,logCharacters:value.log.length};
         return value;
       }));
+      const setEngine = options.setEngine;
+      if (setEngine) mcp.registerTool('project_set_engine', {
+        description: 'Change the current project’s saved LaTeX engine. Future builds and the editor use this selection. ' + engineSelectionPolicy,
+        inputSchema: z.strictObject({engine: z.enum(toolchain.latexEngines)}),
+      }, async ({engine}) => result(await track(() => workspace.exclusive(async () => {
+        const change = await setEngine(engine);
+        if (change.changed) successfulBuild = false;
+        return change;
+      }))));
       mcp.registerTool('package_lookup', {description: 'Check availability of a TeX package in the configured TeX environment.', inputSchema: {name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.sty$/)}}, ({name}) => runBuild(() => lookup(name)));
       res.once('close', () => { clients.delete(mcp); void mcp.close(); });
       await mcp.connect(transport);
@@ -178,9 +205,18 @@ async function startAssistantTools(store: WorkspaceStore, id: string, build: (fo
   await new Promise<void>((resolve, reject) => {server.once('error', reject); server.listen(0, '127.0.0.1', () => {server.removeListener('error', reject); resolve();});});
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Could not start assistant tools');
+  const engineInstructions = options.setEngine
+    ? (options.initialEngine ? `The current project's LaTeX engine at the start of this turn is ${options.initialEngine}. ` : '') +
+      'If asked to compile, call the Refract build tool and check its result before replying, even when the current engine and source need no changes. ' +
+      'Use that tool for compilation so the result matches the editor. Call project_set_engine only to change the saved engine. ' +
+      engineSelectionPolicy
+    : undefined;
   return {
     connection: {url: `http://127.0.0.1:${address.port}/mcp`, token},
-    instructions: 'Prefer refract tools. Edit directly when the request gives the file and exact old text. Otherwise read targeted context (find for known text), then edit with the returned SHA-256. Batch files with *_many and same-file replacements with additional. A successful edit verifies the save. On failure, reread before retrying; check each batch result. Use conversation_read for omitted history. Use build for requested compilation; batch edits first and check warnings. Only claim visual inspection if performed. Preserve document content and shared TinyTeX; report missing dependencies or use a licensed project-local copy.',
+    hasSuccessfulBuild: () => successfulBuild,
+    engineInstructions,
+     instructions: 'Prefer refract tools. Edit directly when the request gives the file and exact old text. Otherwise read targeted context (find for known text), then edit with the returned SHA-256. Batch files with *_many and same-file replacements with additional. A successful edit verifies the save. On failure, reread before retrying; check each batch result. Use conversation_read for omitted history. Use build for requested compilation; batch edits first and check warnings. Only claim visual inspection if performed. Preserve document content and shared TinyTeX; report missing dependencies or use a licensed project-local copy.' +
+      (engineInstructions ? ' ' + engineInstructions : ''),
     close() { return closeJob ??= (async () => {
       closing = true;
       const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

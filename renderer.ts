@@ -1466,6 +1466,16 @@ store.onChatProgress(update=>{
   if(!update || !chatBusy.has(update.projectId) || typeof update.status!=='string')return;
   chatProgress.set(update.projectId,{chatId:update.chatId,status:update.status});updateChatProgress();
 });
+store.onProjectEngineChanged(({projectId, engine}: {projectId: string; engine: string}) => {
+  for (const project of projects) if (project.id === projectId) project.engine = engine;
+  if (active?.id !== projectId) return;
+  active.engine = engine;
+  revision++;
+  scheduleCompile();
+  // The assistant owns compilation until the turn finishes and the editor refreshes.
+  clearTimeout(compileTimer);
+  if (showingTools && selectedTool === 'info') renderToolPanel();
+});
 const cancelChatButton=document.createElement('button');cancelChatButton.type='button';cancelChatButton.className='stop-chat';cancelChatButton.setAttribute('aria-label','Stop');cancelChatButton.title='Stop assistant';cancelChatButton.hidden=true;
 $('#send').before(cancelChatButton);
 function updateCancelButton() {

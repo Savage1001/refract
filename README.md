@@ -69,6 +69,8 @@ To test the build bridge with a real signed-in Codex in a disposable project, ru
 
 To run the desktop Codex test against `dist/win-unpacked/Refract.exe`, build the Windows app first and also set `$env:REFRACT_TEST_PACKAGED='1'` before running `build/test/real-codex-ui.test.cjs`.
 
+To test compiler selection with a signed-in Codex CLI and a configured TeX installation, run `$env:REFRACT_REAL_ENGINE_SELECTION_TEST='1'; npm run build; node --test build/test/real-codex-engine-selection.test.cjs`, then clear the variable. This test runs GPT-6 Luna at medium reasoning on four disposable projects.
+
 The same setting runs `build/test/desktop.test.cjs` against the packaged executable. Select individual workflows with Node's `--test-name-pattern` option; tests that depend on development-only fixtures may not apply to a package. `build/test/packaged.test.cjs` also exercises packaged workflows when the build is present.
 
 Projects and chat history are stored in the application's Electron user-data directory. Back up that directory before removing the app. The Codex CLI retains its own session records separately.
@@ -86,6 +88,8 @@ During an assistant response, Refract gives either provider a temporary, project
 The package lookup uses the configured `kpsewhich` with the project working directory and inherited TeX search environment. It answers whether a `.sty` file can be found, not whether the package is compatible or complete. Refract does not install packages automatically or update its external TeX installation. Builds remain offline. When a package is missing, use a properly licensed project-local copy where suitable, or report the dependency as a blocker; redistributing any TeX component with Refract requires a separate source, build, relinking, and licensing review. A successful build and PDF signature do not establish correct layout or references: inspect the PDF and warnings separately. Visual inspection depends on the assistant provider's available tools and must be reported accurately.
 
 ### Fast assistant tools
+
+The assistant can use `project_set_engine` to select the fastest compiler that meets the document’s requirements. It checks the build after switching between pdfLaTeX, XeLaTeX and LuaLaTeX. The selection is saved in Project Info and used by subsequent editor and assistant builds.
 
 Both providers receive a temporary authenticated MCP connection named `refract` for each response. `project_list`, `project_read`, and `project_edit` operate directly on the active project, avoiding a new shell process for each file operation. `project_read_many` and `project_edit_many` batch up to eight independent files into one call. `build` and `package_lookup` call the configured build interface directly. The connection expires when the response finishes, including cancellation; a resumed conversation receives a fresh connection. The token is supplied through the provider process environment or per-thread app-server configuration, and is not saved in Refract chat or project configuration.
 

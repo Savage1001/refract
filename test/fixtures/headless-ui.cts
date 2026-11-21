@@ -54,7 +54,7 @@ function installFixture(data:{pdf:string; source:string}):void {
   versionList:async()=>[{id:'version-1',created,files:['main.tex','sections/abstract.tex']}],
   versionCompare:async()=>[{name:'main.tex',status:'changed',previous:data.source.replace('Introduction','Background and scope'),current:data.source}],
   chatLoad:async(id:string)=>id==='project-1'?structuredClone(chat):{sessionId:null,messages:[]},
-  chatList:async()=>[{id:'default',title:'Research conversation'}], onChatProgress:()=>{},
+  chatList:async()=>[{id:'default',title:'Research conversation'}], onChatProgress:()=>{}, onProjectEngineChanged:()=>{},
   discoverProviders:async()=>({codex:true,opencode:true}),
   discoverCodexModels:async()=>({ok:true,models:[{id:'model-a',model:'model-a',displayName:'Research model',description:'Sample model for UI verification',supportedReasoningEfforts:[{effort:'low',description:''},{effort:'medium',description:''},{effort:'high',description:''}],defaultReasoningEffort:'medium',isDefault:true}]}),
   discoverOpenCodeModels:async()=>({ok:true,models:[{id:'opencode/research',name:'Research model',variants:['low','high']}]}),

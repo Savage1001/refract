@@ -1,6 +1,13 @@
 export type CodexReasoningEffort = import('./codex-preferences.cjs').ReasoningEffort;
 export type Provider = 'codex' | 'opencode';
-export interface CodexOptions { launch?: import('./codex-launch.cjs').CodexLaunch; model?: string; reasoningEffort?: string; fastMode?: boolean; tools?: import('./assistant-tools.cjs').ToolConnection; performance?: InstanceType<typeof import('./assistant-performance.cjs').AssistantPerformance> }
+export interface CodexOptions { launch?: import('./codex-launch.cjs').CodexLaunch; model?: string; reasoningEffort?: string; fastMode?: boolean; tools?: import('./assistant-tools.cjs').ToolConnection; developerInstructions?: string; hasSuccessfulBuild?: () => boolean; performance?: InstanceType<typeof import('./assistant-performance.cjs').AssistantPerformance> }
+
+function claimsSuccessfulBuild(text: string): boolean {
+  return /\b(?:build|compilation) (?:succeeded|completed successfully)\b/i.test(text) ||
+    /\b(?:successfully (?:built|compiled)|(?:built|compiled) successfully)\b/i.test(text) ||
+    /\bI (?:built|compiled) (?:the (?:paper|document|project|PDF)|it|with|using)\b/i.test(text) ||
+    /\bI\b[^.!?\n]{0,200}\band (?:built|compiled) (?:(?:it|the (?:paper|document|project|PDF)) )?(?:with|using)\b/i.test(text);
+}
 
 const { modelId } = require('./codex-preferences.cjs');
 const fs = require('node:fs/promises');
@@ -255,7 +262,20 @@ class ChatService {
           : '';
         const runnerPrompt = [buildInstructions, workspaceInstructions, attachmentInstructions, context].filter(Boolean).join('\n\n');
         options?.performance?.add('context',performance.now()-contextStarted);options?.performance?.count('contextCharacters',runnerPrompt.length);
-        const execute=()=>runner(workspace, chat.sessionId, runnerPrompt, imagePaths, signal, onProgress, persistSession, options);
+        const execute = async () => {
+          const result = await runner(workspace, chat.sessionId, runnerPrompt, imagePaths, signal, onProgress, persistSession, options);
+          const verified = options?.hasSuccessfulBuild;
+          if (!verified || verified() || !claimsSuccessfulBuild(result.text)) return result;
+          signal?.throwIfAborted();
+          const session = result.sessionId || chat.sessionId;
+          if (!session) return {...result, text: 'I couldn’t verify a successful Refract build for this turn.'};
+          const corrected = await runner(workspace, session,
+            'Refract recorded no successful build for this turn. If the user requested compilation, call the Refract build tool now and report its actual result. Otherwise correct the claim without building.',
+            [], signal, onProgress, persistSession, options);
+          return !verified() && claimsSuccessfulBuild(corrected.text)
+            ? {...corrected, text: 'I couldn’t verify a successful Refract build for this turn.'}
+            : corrected;
+        };
         let result: {sessionId?: string; text: string};
         try { result = await (options?.performance ? options.performance.measure('providerTurn',execute) : execute()); }
         finally { await require('./document-images.cjs').materializeDocumentImages(this.store,id); }

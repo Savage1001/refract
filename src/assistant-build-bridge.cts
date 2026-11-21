@@ -1,6 +1,7 @@
 import http = require('node:http');
 import crypto = require('node:crypto');
 import path = require('node:path');
+import toolchain = require('./tex-toolchain.cjs');
 const {runCompilerProcess} = require('./compiler.cjs');
 
 async function lookupPackage(name:string, project:string, texBin:string, signal?:AbortSignal) {
@@ -12,7 +13,7 @@ async function lookupPackage(name:string, project:string, texBin:string, signal?
 async function configuredBuild(store: {metadata(id:string):Promise<{engine?:string;rootFile?:string;draftMode?:boolean}>}, id:string, texBin:string, signal?:AbortSignal) {
   const metadata=await store.metadata(id);
   const engine=metadata.engine || 'pdflatex';
-  if (!['pdflatex','xelatex','lualatex'].includes(engine)) throw new Error('Unsupported LaTeX engine in project settings');
+  if (!toolchain.isLatexEngine(engine)) throw new Error('Unsupported LaTeX engine in project settings');
   return {engine,draftMode:metadata.draftMode === true,rootFile:metadata.rootFile || 'main.tex',executable:path.join(texBin,engine+'.exe'),signal};
 }
 

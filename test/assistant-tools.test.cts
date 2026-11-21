@@ -82,7 +82,7 @@ test('targeted reads and guarded replacements preserve all unrelated bytes', asy
   const {id} = await store.create('Guarded edits');
   const file = 'main.tex';
   const prefix = '\ufeff% unchanged audit note\r\n' + '% audit\r\n'.repeat(3000);
-  const original = prefix + 'Control\r\nPending.\r\nTreatment\r\nPending.\r\nVoltage: 7 mV.\r\n';
+  const original = prefix + 'Control\r\nPending.\r\nTreatment\r\nPending.\r\nVoltage: 7 mV. \u{1F4A1}\r\n';
   await store.write(id, file, original);
   const bridge = await startAssistantTools(store, id, async () => ({ok: true}), async () => ({}));
   const client = new Client({name: 'guarded-edits-test', version: '1.0.0'});
@@ -105,6 +105,8 @@ test('targeted reads and guarded replacements preserve all unrelated bytes', asy
     assert.equal(await store.read(id, file), original);
   }
   assert.equal((await call('project_edit', {path: file, oldText: 'Pending.', newText: 'Approved.'})).isError, true);
+  assert.equal((await call('project_edit', {path: file, oldText: '\uD83D', newText: ''})).isError, true);
+  assert.equal(await store.read(id, file), original);
   const response = await call('project_edit', {...edit, additional: [{oldText: '7 mV', newText: '9 mV'}]});
   assert.equal(value(response).applied, true);
   assert.equal(await store.read(id, file), original.replace('Treatment\r\nPending.', 'Treatment\r\nApproved.').replace('7 mV', '9 mV'));
@@ -124,6 +126,35 @@ test('closing waits for a running tool before releasing the snapshot boundary', 
   let closed = false; const closing = bridge.close().then(()=>{closed=true;});
   await new Promise(resolve=>setImmediate(resolve));assert.equal(closed,false);
   release(); assert.ok(!(await building).isError); await closing; await client.close();
+});
+
+test('the compiler tool accepts only supported engines for the current project', async t => {
+  const parent = await fs.realpath(os.tmpdir()), root = await fs.mkdtemp(path.join(parent, 'refract-engine-tool-'));
+  t.after(async () => {assert.equal(path.dirname(await fs.realpath(root)), parent); await fs.rm(root, {recursive:true, force:true});});
+  const store = new ProjectStore(root), project = await store.create('Engine tool');
+  const bridge = await startAssistantTools(store, project.id,
+    async () => ({engine: (await store.metadata(project.id)).engine}), async () => ({}), {
+      initialEngine: 'pdflatex',
+      setEngine: async engine => {
+        await store.setEngine(project.id, engine);
+        return {engine, previousEngine: 'pdflatex', changed: true};
+      }
+    });
+  t.after(() => bridge.close());
+  const client = new Client({name: 'engine-test', version: '1.0.0'});
+  await client.connect(new StreamableHTTPClientTransport(new URL(bridge.connection.url), {
+    requestInit: {headers: {Authorization: `Bearer ${bridge.connection.token}`}}
+  }));
+  t.after(() => client.close());
+  const change = (args: Record<string, unknown>) => client.callTool({name: 'project_set_engine', arguments: args});
+  assert.match(bridge.instructions, /project_set_engine/);
+  assert.match(bridge.instructions, /start of this turn is pdflatex/);
+  assert.equal((await change({engine: '../pdflatex.exe'})).isError, true);
+  assert.equal((await change({engine: 'xelatex', projectId: 'another-project'})).isError, true);
+  assert.equal((await store.metadata(project.id)).engine, undefined);
+  assert.equal((await change({engine: 'xelatex'})).isError, undefined);
+  const build = await client.callTool({name: 'build', arguments: {}});
+  assert.deepEqual(build.content, [{type: 'text', text: '{"engine":"xelatex"}'}]);
 });
 
 test('provider configuration is per turn and preserves existing OpenCode settings', () => {

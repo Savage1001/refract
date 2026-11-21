@@ -1,6 +1,7 @@
 ﻿const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+import toolchain = require('./tex-toolchain.cjs');
 
 async function renameProjectDirectory(source, destination) {
   const delays=[80,160,320,640];
@@ -186,8 +187,8 @@ class ProjectStore {
     catch(error) { await fs.rm(temp,{force:true}).catch(()=>{}); throw error; }
     return meta;
   }
-  async setEngine(id, engine) {
-    if (!['pdflatex','xelatex','lualatex'].includes(engine)) throw new Error('Unsupported LaTeX engine');
+  async setEngine(id: string, engine: string) {
+    if (!toolchain.isLatexEngine(engine)) throw new Error('Unsupported LaTeX engine');
     const file=path.join(this.projectDir(id),'.refract.json'), meta=await this.metadata(id);
     meta.engine=engine;
     const temp=`${file}.${crypto.randomUUID()}.tmp`;
