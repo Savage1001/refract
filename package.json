@@ -1,6 +1,6 @@
 {
   "name": "refract",
-  "version": "0.3.3-pre-release-4",
+  "version": "0.3.3-pre-release-5",
   "private": true,
   "main": "build/main.cjs",
   "scripts": {
