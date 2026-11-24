@@ -83,8 +83,11 @@ test('packaged application navigates between source and PDF', {timeout:90000}, a
  await page.locator('#list article').first().click();await page.getByText('Compiled',{exact:true}).waitFor({timeout:60000});await page.locator('#file-list [title="sections/body.tex"]').click();
  await page.getByRole('button',{name:'Show in PDF'}).click();await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='2 / 2');
  const position=await page.evaluate(async id=>store.syncForward(id,'sections/body.tex',1),project.id);await page.locator('#file-list [title="main.tex"]').click();
+ const point = { ...position, x: position.x + 4, y: position.y - 2 };
+ const source = await page.evaluate(({id, point}) => store.syncReverse(id, point.page, point.x, point.y), {id: project.id, point});
+ assert.deepEqual(source, {file: 'sections/body.tex', line: 1});
  const canvas=page.locator('.pdf-pages canvas').nth(1);await canvas.scrollIntoViewIfNeeded();
- await canvas.evaluate((element:HTMLCanvasElement,p)=>{const bounds=element.getBoundingClientRect(),scale=Number(element.dataset.renderScale)||1.4;element.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:bounds.left+p.x*bounds.width/(element.width/scale),clientY:bounds.top+p.y*bounds.height/(element.height/scale)}));},position);
+ await canvas.evaluate((element:HTMLCanvasElement,p)=>{const bounds=element.getBoundingClientRect(),scale=Number(element.dataset.renderScale)||1.4;element.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:bounds.left+p.x*bounds.width/(element.width/scale),clientY:bounds.top+p.y*bounds.height/(element.height/scale)}));},point);
  await page.waitForFunction(()=>{const el=document.querySelector('#source') as HTMLTextAreaElement;return el?.value==='Nested synchronized text.\n' && el.value.slice(el.selectionStart,el.selectionEnd)==='Nested synchronized text.';});assert.deepEqual(dialogs,[]);
 });
 
