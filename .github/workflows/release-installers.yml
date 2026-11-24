@@ -48,8 +48,10 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
+            mach_arch: arm64
           - runner: macos-15-intel
             arch: x64
+            mach_arch: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     env:
@@ -85,7 +87,7 @@ jobs:
           hdiutil attach "${dmg[0]}" -readonly -nobrowse -mountpoint "$mount"
           trap 'hdiutil detach "$mount"' EXIT
           export REFRACT_TEST_MAC_APP="$mount/Refract.app/Contents/MacOS/Refract"
-          lipo -verify_arch ${{ matrix.arch === 'x64' && 'x86_64' || 'arm64' }} "$REFRACT_TEST_MAC_APP"
+          lipo -verify_arch ${{ matrix.mach_arch }} "$REFRACT_TEST_MAC_APP"
           codesign --verify --deep --strict "$mount/Refract.app"
           node --test --test-name-pattern='^packaged application compiles a project$' build/test/packaged.test.cjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
