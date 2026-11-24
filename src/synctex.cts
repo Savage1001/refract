@@ -89,7 +89,12 @@ async function reverse(executable:string,project:string,page:number,x:number,y:n
  if(!Number.isSafeInteger(page) || page<1 || page>1000000 || !Number.isFinite(x) || !Number.isFinite(y) || x<0 || y<0 || x>1000000 || y>1000000)throw new Error('Invalid PDF position');
  const pdf=await syncOutput(project),result=await query(executable,project,['edit','-o',`${page}:${x}:${y}:${pdf}`]);
  const input=result.get('Input'),line=Number(result.get('Line'));if(!input || !Number.isSafeInteger(line) || line<1)throw new Error('Invalid SyncTeX result');
- const relative=path.relative(project,path.resolve(project,input));
+ const sourcePath=path.resolve(project,input);
+ let relative=path.relative(project,sourcePath);
+ // macOS tools can return the canonical /private/var path for a project under /var.
+ if(process.platform==='darwin' && path.isAbsolute(input) && relative.startsWith('..'+path.sep)) {
+  relative=path.relative(await fs.realpath(project),sourcePath);
+ }
  if(!relative || path.isAbsolute(relative) || relative.split(/[\\/]/).some(part=>!part || part==='..' || part.startsWith('.')))throw new Error('SyncTeX source is outside the project');
  return {file:relative.split(path.sep).join('/'),line};
 }
