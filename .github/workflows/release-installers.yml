@@ -110,7 +110,7 @@ jobs:
           export REFRACT_TEST_MAC_APP="$mount/Refract.app/Contents/MacOS/Refract"
           lipo -verify_arch ${{ matrix.mach_arch }} "$REFRACT_TEST_MAC_APP"
           codesign --verify --deep --strict "$mount/Refract.app"
-          node --test --test-name-pattern='^packaged application compiles a project$' build/test/packaged.test.cjs
+          node --test --test-name-pattern='^(packaged application compiles a project|macOS staging accepts only links confined to an Electron framework)$' build/test/packaged.test.cjs build/test/distribution-boundary.test.cjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-${{ matrix.arch }}-installer
