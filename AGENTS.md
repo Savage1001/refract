@@ -10,7 +10,7 @@ When asked for a new release, increment the patch (third) version number by defa
 
 Keep descriptions for stable releases, pre-releases, and betas brief: include only the version name and a concise summary of the changes made in that version.
 
-Every stable release, pre-release, and beta must include a macOS installer alongside the Windows installer. Verify both platforms' installers before publishing.
+Every stable release, pre-release, and beta must include installers for Windows, macOS, and Linux. Verify each platform's installer before publishing.
 
 Every future Windows installer, including stable releases, prereleases, and updater-delivered installers, must automatically install the TeX and SyncTeX dependencies required for document compilation. Download checksum-verified upstream distributions into per-user application data, discover the managed toolchain automatically, reuse complete installations, preserve dependencies and user data on uninstall, and report setup failures with a nonzero exit code and a useful log. Do not require manual TeX installation or environment-variable configuration. Codex and OpenCode CLIs remain optional, separately installed and authenticated integrations.
 

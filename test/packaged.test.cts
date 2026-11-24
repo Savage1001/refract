@@ -2,6 +2,8 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises'); const os = require('node:os'); const path = require('node:path');
 const {_electron: electron} = require('playwright');
+const packagedExecutable = process.env.REFRACT_TEST_PACKAGED_APP ||
+ path.resolve(__dirname, '../../dist/win-unpacked/Refract.exe');
 test('packaged application contains no redistributed TeX', async t => {
  const root = path.resolve(__dirname, '../../dist/win-unpacked');
  try { await fs.access(path.join(root, 'Refract.exe')); } catch { return t.skip('Build is not present'); }
@@ -20,12 +22,11 @@ test('packaged application excludes optional Node canvas binaries', async t => {
  assert.deepEqual(entries.filter(name => name === 'canvas' || name.startsWith('canvas-')), []);
 });
 test('packaged application compiles a project', {timeout:90000}, async t => {
- const exe = process.env.REFRACT_TEST_MAC_APP || path.resolve(__dirname,'../../dist/win-unpacked/Refract.exe');
- if (process.env.REFRACT_TEST_MAC_APP) await fs.access(exe);
- else try { await fs.access(exe); } catch { return t.skip('Build is not present'); }
+ if (process.env.REFRACT_TEST_PACKAGED_APP) await fs.access(packagedExecutable);
+ else try { await fs.access(packagedExecutable); } catch { return t.skip('Build is not present'); }
  const data = await fs.mkdtemp(path.join(os.tmpdir(),'refract-packaged-'));
  const env: NodeJS.ProcessEnv = {...process.env,REFRACT_DATA_DIR:data, REFRACT_TEST_HIDDEN: '1'}; delete env.ELECTRON_RUN_AS_NODE;
- const app = await electron.launch({executablePath:exe,args:[],env});
+ const app = await electron.launch({executablePath:packagedExecutable,args:[],env});
  t.after(async()=>{ await app.close().catch(()=>{}); await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200}); });
  const page = await app.firstWindow(); const errors=[];
  page.on('pageerror',e=>errors.push(e.message)); page.on('dialog',d=>{errors.push(d.message());d.dismiss();});
@@ -69,14 +70,15 @@ test('packaged Windows application renders saved assistant formatting', {timeout
  assert.equal(await reply.getByRole('link',{name:'paper'}).getAttribute('href'),'https://example.com');
 });
 
-test('packaged Windows application navigates between source and PDF', {timeout:90000}, async t=>{
- const exe=path.resolve(__dirname,'../../dist/win-unpacked/Refract.exe');try{await fs.access(exe);}catch{return t.skip('Build is not present');}
+test('packaged application navigates between source and PDF', {timeout:90000}, async t=>{
+ if (process.env.REFRACT_TEST_PACKAGED_APP) await fs.access(packagedExecutable);
+ else try { await fs.access(packagedExecutable); } catch { return t.skip('Build is not present'); }
  const data:string=await fs.mkdtemp(path.join(os.tmpdir(),'refract-packaged-synctex-'));
  const {ProjectStore}=require('../src/project-store.cjs'),projectStore=new ProjectStore(path.join(data,'projects')),project=await projectStore.create('SyncTeX');
  await projectStore.write(project.id,'main.tex','\\documentclass{article}\n\\begin{document}\nFirst page.\\newpage\n\\input{sections/body}\n\\end{document}\n');
  await projectStore.write(project.id,'sections/body.tex','Nested synchronized text.\n');
  const env:NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
- const app=await electron.launch({executablePath:exe,args:[],env});t.after(async()=>{await app.close().catch(()=>{});const resolved=await fs.realpath(data),parent=await fs.realpath(os.tmpdir());if(path.dirname(resolved).toLowerCase()!==parent.toLowerCase() || !path.basename(resolved).startsWith('refract-packaged-synctex-'))throw new Error('Unsafe cleanup path');await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
+ const app=await electron.launch({executablePath:packagedExecutable,args:[],env});t.after(async()=>{await app.close().catch(()=>{});const resolved=await fs.realpath(data),parent=await fs.realpath(os.tmpdir());if(path.dirname(resolved).toLowerCase()!==parent.toLowerCase() || !path.basename(resolved).startsWith('refract-packaged-synctex-'))throw new Error('Unsafe cleanup path');await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
  const page=await app.firstWindow(),dialogs:string[]=[];page.on('dialog',dialog=>{dialogs.push(dialog.message());void dialog.dismiss();});
  await page.locator('#list article').first().click();await page.getByText('Compiled',{exact:true}).waitFor({timeout:60000});await page.locator('#file-list [title="sections/body.tex"]').click();
  await page.getByRole('button',{name:'Show in PDF'}).click();await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='2 / 2');

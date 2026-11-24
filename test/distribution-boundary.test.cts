@@ -41,6 +41,7 @@ test('packaging hooks resolve through electron-builder and reject resource overr
     { extraFiles: ['vendor/**/*'] }, { files: ['**/*'] }, { asar: true },
     { win: { extraResources: ['vendor/**/*'] } },
     { mac: { extraResources: ['vendor/**/*'] } },
+    { linux: { extraResources: ['vendor/**/*'] } },
   ]) await assert.rejects(assertDistributionConfig({ ...pkg.build, ...override }), /Distribution boundary/);
 });
 

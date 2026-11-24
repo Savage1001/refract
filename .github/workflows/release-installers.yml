@@ -7,12 +7,18 @@ on:
         description: Release commit SHA
         required: true
         type: string
+      platform:
+        description: Build all platforms or only Linux for a supplemental release asset
+        type: choice
+        default: all
+        options: [all, linux]
 
 permissions:
   contents: read
 
 jobs:
   windows:
+    if: inputs.platform != 'linux'
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -63,6 +69,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: inputs.platform != 'linux'
     strategy:
       fail-fast: false
       matrix:
@@ -107,12 +114,58 @@ jobs:
           mount="$RUNNER_TEMP/refract-dmg"
           hdiutil attach "${dmg[0]}" -readonly -nobrowse -mountpoint "$mount"
           trap 'hdiutil detach "$mount"' EXIT
-          export REFRACT_TEST_MAC_APP="$mount/Refract.app/Contents/MacOS/Refract"
-          lipo "$REFRACT_TEST_MAC_APP" -verify_arch ${{ matrix.mach_arch }}
+          export REFRACT_TEST_PACKAGED_APP="$mount/Refract.app/Contents/MacOS/Refract"
+          lipo "$REFRACT_TEST_PACKAGED_APP" -verify_arch ${{ matrix.mach_arch }}
           codesign --verify --deep --strict "$mount/Refract.app"
           node --test --test-name-pattern='^(packaged application compiles a project|macOS staging accepts only links confined to an Electron framework)$' build/test/packaged.test.cjs build/test/distribution-boundary.test.cjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-${{ matrix.arch }}-installer
           path: dist/Refract-*-mac-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      REFRACT_TEST_HIDDEN: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build:linux -- --x64
+      - name: Install TeX and a virtual display for tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends texlive-xetex lmodern xvfb xauth
+          sudo apt-get install -y ./dist/Refract-*-linux-x64.deb
+          command -v pdflatex xelatex synctex
+      - name: Test the installed Debian package
+        env:
+          REFRACT_TEST_PACKAGED_APP: /opt/Refract/refract
+        run: |
+          test "$(dpkg-deb -f dist/Refract-*-linux-x64.deb Architecture)" = amd64
+          xvfb-run -a --server-args='-screen 0 1600x1000x24' node --test --test-name-pattern='^packaged application (compiles a project|navigates between source and PDF)$' build/test/packaged.test.cjs
+          sudo apt-get remove -y refract
+          test ! -e "$REFRACT_TEST_PACKAGED_APP"
+      - name: Test the AppImage and distribution boundary
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          export REFRACT_TEST_PACKAGED_APP="$(realpath dist/Refract-*-linux-x64.AppImage)"
+          xvfb-run -a --server-args='-screen 0 1600x1000x24' node --test --test-name-pattern='^packaged application compiles a project$' build/test/packaged.test.cjs
+          node --test build/test/distribution-boundary.test.cjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-x64-installers
+          path: |
+            dist/Refract-*-linux-x64.deb
+            dist/Refract-*-linux-x64.AppImage
           if-no-files-found: error
