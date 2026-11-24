@@ -1199,11 +1199,17 @@ async function compilePreview(force=false) {
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
     const readingPage = Math.min(pdfDocument ? pdfPage : requestedPdfPage, doc.numPages);
     const firstPreview = pdfDocument === null;
+    const scrollTop = pdfArea.scrollTop, scrollLeft = pdfArea.scrollLeft;
     const previouslyFocused = Array.from(pdfArea.querySelectorAll('.pdf-pages canvas')).indexOf(document.activeElement);
     previewStatus.hidden = true; previewError?.remove(); previewError = undefined;
     compiledProject = id; compiledPdf = result.pdf;
     releasePdf(pdfDocument);
-    $('#pdf-area').replaceChildren(container);pdfDocument=doc;pdfPageCount=doc.numPages;pdfPage=readingPage;changePdfZoom(pdfZoom,pdfFitMode);if(pdfFitMode==='page') fitPdfPage();goToPdfPage(readingPage);
+    pdfArea.replaceChildren(container);
+    pdfDocument = doc; pdfPageCount = doc.numPages; pdfPage = readingPage;
+    changePdfZoom(pdfZoom, pdfFitMode);
+    if (pdfFitMode === 'page') fitPdfPage();
+    if (firstPreview) goToPdfPage(readingPage);
+    else pdfArea.scrollTo(scrollLeft, scrollTop);
     if (firstPreview) playWorkspaceMotion(container, false);
     if (previouslyFocused >= 0) container.querySelectorAll('canvas')[Math.min(previouslyFocused, doc.numPages - 1)]?.focus({preventScroll:true});
     $('#download').disabled = false; $('#compile').textContent = 'Compiled';

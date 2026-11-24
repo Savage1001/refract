@@ -5,7 +5,7 @@ import type { Page } from 'playwright';
 
 async function openProject(page:Page):Promise<void> {
  await page.getByRole('button',{name:'Open Spectral methods for fluid dynamics',exact:true}).click();
- await page.locator('.pdf-pages canvas').waitFor({state:'attached'});
+ await page.locator('.pdf-pages canvas').first().waitFor({state:'attached'});
 }
 const names=['agent','editor','preview'] as const;
 async function verify(page:Page,visible:boolean[]):Promise<void> {
@@ -116,4 +116,27 @@ test('pane preferences survive reload and narrow preview switching; malformed pr
   }
   assert.deepEqual(errors,[]);
  } finally {await browser.close();}
+});
+
+test('recompiling after an edit preserves both PDF preview scroll offsets', {timeout:60000},async()=>{
+ const {browser,page}=await fixture.openHeadlessUi('light',undefined,{pageCount:3});
+ try {
+  await openProject(page);
+  await page.getByRole('button',{name:'Zoom in compiled PDF'}).click();
+  const preview = page.locator('#pdf-area');
+  const canvas = await preview.locator('canvas').first().elementHandle();
+  const position = await preview.evaluate(element => {
+   element.scrollTo(30, 275);
+   return {top:element.scrollTop,left:element.scrollLeft};
+  });
+  assert.ok(position.top > 0);
+  assert.ok(position.left > 0);
+  await page.locator('#source').press('End');
+  await page.locator('#source').press('Space');
+  await canvas!.waitForElementState('hidden');
+  await preview.locator('canvas').first().waitFor({state:'attached'});
+  assert.deepEqual(await preview.evaluate(element => ({
+   top:element.scrollTop,left:element.scrollLeft
+  })),position);
+ } finally { await browser.close(); }
 });
