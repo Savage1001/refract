@@ -38,7 +38,7 @@ Run `npm run build:mac` on macOS to build a DMG for the host architecture. The *
 
 ## Linux
 
-Download the x86-64 `.deb` or AppImage from [GitHub Releases](https://github.com/Savage1001/refract/releases). On Debian and Ubuntu, install the `.deb` with `sudo apt install ./Refract-*-linux-x64.deb`. For the portable AppImage, make it executable with `chmod +x Refract-*-linux-x64.AppImage` and run it. AppImages normally require FUSE. Run `npm run build:linux` on Linux to build both packages.
+Download the x86-64 `.deb` or AppImage from [GitHub Releases](https://github.com/Savage1001/refract/releases). On Debian and Ubuntu, install the `.deb` with `sudo apt install ./Refract-*-linux-amd64.deb`. For the portable AppImage, make it executable with `chmod +x Refract-*-linux-x86_64.AppImage` and run it. AppImages normally require FUSE. Run `npm run build:linux` on Linux to build both packages.
 
 Install TeX Live and SyncTeX separately for document compilation and source/PDF navigation. Refract looks for `pdflatex` on `PATH` and uses the other TeX tools from the same directory. You can override the directory with `REFRACT_TEX_BIN`. Get Linux updates by downloading a new package from GitHub Releases.
 
