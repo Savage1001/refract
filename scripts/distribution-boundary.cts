@@ -15,7 +15,7 @@ async function assertDistributionConfig(config: Record<string, unknown>): Promis
   const files = config.files as (string | { from?: string; to?: string; filter?: string[] })[] | undefined;
   const patterns = files?.flatMap(item => typeof item === 'string' ? [item] :
     item.from || item.to ? ['unapproved file mapping'] : item.filter || []);
-  const platformOverrides = [config.win, config.mac].some(value => {
+  const platformOverrides = [config.win, config.mac, config.linux].some(value => {
     const platform = (value || {}) as Record<string, unknown>;
     return platform.files || platform.extraResources || platform.extraFiles;
   });
