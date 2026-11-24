@@ -30,17 +30,17 @@ Refract does not currently provide voice conversations. It uses Codex's app-serv
 
 ## macOS
 
-Download the `arm64` DMG for Apple silicon or the `x64` DMG for Intel Macs from [GitHub Releases](https://github.com/Savage1001/refract/releases). Open the disk image and drag Refract to Applications. Mac builds use ad hoc signing without Apple notarization, so macOS may block Refract on first launch.
+Download the `arm64` DMG for Apple silicon or the `x64` DMG for Intel Macs from [GitHub Releases](https://github.com/Savage1001/refract/releases). Open the disk image and run the installer package inside it. The installer needs administrator access and downloads checksum-verified TinyTeX and SyncTeX over the internet during first installation. It reuses a complete toolchain and installs Refract in Applications. The app uses ad hoc signing and the installer lacks Apple notarization, so macOS may block it initially.
 
-Install MacTeX for document compilation and SyncTeX. Refract finds it at `/Library/TeX/texbin`. For a custom TeX installation, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Download new macOS builds from GitHub Releases. The in-app updater and managed Codex download are currently available on Windows.
+Refract discovers its toolchain under `/Library/Application Support/Refract/dependencies`. Existing MacTeX remains available as a fallback. For a custom TeX installation, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Download new macOS builds from GitHub Releases. The in-app updater and managed Codex download are currently available on Windows.
 
-Run `npm run build:mac` on macOS to build a DMG for the host architecture. The **Release installers** workflow builds the Windows, macOS, and Linux packages from a specified release commit and saves them as artifacts.
+Run `npm run build:mac` on macOS to build an installer package for the host architecture. The **Release installers** workflow builds the Windows, macOS, and Linux installers from a specified release commit and saves them as artifacts.
 
 ## Linux
 
-Download the x86-64 `.deb` or AppImage from [GitHub Releases](https://github.com/Savage1001/refract/releases). On Debian and Ubuntu, install the `.deb` with `sudo apt install ./Refract-*-linux-amd64.deb`. For the portable AppImage, make it executable with `chmod +x Refract-*-linux-x86_64.AppImage` and run it. AppImages normally require FUSE. Run `npm run build:linux` on Linux to build both packages.
+Download the x86-64 `.deb` from [GitHub Releases](https://github.com/Savage1001/refract/releases). On Debian and Ubuntu, run `sudo apt install ./Refract-*-linux-amd64.deb`. APT downloads TeX Live, SyncTeX, and the other required packages as part of installation. Run `npm run build:linux` on Linux to build the installer.
 
-Install TeX Live and SyncTeX separately for document compilation and source/PDF navigation. Refract looks for `pdflatex` on `PATH` and uses the other TeX tools from the same directory. You can override the directory with `REFRACT_TEX_BIN`. Get Linux updates by downloading a new package from GitHub Releases.
+Refract looks for `pdflatex` on `PATH` and uses the other TeX tools from the same directory. You can override the directory with `REFRACT_TEX_BIN`. Get Linux updates by downloading a new package from GitHub Releases.
 
 ## Development on Windows
 

@@ -97,7 +97,9 @@ test('missing external configuration reports setup instructions without replacin
   await fs.writeFile(path.join(output, 'main.pdf'), 'previous PDF');
   const previous = process.env.REFRACT_TEX_BIN;
   const localAppData = process.env.LOCALAPPDATA;
+  const previousPath = process.env.PATH;
   delete process.env.REFRACT_TEX_BIN;
+  if (process.platform === 'linux') delete process.env.PATH;
   process.env.LOCALAPPDATA = root;
   try {
     const { compile } = require('../src/compiler.cjs');
@@ -108,6 +110,7 @@ test('missing external configuration reports setup instructions without replacin
     else process.env.REFRACT_TEX_BIN = previous;
     if (localAppData === undefined) delete process.env.LOCALAPPDATA;
     else process.env.LOCALAPPDATA = localAppData;
+    if (previousPath !== undefined) process.env.PATH = previousPath;
   }
 });
 
