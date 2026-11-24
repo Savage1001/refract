@@ -14,7 +14,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
       CI: 'true'
       REFRACT_TEST_HIDDEN: '1'
@@ -31,6 +31,27 @@ jobs:
       - run: npm run build:installer -- --publish never
       - name: Verify Windows packaging and dependency setup
         run: node --test build/test/distribution-boundary.test.cjs build/test/install-dependencies.test.cjs build/test/installer-dependencies.test.cjs build/test/updates.test.cjs
+      - name: Verify stable install, upgrade, and uninstall
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '-') {
+            $env:REFRACT_TEST_INSTALLER = '1'
+            node --test build/test/installer.test.cjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Match Windows asset names to GitHub update metadata
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $channel = if ($version -match '-') { 'beta' } else { 'latest' }
+          $metadata = Get-Content "dist/$channel.yml" -Raw
+          $name = "Refract-Setup-$version.exe"
+          if ($metadata -notmatch [regex]::Escape($name)) {
+            throw "Release metadata does not reference $name"
+          }
+          Rename-Item -LiteralPath "dist/Refract Setup $version.exe" -NewName $name
+          Rename-Item -LiteralPath "dist/Refract Setup $version.exe.blockmap" -NewName "$name.blockmap"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-installer
