@@ -4,7 +4,7 @@
 
 # Refract
 
-Refract is a Windows Electron workspace for local LaTeX writing, inspired by OpenAI Prism. Projects, editing, compilation, and displayed chat history are local. For the assistant, connect a ChatGPT account or use a separately installed Codex or OpenCode CLI.
+Refract is a desktop workspace for local LaTeX writing, inspired by OpenAI Prism. Projects, editing, compilation, and displayed chat history are local. On Windows, connect a ChatGPT account or use a separately installed Codex or OpenCode CLI.
 
 ## Local execution
 
@@ -27,6 +27,14 @@ In the editor, use **Commands** or Ctrl+Space to complete common LaTeX commands.
 After a successful compile, use **Show in PDF** to jump from the current source line to the preview. Double-click a position in the compiled PDF to open its source line. You can also focus a PDF page and press Enter: this uses its last synchronized position when available, or the page center otherwise. Navigation is unavailable while the preview is out of date.
 
 Refract does not currently provide voice conversations. It uses Codex's app-server text-and-image interface; the interactive Codex CLI's [experimental voice mode](https://learn.chatgpt.com/docs/changelog?date=2026-09-10&index=2) is separate from that integration.
+
+## macOS prerelease
+
+Download the `arm64` DMG for Apple silicon or the `x64` DMG for Intel Macs from [GitHub Releases](https://github.com/Savage1001/refract/releases). Open the disk image and drag Refract to Applications. The prerelease uses ad hoc signing without Apple notarization, so macOS may block it on first launch.
+
+Install MacTeX for document compilation and SyncTeX. Refract finds it at `/Library/TeX/texbin`. For a custom TeX installation, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Download new macOS builds from GitHub Releases. The in-app updater and managed Codex download are currently available on Windows.
+
+Run `npm run build:mac` on macOS to build a DMG for the host architecture. The **Release installers** workflow builds the Windows installer and both macOS DMGs from a specified release commit and saves them as artifacts.
 
 ## Development on Windows
 

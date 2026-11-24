@@ -1,6 +1,6 @@
 const { UpdateService } = require('./src/updates.cjs');
 import texToolchain = require('./src/tex-toolchain.cjs');
-const {texBin, isLatexEngine} = texToolchain;
+const {texBin, texExecutable, isLatexEngine} = texToolchain;
 const { app, BrowserWindow, ipcMain, MessageChannelMain, dialog, shell, nativeTheme, safeStorage } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -567,7 +567,7 @@ app.whenReady().then(async () => {
     compilations.set(id,job);
     try { return await job; } finally { compilationControllers.delete(controller);if (compilations.get(id) === job) compilations.delete(id); }
   });
-  const syncExecutable=()=>path.join(texBin(),'synctex.exe');
+  const syncExecutable=()=>texExecutable(texBin(),'synctex');
   ipcMain.handle('synctex:forward',async (_,id,file,line)=>{
     await writes;if(compilations.has(id))throw new Error('Compilation is in progress');
     const project=await store.destinationDir(id);await store.existingFile(id,file);

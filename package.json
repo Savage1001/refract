@@ -12,7 +12,8 @@
     "benchmark:pipeline": "npm run build && node build/scripts/benchmark-agent-pipeline.cjs",
     "benchmark:changes": "npm run build && node build/scripts/benchmark-agent-changes.cjs",
     "build:win": "npm run build && electron-builder --win --dir",
-    "build:installer": "npm run build && electron-builder --win nsis"
+    "build:installer": "npm run build && electron-builder --win nsis",
+    "build:mac": "npm run build && electron-builder --mac dmg --publish never"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
@@ -60,6 +61,11 @@
       "target": "dir",
       "icon": "resources/logo.ico",
       "signAndEditExecutable": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "resources/logo.png",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "nsis": {
       "include": "scripts/installer.nsh",
