@@ -32,7 +32,7 @@ Refract does not currently provide voice conversations. It uses Codex's app-serv
 
 Download the `arm64` DMG for Apple silicon or the `x64` DMG for Intel Macs from [GitHub Releases](https://github.com/Savage1001/refract/releases). Open the disk image and run the installer package inside it. The installer needs administrator access and downloads checksum-verified TinyTeX and SyncTeX over the internet during first installation. It reuses a complete toolchain and installs Refract in Applications. The app uses ad hoc signing and the installer lacks Apple notarization, so macOS may block it initially.
 
-Refract discovers its toolchain under `/Library/Application Support/Refract/dependencies`. Existing MacTeX remains available as a fallback. For a custom TeX installation, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Download new macOS builds from GitHub Releases. The in-app updater and managed Codex download are currently available on Windows.
+Refract discovers its toolchain under `/Library/Refract/dependencies`. Existing MacTeX remains available as a fallback. For a custom TeX installation, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Download new macOS builds from GitHub Releases. The in-app updater and managed Codex download are currently available on Windows.
 
 Run `npm run build:mac` on macOS to build an installer package for the host architecture. The **Release installers** workflow builds the Windows, macOS, and Linux installers from a specified release commit and saves them as artifacts.
 

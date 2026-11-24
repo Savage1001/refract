@@ -110,7 +110,7 @@ jobs:
           mount="$RUNNER_TEMP/refract-dmg"
           hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount"
           trap 'hdiutil detach "$mount"' EXIT
-          tex='/Library/Application Support/Refract/dependencies/TinyTeX/bin/universal-darwin'
+          tex='/Library/Refract/dependencies/TinyTeX/bin/universal-darwin'
           test ! -e "$tex"
           sudo -n installer -verboseR -pkg "$mount/$name" -target /
           for tool in pdflatex xelatex lualatex synctex kpsewhich bibtex biber; do

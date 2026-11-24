@@ -3,7 +3,8 @@ import fs = require('node:fs');
 
 const latexEngines = ['pdflatex', 'xelatex', 'lualatex'] as const;
 const requiredTexTools = [...latexEngines, 'kpsewhich', 'synctex', 'bibtex', 'biber'];
-const macDependencies = '/Library/Application Support/Refract/dependencies';
+// XeTeX locates its PDF driver using a shell command that cannot handle spaces here.
+const macDependencies = '/Library/Refract/dependencies';
 const macTexSubdirectory = 'bin/universal-darwin';
 type LatexEngine = typeof latexEngines[number];
 function isLatexEngine(value: unknown): value is LatexEngine {
