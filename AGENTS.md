@@ -12,6 +12,8 @@ Keep descriptions for stable releases, pre-releases, and betas brief: include on
 
 Every stable release, pre-release, and beta must include installers for Windows, macOS, and Linux. Verify each platform's installer before publishing.
 
+Every Windows, macOS, and Linux installer must set up TeX and SyncTeX automatically as part of the same installation. Installers may retrieve dependencies online from verified upstream sources or through the system package manager. Keep Codex and OpenCode CLIs optional.
+
 Every future Windows installer, including stable releases, prereleases, and updater-delivered installers, must automatically install the TeX and SyncTeX dependencies required for document compilation. Download checksum-verified upstream distributions into per-user application data, discover the managed toolchain automatically, reuse complete installations, preserve dependencies and user data on uninstall, and report setup failures with a nonzero exit code and a useful log. Do not require manual TeX installation or environment-variable configuration. Codex and OpenCode CLIs remain optional, separately installed and authenticated integrations.
 
 Run the full lifecycle test suite for stable releases. Prereleases require targeted tests covering their new functionality and included changes; the full lifecycle suite is not required.
