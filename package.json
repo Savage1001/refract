@@ -14,8 +14,8 @@
     "benchmark:changes": "npm run build && node build/scripts/benchmark-agent-changes.cjs",
     "build:win": "npm run build && electron-builder --win --dir",
     "build:installer": "npm run build && electron-builder --win nsis",
-    "build:mac": "npm run build && electron-builder --mac dmg --publish never",
-    "build:linux": "npm run build && electron-builder --linux deb AppImage --publish never"
+    "build:mac": "npm run build && electron-builder --mac pkg --publish never",
+    "build:linux": "npm run build && electron-builder --linux deb --publish never"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
@@ -65,17 +65,32 @@
       "signAndEditExecutable": true
     },
     "mac": {
-      "target": "dmg",
+      "target": "pkg",
       "icon": "resources/logo.png",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "linux": {
-      "target": ["deb", "AppImage"],
+      "target": "deb",
       "executableName": "refract",
       "icon": "resources/logo.png",
       "category": "Office",
       "maintainer": "Savage1001 <105253079+Savage1001@users.noreply.github.com>",
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "pkg": {
+      "scripts": "../scripts/macos-pkg",
+      "allowAnywhere": false,
+      "allowCurrentUserHome": false,
+      "isRelocatable": false,
+      "mustClose": ["app.refract.desktop"]
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils",
+        "libatspi2.0-0", "libuuid1", "libsecret-1-0", "libgbm1", "libasound2 | libasound2t64",
+        "texlive-binaries", "texlive-latex-base", "texlive-latex-recommended",
+        "texlive-xetex", "texlive-luatex", "lmodern", "biber"
+      ]
     },
     "nsis": {
       "include": "scripts/installer.nsh",
