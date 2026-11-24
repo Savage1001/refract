@@ -137,9 +137,8 @@ async function compile(
   const args = ['-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-no-shell-escape', '-recorder', '-synctex=1', '-jobname=main', `-output-directory=${outputDir}`, options.draftMode ? './.refract-build/refract-internal/draft.tex' : `./${rootFile}`];
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${path.dirname(executable)}${path.delimiter}${process.env.PATH || ''}` };
   env.BIBINPUTS = `${projectDir}${path.sep}//${path.delimiter}${process.env.BIBINPUTS || ''}`;
-  // TinyTeX releases can contain paths from their build machine. Generate a
-  // relocatable fontconfig file for XeTeX using the installed TeX Live font tree.
-  if (/^xelatex(?:\.exe)?$/i.test(path.basename(executable))) {
+  // Generate a relocatable fontconfig file for the Windows TinyTeX toolchain.
+  if (process.platform === 'win32' && /^xelatex\.exe$/i.test(path.basename(executable))) {
     const texRoot = path.resolve(path.dirname(executable),'..','..');
     const fonts = path.join(texRoot,'texmf-dist','fonts');
     const available = await fs.stat(fonts).then(info=>info.isDirectory(),()=>false);
