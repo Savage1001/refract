@@ -40,6 +40,7 @@ test('packaging hooks resolve through electron-builder and reject resource overr
     { extraResources: [{ from: 'vendor/TinyTeX', to: 'TinyTeX' }] },
     { extraFiles: ['vendor/**/*'] }, { files: ['**/*'] }, { asar: true },
     { win: { extraResources: ['vendor/**/*'] } },
+    { mac: { extraResources: ['vendor/**/*'] } },
   ]) await assert.rejects(assertDistributionConfig({ ...pkg.build, ...override }), /Distribution boundary/);
 });
 
@@ -73,7 +74,7 @@ test('external configuration has no implicit bundled fallback and selects every 
   assert.equal(texBin({ REFRACT_TEX_BIN: bin }), bin);
   for (const engine of ['pdflatex', 'xelatex', 'lualatex']) {
     const options = await configuredBuild({ metadata: async () => ({ engine }) }, 'fixture', bin);
-    assert.equal(options.executable, path.join(bin, `${engine}.exe`));
+    assert.equal(options.executable, path.join(bin, process.platform === 'win32' ? `${engine}.exe` : engine));
   }
 });
 

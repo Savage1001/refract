@@ -1,0 +1,95 @@
+name: Release installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Release commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      REFRACT_TEST_HIDDEN: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build:installer -- --publish never
+      - name: Verify Windows packaging and dependency setup
+        run: node --test build/test/distribution-boundary.test.cjs build/test/install-dependencies.test.cjs build/test/installer-dependencies.test.cjs build/test/updates.test.cjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installer
+          path: |
+            dist/Refract-Setup-*.exe
+            dist/Refract-Setup-*.exe.blockmap
+            dist/*.yml
+            !dist/builder-*.yml
+          if-no-files-found: error
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      REFRACT_TEST_HIDDEN: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build:mac -- --${{ matrix.arch }} -c.mac.identity=-
+      - name: Install checksum-verified TinyTeX for the smoke test
+        run: |
+          archive=TinyTeX-darwin-v2026.10.tar.xz
+          curl --fail --location --retry 3 "https://github.com/rstudio/tinytex-releases/releases/download/v2026.10/$archive" -o "$RUNNER_TEMP/$archive"
+          cd "$RUNNER_TEMP"
+          echo "9962e445b56f06feb2c28f73561e523e89d550e98abf910ba60b0ffb3856921f  $archive" | shasum -a 256 --check
+          tar -xf "$archive"
+          tex="$(find "$RUNNER_TEMP" -name pdflatex -print -quit)"
+          test -x "$tex"
+          echo "REFRACT_TEX_BIN=$(dirname "$tex")" >> "$GITHUB_ENV"
+      - name: Verify the disk image and compile in the packaged app
+        run: |
+          dmg=(dist/Refract-*-mac-${{ matrix.arch }}.dmg)
+          hdiutil verify "${dmg[0]}"
+          mount="$RUNNER_TEMP/refract-dmg"
+          hdiutil attach "${dmg[0]}" -readonly -nobrowse -mountpoint "$mount"
+          trap 'hdiutil detach "$mount"' EXIT
+          export REFRACT_TEST_MAC_APP="$mount/Refract.app/Contents/MacOS/Refract"
+          lipo -verify_arch ${{ matrix.arch === 'x64' && 'x86_64' || 'arm64' }} "$REFRACT_TEST_MAC_APP"
+          codesign --verify --deep --strict "$mount/Refract.app"
+          node --test --test-name-pattern='^packaged application compiles a project$' build/test/packaged.test.cjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ matrix.arch }}-installer
+          path: dist/Refract-*-mac-${{ matrix.arch }}.dmg
+          if-no-files-found: error

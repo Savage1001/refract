@@ -1,4 +1,5 @@
-const { texBin } = require('./tex-toolchain.cjs');
+import toolchain = require('./tex-toolchain.cjs');
+const { texBin, texExecutable } = toolchain;
 const { spawn } = require('node:child_process');
 import fs = require('node:fs/promises');
 import path = require('node:path');
@@ -112,7 +113,7 @@ async function compile(
   try {await fs.mkdir(outputDir);} catch(error) {if(error.code!=='EEXIST')throw error;}
   await validateBuildDirectory(outputDir);
   if (options.signal?.aborted) return {ok:false,log:'Compilation cancelled.',exitCode:null};
-  const executable = options.executable || path.join(texBin(), 'pdflatex.exe');
+  const executable = options.executable || texExecutable(texBin(), 'pdflatex');
   const pdfPath = path.join(outputDir, 'main.pdf');
   const syncFiles=['main.synctex.gz','main.synctex','main.synctex(busy)','main.synctex.gz(busy)'];
   await removeBuildFiles(outputDir, ['main.pdf', 'main.log', 'main.aux', 'main.bbl', 'main.bcf', 'main.fls', ...syncFiles]);
@@ -169,10 +170,10 @@ async function compile(
     ]);
     const bibtexRequired = /\\bibdata\{/.test(aux);
     if (bcf) {
-      const biber = path.join(path.dirname(executable), process.platform === 'win32' ? 'biber.exe' : 'biber');
+      const biber = texExecutable(path.dirname(executable), 'biber');
       if (!await step(biber, ['--input-directory', outputDir, '--output-directory', outputDir, 'main'])) return failed();
     } else if (bibtexRequired) {
-      const bibtex = path.join(path.dirname(executable), process.platform === 'win32' ? 'bibtex.exe' : 'bibtex');
+      const bibtex = texExecutable(path.dirname(executable), 'bibtex');
       if (!await step(bibtex, ['main'], outputDir)) return failed();
     }
     const bibliography = bcf || bibtexRequired;

@@ -6,7 +6,7 @@ const {runCompilerProcess} = require('./compiler.cjs');
 
 async function lookupPackage(name:string, project:string, texBin:string, signal?:AbortSignal) {
   const env={...process.env,PATH:`${texBin}${path.delimiter}${process.env.PATH || ''}`};
-  const result=await runCompilerProcess(path.join(texBin,'kpsewhich.exe'),[name],project,env,signal);
+  const result=await runCompilerProcess(toolchain.texExecutable(texBin, 'kpsewhich'),[name],project,env,signal);
   return {name,available:result.code === 0,exitCode:result.code,output:result.output};
 }
 
@@ -14,7 +14,7 @@ async function configuredBuild(store: {metadata(id:string):Promise<{engine?:stri
   const metadata=await store.metadata(id);
   const engine=metadata.engine || 'pdflatex';
   if (!toolchain.isLatexEngine(engine)) throw new Error('Unsupported LaTeX engine in project settings');
-  return {engine,draftMode:metadata.draftMode === true,rootFile:metadata.rootFile || 'main.tex',executable:path.join(texBin,engine+'.exe'),signal};
+  return {engine,draftMode:metadata.draftMode === true,rootFile:metadata.rootFile || 'main.tex',executable:toolchain.texExecutable(texBin, engine),signal};
 }
 
 // One short-lived capability for one active assistant operation. No paths or

@@ -19,9 +19,10 @@ test('packaged application excludes optional Node canvas binaries', async t => {
  });
  assert.deepEqual(entries.filter(name => name === 'canvas' || name.startsWith('canvas-')), []);
 });
-test('packaged Windows application compiles a project', {timeout:90000}, async t => {
- const exe = path.resolve(__dirname,'../../dist/win-unpacked/Refract.exe');
- try { await fs.access(exe); } catch { return t.skip('Build is not present'); }
+test('packaged application compiles a project', {timeout:90000}, async t => {
+ const exe = process.env.REFRACT_TEST_MAC_APP || path.resolve(__dirname,'../../dist/win-unpacked/Refract.exe');
+ if (process.env.REFRACT_TEST_MAC_APP) await fs.access(exe);
+ else try { await fs.access(exe); } catch { return t.skip('Build is not present'); }
  const data = await fs.mkdtemp(path.join(os.tmpdir(),'refract-packaged-'));
  const env: NodeJS.ProcessEnv = {...process.env,REFRACT_DATA_DIR:data, REFRACT_TEST_HIDDEN: '1'}; delete env.ELECTRON_RUN_AS_NODE;
  const app = await electron.launch({executablePath:exe,args:[],env});
