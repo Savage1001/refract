@@ -38,7 +38,12 @@ Run `npm run build:mac` on macOS to build an installer package for the host arch
 
 ## Linux
 
-Download the x86-64 `.deb` from [GitHub Releases](https://github.com/Savage1001/refract/releases). On Debian and Ubuntu, run `sudo apt install ./Refract-*-linux-amd64.deb`. APT downloads TeX Live, SyncTeX, and the other required packages as part of installation. Run `npm run build:linux` on Linux to build the installer.
+Download the x86-64 package for your distribution from [GitHub Releases](https://github.com/Savage1001/refract/releases).
+
+- Debian and Ubuntu use `sudo apt install ./Refract-*-linux-amd64.deb`.
+- Arch Linux uses `sudo pacman -U ./Refract-*-archlinux-x64.pkg.tar.zst` on an up-to-date system.
+
+Both package managers install TeX Live, SyncTeX, and the other required packages. Run `npm run build:linux` to build the Debian package or `npm run build:arch` to build the Arch package.
 
 Refract looks for `pdflatex` on `PATH` and uses the other TeX tools from the same directory. You can override the directory with `REFRACT_TEX_BIN`. Get Linux updates by downloading a new package from GitHub Releases.
 

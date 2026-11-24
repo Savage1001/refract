@@ -10,7 +10,7 @@ When asked for a new release, increment the patch (third) version number by defa
 
 Keep descriptions for stable releases, pre-releases, and betas brief: include only the version name and a concise summary of the changes made in that version.
 
-Every stable release, pre-release, and beta must include installers for Windows, macOS, and Linux. Verify each platform's installer before publishing.
+Every stable release, pre-release, and beta must include installers for Windows, macOS, Debian and Ubuntu (`.deb`), and Arch Linux (`.pkg.tar.zst`). Verify each installer before publishing.
 
 Every Windows, macOS, and Linux installer must set up TeX and SyncTeX automatically as part of the same installation. Installers may retrieve dependencies online from verified upstream sources or through the system package manager. Keep Codex and OpenCode CLIs optional.
 
