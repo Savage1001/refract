@@ -1311,7 +1311,8 @@ main {
 }
 
 .source-container #source::selection {
-  background:var(--selection);
+  /* The syntax-colored text is painted below the transparent textarea. */
+  background:color-mix(in srgb, var(--selection) 40%, transparent);
 }
 
 .tex-command {
