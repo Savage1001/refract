@@ -15,7 +15,8 @@
     "build:win": "npm run build && electron-builder --win --dir",
     "build:installer": "npm run build && electron-builder --win nsis",
     "build:mac": "npm run build && electron-builder --mac pkg --publish never",
-    "build:linux": "npm run build && electron-builder --linux deb --publish never"
+    "build:linux": "npm run build && electron-builder --linux deb --publish never",
+    "build:arch": "npm run build && electron-builder --linux pacman --x64 --publish never"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
@@ -90,6 +91,17 @@
         "libatspi2.0-0", "libuuid1", "libsecret-1-0", "libgbm1", "libasound2 | libasound2t64",
         "texlive-binaries", "texlive-latex-base", "texlive-latex-recommended",
         "texlive-xetex", "texlive-luatex", "lmodern", "biber"
+      ]
+    },
+    "pacman": {
+      "artifactName": "${productName}-${version}-archlinux-${arch}.pkg.tar.zst",
+      "compression": "zstd",
+      "depends": [
+        "alsa-lib", "at-spi2-core", "gtk3", "libcups", "libdrm", "libnotify",
+        "libsecret", "libxss", "libxtst", "mesa", "nss", "xdg-utils",
+        "texlive-bin", "texlive-latex", "texlive-latexrecommended",
+        "texlive-xetex", "texlive-luatex", "texlive-fontsrecommended", "otf-latin-modern",
+        "texlive-bibtexextra", "biber"
       ]
     },
     "nsis": {

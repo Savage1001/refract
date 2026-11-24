@@ -11,7 +11,7 @@ on:
         description: Build all platforms or select installers for a supplemental release
         type: choice
         default: all
-        options: [all, macos-linux, linux]
+        options: [all, macos-linux, linux, arch]
 
 permissions:
   contents: read
@@ -69,7 +69,7 @@ jobs:
           if-no-files-found: error
 
   macos:
-    if: inputs.platform != 'linux'
+    if: inputs.platform == 'all' || inputs.platform == 'macos-linux'
     strategy:
       fail-fast: false
       matrix:
@@ -130,6 +130,7 @@ jobs:
           if-no-files-found: error
 
   linux:
+    if: inputs.platform != 'arch'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -167,4 +168,42 @@ jobs:
         with:
           name: linux-x64-installers
           path: dist/Refract-*-linux-amd64.deb
+          if-no-files-found: error
+
+  arch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build:arch
+      - name: Install and verify the package in Arch Linux
+        run: |
+          docker run --rm --init -i -v "$PWD:/refract:ro" -w /refract archlinux:base bash -euxo pipefail -s <<'ARCH'
+          pacman -Syu --noconfirm --needed nodejs xorg-server-xvfb
+          useradd --create-home refract-test
+          package=(dist/Refract-*-archlinux-x64.pkg.tar.zst)
+          bsdtar -xOf "${package[0]}" .PKGINFO | grep -Fx 'arch = x86_64'
+          ! pacman -Q texlive-bin
+          pacman -U --noconfirm "${package[0]}"
+          pacman -Qd texlive-bin
+          command -v pdflatex xelatex lualatex synctex kpsewhich bibtex biber
+          runuser -u refract-test -- env REFRACT_TEST_HIDDEN=1 REFRACT_TEST_PACKAGED_APP=/opt/Refract/refract \
+            xvfb-run -a --server-args='-screen 0 1600x1000x24' node --test \
+            --test-name-pattern='^packaged application (compiles a project|navigates between source and PDF)$' build/test/packaged.test.cjs
+          pacman -R --noconfirm refract
+          test ! -e /opt/Refract/refract
+          command -v pdflatex synctex
+          ARCH
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archlinux-x64-installer
+          path: dist/Refract-*-archlinux-x64.pkg.tar.zst
           if-no-files-found: error
