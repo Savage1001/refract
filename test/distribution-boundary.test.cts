@@ -67,6 +67,17 @@ test('file allowlist excludes old vendor trees, source caches and stale build ar
   }
 });
 
+test('macOS staging accepts only links confined to an Electron framework', { skip: process.platform === 'win32' }, async t => {
+  const root = await fixture(t);
+  const framework = path.join(root, 'Refract.app', 'Contents', 'Frameworks', 'Squirrel.framework');
+  await fs.mkdir(path.join(framework, 'Versions', 'A'), { recursive: true });
+  await fs.symlink('A', path.join(framework, 'Versions', 'Current'));
+  await afterPack({ appOutDir: root, electronPlatformName: 'darwin' });
+  await assert.rejects(afterPack({ appOutDir: root }), /unexpected link/);
+  await fs.symlink('..', path.join(framework, 'outside'));
+  await assert.rejects(afterPack({ appOutDir: root, electronPlatformName: 'darwin' }), /unexpected link/);
+});
+
 test('external configuration has no implicit bundled fallback and selects every engine', async () => {
   assert.throws(() => texBin({}), /REFRACT_TEX_BIN/);
   assert.throws(() => texBin({ REFRACT_TEX_BIN: 'relative/bin' }), /absolute/);
