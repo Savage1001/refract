@@ -28,9 +28,9 @@ After a successful compile, use **Show in PDF** to jump from the current source 
 
 Refract does not currently provide voice conversations. It uses Codex's app-server text-and-image interface; the interactive Codex CLI's [experimental voice mode](https://learn.chatgpt.com/docs/changelog?date=2026-09-10&index=2) is separate from that integration.
 
-## macOS prerelease
+## macOS
 
-Download the `arm64` DMG for Apple silicon or the `x64` DMG for Intel Macs from [GitHub Releases](https://github.com/Savage1001/refract/releases). Open the disk image and drag Refract to Applications. The prerelease uses ad hoc signing without Apple notarization, so macOS may block it on first launch.
+Download the `arm64` DMG for Apple silicon or the `x64` DMG for Intel Macs from [GitHub Releases](https://github.com/Savage1001/refract/releases). Open the disk image and drag Refract to Applications. Mac builds use ad hoc signing without Apple notarization, so macOS may block Refract on first launch.
 
 Install MacTeX for document compilation and SyncTeX. Refract finds it at `/Library/TeX/texbin`. For a custom TeX installation, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Download new macOS builds from GitHub Releases. The in-app updater and managed Codex download are currently available on Windows.
 
