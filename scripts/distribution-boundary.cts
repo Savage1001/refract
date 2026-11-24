@@ -28,7 +28,7 @@ async function assertDistributionConfig(config: Record<string, unknown>): Promis
 }
 
 /** Scan the actual staging tree too, before electron-builder makes an installer. */
-async function assertNoTex(root: string, electronFramework?: string): Promise<void> {
+async function assertNoTex(root: string, electronFrameworks: readonly string[] = []): Promise<void> {
   for (const entry of await fs.readdir(root, { withFileTypes: true })) {
     const file = path.join(root, entry.name);
     if (/^(?:tinytex(?:[.-].*)?|texlive|texmf(?:-.*)?|tlpkg|synctex(?:\.exe|\.windows.*|\.tar.*)?|(?:pdftex|pdflatex|xetex|xelatex|luatex|lualatex|luahbtex|kpsewhich|biber|bibtex|tlmgr|gswin(?:32|64)c?)(?:\.exe)?)$/i.test(entry.name)) {
@@ -37,12 +37,13 @@ async function assertNoTex(root: string, electronFramework?: string): Promise<vo
     if (entry.isSymbolicLink()) {
       // Electron's macOS framework uses relative links to its versioned files.
       // Their real targets must be inside the framework and are scanned separately.
-      if (electronFramework && file.startsWith(electronFramework + path.sep) &&
+      const framework = electronFrameworks.find(directory => file.startsWith(directory + path.sep));
+      if (framework &&
           !path.isAbsolute(await fs.readlink(file)) &&
-          (await fs.realpath(file)).startsWith(electronFramework + path.sep)) continue;
-      throw new Error('Distribution boundary: unexpected link in staging.');
+          (await fs.realpath(file)).startsWith(framework + path.sep)) continue;
+      throw new Error(`Distribution boundary: unexpected link in staging: ${file}`);
     }
-    if (entry.isDirectory()) await assertNoTex(file, electronFramework);
+    if (entry.isDirectory()) await assertNoTex(file, electronFrameworks);
   }
 }
 
@@ -54,10 +55,11 @@ async function beforePack(context: { packager: { projectDir: string; config: Rec
 
 async function afterPack(context: { appOutDir: string; electronPlatformName?: string }): Promise<void> {
   const root = await fs.realpath(context.appOutDir);
-  const framework = context.electronPlatformName === 'darwin'
-    ? path.join(root, 'Refract.app', 'Contents', 'Frameworks', 'Electron Framework.framework')
-    : undefined;
-  await assertNoTex(root, framework);
+  const frameworks = context.electronPlatformName === 'darwin'
+    ? ['Electron Framework', 'Mantle', 'ReactiveObjC', 'Squirrel'].map(name =>
+      path.join(root, 'Refract.app', 'Contents', 'Frameworks', `${name}.framework`))
+    : [];
+  await assertNoTex(root, frameworks);
 }
 
 export = { applicationFiles, assertDistributionConfig, assertNoTex, beforePack, afterPack };
