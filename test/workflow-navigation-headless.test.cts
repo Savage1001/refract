@@ -190,11 +190,63 @@ test('an update check failure survives status polls and clears on retry', { time
   } finally { await browser.close(); }
 });
 
+test('compiled PDF text supports drag-to-copy and double-click source navigation', { timeout: 30_000 }, async () => {
+  const { browser, page, errors } = await fixture.openHeadlessUi();
+  try {
+    await page.evaluate(() => {
+      const { store, fixture } = window as unknown as FixtureWindow;
+      store.syncReverse = async (_id, pageNumber, x, y) => {
+        fixture.counters.syncReverse = (fixture.counters.syncReverse ?? 0) + 1;
+        fixture.counters.syncPage = Number(pageNumber);
+        fixture.counters.syncX = Number(x);
+        fixture.counters.syncY = Number(y);
+        return { file: 'main.tex', line: 9 };
+      };
+    });
+    await openSampleProject(page);
+    await page.getByRole('button', { name: 'Zoom in compiled PDF' }).click();
+    const text = page.locator('.pdf-text-layer').getByText('Spectral methods', { exact: true });
+    await text.scrollIntoViewIfNeeded();
+    const bounds = await text.boundingBox();
+    assert.ok(bounds);
+    const y = bounds.y + bounds.height / 2;
+    await page.mouse.move(bounds.x + 1, y);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width - 1, y, { steps: 12 });
+    await page.mouse.up();
+    assert.equal(await page.evaluate(() => window.getSelection()?.toString()), 'Spectral methods');
+    assert.equal(await page.evaluate(() => (window as unknown as FixtureWindow).fixture.counters.syncReverse ?? 0), 0);
+
+    await page.keyboard.press('Control+c');
+    await page.evaluate(() => {
+      const pasteTarget = document.createElement('textarea');
+      pasteTarget.id = 'pdf-copy-test';
+      document.body.append(pasteTarget);
+      pasteTarget.focus();
+    });
+    await page.keyboard.press('Control+v');
+    assert.equal(await page.locator('#pdf-copy-test').inputValue(), 'Spectral methods');
+    await page.locator('#pdf-copy-test').evaluate(element => element.remove());
+
+    await text.dblclick();
+    await page.waitForFunction(() => {
+      const source = document.querySelector<HTMLTextAreaElement>('#source');
+      return source?.value.slice(source.selectionStart, source.selectionEnd) === 'A stable spectral approximation for fluid dynamics.';
+    });
+    const { syncReverse, syncPage, syncX, syncY } = await page.evaluate(() => (window as unknown as FixtureWindow).fixture.counters);
+    assert.equal(syncReverse, 1);
+    assert.equal(syncPage, 1);
+    assert.ok(syncX > 72 && syncX < 180);
+    assert.ok(Math.abs(syncY - 102) < 20);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
 test('build refresh preserves output filters and presents the previous PDF while pending', { timeout: 30_000 }, async () => {
   const { browser, page, errors } = await fixture.openHeadlessUi();
   try {
     await openSampleProject(page);
-    const pdfText = page.locator('.pdf-accessible-text');
+    const pdfText = page.locator('.pdf-text-layer');
     await pdfText.waitFor({ state: 'attached' });
     assert.match(await pdfText.textContent(), /Spectral methods/);
     await page.evaluate(() => {

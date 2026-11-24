@@ -2342,6 +2342,7 @@ main {
 
 .pdf-page-frame {
   position:relative;
+  container-type:inline-size;
   margin:0 auto 18px;
 }
 
@@ -2352,6 +2353,41 @@ main {
   height:100%;
   box-shadow:0 5px 20px var(--shadow);
 }
+
+.pdf-text-layer {
+  position:absolute;
+  top:0;
+  left:0;
+  z-index:0;
+  overflow:clip;
+  line-height:1;
+  transform-origin:0 0;
+  forced-color-adjust:none;
+  pointer-events:none;
+  user-select:text;
+}
+
+.pdf-text-layer :is(span, br) {
+  position:absolute;
+  color:transparent;
+  white-space:pre;
+  cursor:text;
+  pointer-events:auto;
+  transform-origin:0 0;
+}
+
+.pdf-text-layer span::selection {
+  color:transparent;
+  background:rgba(57, 112, 243, .35);
+}
+
+.pdf-text-layer br::selection {
+  background:transparent;
+}
+
+.pdf-text-layer[data-main-rotation="90"] { transform:rotate(90deg) translateY(-100%); }
+.pdf-text-layer[data-main-rotation="180"] { transform:rotate(180deg) translate(-100%, -100%); }
+.pdf-text-layer[data-main-rotation="270"] { transform:rotate(270deg) translateX(-100%); }
 
 .pdf-annotation-link {
   position:absolute;
@@ -3279,7 +3315,7 @@ dialog .dialog-actions {
 .retained-preview-error { flex:none; max-height:min(35vh, 240px); margin:8px 12px; overflow:auto; }
 .stop-chat[aria-disabled="true"] { opacity:.5; cursor:default; }
 .recovery-success { color:var(--success); }
-.visually-hidden, .pdf-accessible-text {
+.visually-hidden {
   position:absolute;
   width:1px;
   height:1px;
