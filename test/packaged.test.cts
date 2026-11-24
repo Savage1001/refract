@@ -33,11 +33,22 @@ test('packaged application compiles a project', {timeout:90000}, async t => {
  await page.getByText('Compiled',{exact:true}).waitFor({timeout:30000});
  assert.equal(await page.locator('#pdf-area canvas').count(),1);
  const source=await page.locator('#source').inputValue();
- await page.locator('#source').fill(source.replace('\\begin{document}','\\usepackage{fontspec}\n\\setmainfont{Latin Modern Roman}\n\\begin{document}'));
+ const font = process.platform === 'darwin' ? 'Helvetica' : 'Latin Modern Roman';
+ await page.locator('#source').fill(source.replace('\\begin{document}',`\\usepackage{fontspec}\n\\setmainfont{${font}}\n\\begin{document}`));
  await page.locator('#tools').click(); await page.locator('#tool-info').click();
  await page.getByRole('combobox',{name:'LaTeX engine'}).selectOption('xelatex');
  await page.waitForFunction(()=>{const e=document.querySelector('select[aria-label="LaTeX engine"]') as HTMLSelectElement;return e && !e.disabled && e.value==='xelatex';});
- await page.locator('#tools').click();await page.getByText('Compiled',{exact:true}).waitFor({timeout:45000});
+ await page.locator('#tools').click();
+ try {
+  await page.getByText('Compiled',{exact:true}).waitFor({timeout:45000});
+ } catch (error) {
+  const log = await page.evaluate(async () => {
+   const [project] = await store.list();
+   const result = await store.compile(project.id);
+   return result.log;
+  }).catch(String);
+  throw new Error(`XeLaTeX did not finish in the editor.\n${log}`, { cause: error });
+ }
  await page.locator('#tools').click();await page.locator('#tool-logs').click();await page.getByText('Full build output',{exact:true}).click();assert.match(await page.locator('#tool-body').innerText(),/XeTeX/);
  assert.deepEqual(errors,[]);
 });
