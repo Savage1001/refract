@@ -2,6 +2,7 @@
   "name": "refract",
   "version": "0.3.4",
   "private": true,
+  "homepage": "https://github.com/Savage1001/refract",
   "main": "build/main.cjs",
   "scripts": {
     "build": "tsc && node -e \"require('fs').copyFileSync('index.html','build/index.html');require('fs').copyFileSync('style.css','build/style.css');require('fs').copyFileSync('resources/logo.png','build/logo.png');require('fs').cpSync('resources/provider-logos','build/provider-logos',{recursive:true});require('fs').cpSync('resources/fonts','build/fonts',{recursive:true})\"",
@@ -13,7 +14,8 @@
     "benchmark:changes": "npm run build && node build/scripts/benchmark-agent-changes.cjs",
     "build:win": "npm run build && electron-builder --win --dir",
     "build:installer": "npm run build && electron-builder --win nsis",
-    "build:mac": "npm run build && electron-builder --mac dmg --publish never"
+    "build:mac": "npm run build && electron-builder --mac dmg --publish never",
+    "build:linux": "npm run build && electron-builder --linux deb AppImage --publish never"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
@@ -66,6 +68,14 @@
       "target": "dmg",
       "icon": "resources/logo.png",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": ["deb", "AppImage"],
+      "executableName": "refract",
+      "icon": "resources/logo.png",
+      "category": "Office",
+      "maintainer": "Savage1001 <105253079+Savage1001@users.noreply.github.com>",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     },
     "nsis": {
       "include": "scripts/installer.nsh",
