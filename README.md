@@ -43,9 +43,32 @@ Download the x86-64 package for your distribution from [GitHub Releases](https:/
 - Debian and Ubuntu use `sudo apt install ./Refract-*-linux-amd64.deb`.
 - Arch Linux uses `sudo pacman -U ./Refract-*-archlinux-x64.pkg.tar.zst` on an up-to-date system.
 
-Both package managers install TeX Live, SyncTeX, and the other required packages. Run `npm run build:linux` to build the Debian package or `npm run build:arch` to build the Arch package. The Arch build requires `bsdtar` and `zstd` on the build machine.
+Both package managers install TeX Live, SyncTeX, and the required desktop libraries from your distribution’s repositories. Install a newer release with the same command. Remove Refract with `sudo apt remove refract` on Debian or Ubuntu, or `sudo pacman -R refract` on Arch. These removal commands leave the TeX tools installed.
 
-Refract looks for `pdflatex` on `PATH` and uses the other TeX tools from the same directory. You can override the directory with `REFRACT_TEX_BIN`. Get Linux updates by downloading a new package from GitHub Releases.
+Refract looks for `pdflatex` on `PATH` and uses the other TeX tools from the same directory. For a custom toolchain, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Codex and OpenCode CLIs are optional and are installed and authenticated separately.
+
+### Linux package settings
+
+The Electron Builder settings live in [`package.json`](package.json) under `build.linux`, `build.deb`, and `build.pacman`. Both packages install the `refract` executable at `/opt/Refract/refract`, use `resources/logo.png` for the icon, and register the launcher in the `Office` category. The package maintainer is Savage1001, using the GitHub noreply address recorded in the build configuration.
+
+| Distribution | Electron Builder target | Release artifact | Build command |
+| --- | --- | --- | --- |
+| Debian and Ubuntu | `deb` | `dist/Refract-<version>-linux-amd64.deb` | `npm run build:linux -- --x64` |
+| Arch Linux | `pacman`, with Zstandard compression | `dist/Refract-<version>-archlinux-x64.pkg.tar.zst` | `npm run build:arch` |
+
+Run `npm ci` before building. The Arch build also requires `bsdtar` and `zstd` (`libarchive-tools` and `zstd` on the Ubuntu build runner).
+
+**Debian and Ubuntu dependencies**
+
+- Desktop libraries and tools include `libgtk-3-0`, `libnotify4`, `libnss3`, `libxss1`, `libxtst6`, `xdg-utils`, `libatspi2.0-0`, `libuuid1`, `libsecret-1-0`, `libgbm1`, and either `libasound2` or `libasound2t64`.
+- TeX and bibliography dependencies include `texlive-binaries` (including SyncTeX), `texlive-latex-base`, `texlive-latex-recommended`, `texlive-xetex`, `texlive-luatex`, `lmodern`, and `biber`.
+
+**Arch Linux dependencies**
+
+- Desktop libraries and tools include `alsa-lib`, `at-spi2-core`, `gtk3`, `libcups`, `libdrm`, `libnotify`, `libsecret`, `libxss`, `libxtst`, `mesa`, `nss`, and `xdg-utils`.
+- TeX and bibliography dependencies include `texlive-bin` (including SyncTeX), `texlive-latex`, `texlive-latexrecommended`, `texlive-xetex`, `texlive-luatex`, `texlive-fontsrecommended`, `otf-latin-modern`, `texlive-bibtexextra`, and `biber`.
+
+The [Release installers workflow](.github/workflows/release-installers.yml) verifies the Debian package on Ubuntu and the Arch package in a clean `archlinux:base` container. Both jobs check the package architecture, install the package with its dependencies, test LaTeX compilation and SyncTeX navigation headlessly with Xvfb, and confirm that removing Refract leaves TeX and SyncTeX available. The verified packages are uploaded as `linux-x64-installers` and `archlinux-x64-installer`.
 
 ## Development on Windows
 
