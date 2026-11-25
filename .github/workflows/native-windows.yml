@@ -5,6 +5,7 @@ on:
     paths:
       - native/**
       - .github/workflows/native-windows.yml
+      - scripts/capture-electron-parity.cts
 
 permissions:
   contents: read
@@ -33,3 +34,33 @@ jobs:
         run: cargo +stable test --locked --no-default-features
       - name: Build GPUI preview
         run: cargo +stable build --locked
+
+  electron-reference:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Build the existing renderer
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+      - name: Verify reference interactions and packaging
+        run: |
+          node --test --test-concurrency=1 build/test/workflow-navigation-headless.test.cjs build/test/pane-layout-headless.test.cjs build/test/ui-polish-headless.test.cjs build/test/pdf-memory-headless.test.cjs build/test/distribution-boundary.test.cjs
+      - name: Capture screenshots of the reference UI
+        run: node build/scripts/capture-electron-parity.cjs "$env:RUNNER_TEMP/refract-electron-reference"
+      - name: Upload reference screenshots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-electron-reference
+          path: ${{ runner.temp }}/refract-electron-reference
+          if-no-files-found: error

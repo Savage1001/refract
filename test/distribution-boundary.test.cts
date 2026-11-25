@@ -58,12 +58,21 @@ test('staging scan rejects TeX in nested resources and accepts application SyncT
   }
 });
 
-test('file allowlist excludes old vendor trees, source caches and stale build archives', () => {
+test('file allowlist excludes development previews, old vendor trees, source caches and stale build archives', () => {
   const { createRequire } = require('node:module') as typeof import('node:module');
   const { minimatch } = createRequire(require.resolve('app-builder-lib'))('minimatch') as {
     minimatch(file: string, pattern: string): boolean;
   };
-  for (const file of ['vendor/TinyTeX/bin/windows/pdflatex.exe', 'vendor/refract-tex-source-audit/source.tar.xz', 'resources/synctex/synctex.windows.r78097.tar.xz', 'build/TinyTeX/bin/windows/pdflatex.exe', 'build/test/fixture.exe']) {
+  for (const file of [
+    'vendor/TinyTeX/bin/windows/pdflatex.exe',
+    'vendor/refract-tex-source-audit/source.tar.xz',
+    'resources/synctex/synctex.windows.r78097.tar.xz',
+    'build/TinyTeX/bin/windows/pdflatex.exe',
+    'build/test/fixture.exe',
+    'native/src/main.rs',
+    'native/target/release/refract-native.exe',
+    'native/target/release/refract-native',
+  ]) {
     assert.equal(applicationFiles.some(pattern => !pattern.startsWith('!') && minimatch(file, pattern)), false, file);
   }
 });

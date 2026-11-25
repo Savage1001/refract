@@ -1,7 +1,7 @@
 use gpui::{
-    App, Application, Bounds, Context, FocusHandle, KeyBinding, ListHorizontalSizingBehavior,
-    SharedString, Task, Window, WindowAppearance, WindowBounds, WindowOptions, actions, div,
-    prelude::*, px, rgb, size, uniform_list,
+    App, Application, Bounds, Context, FocusHandle, FontWeight, KeyBinding,
+    ListHorizontalSizingBehavior, SharedString, Task, Window, WindowAppearance, WindowBounds,
+    WindowOptions, actions, div, prelude::*, px, rgb, size, uniform_list,
 };
 use refract_native::{Project, list_projects, read_source};
 use std::{env, io, path::PathBuf, rc::Rc};
@@ -200,7 +200,7 @@ impl Render for Library {
                     .bg(rgb(palette.sidebar))
                     .border_r_1()
                     .border_color(rgb(palette.border))
-                    .child(div().font_semibold().child("Projects"))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Projects"))
                     .child(projects),
             )
             .child(self.source_pane(palette))
@@ -219,7 +219,7 @@ impl Library {
         };
         let title = div()
             .truncate()
-            .font_semibold()
+            .font_weight(FontWeight::SEMIBOLD)
             .child(selection.project.name.clone());
         let file = div()
             .truncate()

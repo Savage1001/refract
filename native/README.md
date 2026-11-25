@@ -13,6 +13,12 @@ The preview looks in the platform's application configuration directory for the 
 
 Use the Electron app for editing, PDF preview, TeX and SyncTeX, assistants, and updates.
 
+## Parity before replacing Electron
+
+The current Electron app is the reference for appearance and behavior. The Native Windows preview workflow runs the existing renderer's interaction tests and uploads fixture screenshots of the library, settings, and workspace in light and dark themes, including the compact workspace layout. Run `node build/scripts/capture-electron-parity.cjs <output-folder>` after `npm run build` to capture the same reference on a machine with Microsoft Edge.
+
+Before changing the default app or shipping this crate, verify the GPUI build against these references and run equivalent workflows on Windows, macOS, and Linux. Compare views at the same viewport, scale, and theme. Include app chrome, keyboard and pointer interaction, focus, accessibility, and responsive layouts. Verify project and file management, editing, PDF preview and SyncTeX in both directions, versions and comments, chats and settings, and installation and updates. Confirm that existing projects and settings open in place.
+
 Run the project-library tests without building GPUI or opening a window.
 
 ```sh
