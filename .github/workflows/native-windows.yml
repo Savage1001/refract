@@ -1,0 +1,35 @@
+name: Native Windows preview
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - .github/workflows/native-windows.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: native
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
+      - name: Test project library
+        run: cargo +stable test --locked --no-default-features
+      - name: Build GPUI preview
+        run: cargo +stable build --locked

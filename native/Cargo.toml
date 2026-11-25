@@ -1,0 +1,23 @@
+[package]
+name = "refract-native"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["desktop"]
+desktop = ["dep:gpui"]
+
+[[bin]]
+name = "refract-native"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[dependencies]
+gpui = { version = "=0.2.2", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
