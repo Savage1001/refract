@@ -677,7 +677,7 @@ async function openProject(p) {
   compiledProject = null; compiledPdf = null; $('#download').disabled = true; compileLog = ''; showingTools = false; $('#tools-panel').hidden = true; $('#pdf-content').hidden = false; toolsButton.setAttribute('aria-expanded', 'false'); $('#compile').textContent = 'Compile';
   previewStatus.hidden = true; previewError?.remove(); buildOutputView = defaultBuildOutputView();
   compactPreview = false; applyPaneLayout(false);
-  releasePdf(pdfDocument); pdfDocument=null;lastPdfSync=null;pdfRenderRevision++;pdfPageCount=0;pdfPage=1;requestedPdfPage=1;updatePdfControls();$('#pdf-area').replaceChildren();
+  clearCompiledPdf(); requestedPdfPage=1; updatePdfControls();
   $('#project-navigation').hidden = false; setProjectName(p.name);
   $('#project-name').focus({preventScroll:true});
   showRestoreNotice(false);
@@ -732,7 +732,7 @@ function renderOutlineTitle(button:HTMLButtonElement, title:string): void {
   const equations = [...title.matchAll(/\\\(((?:\\(?!\))[^\n]|[^\\\n])+?)\\\)|\\.|\$\$|\$((?:\\.|[^\\$\n])+)\$/g)]
     .filter(match => match[1] !== undefined || match[2] !== undefined);
   if (!equations.length) return;
-  void mathFormatting.then(({renderMath, sanitize}) => {
+  void getMathFormatting().then(({renderMath, sanitize}) => {
     if (!button.isConnected) return;
     const label = document.createDocumentFragment();
     let offset = 0;
@@ -781,7 +781,7 @@ $('#home').onclick = async () => {
   const id = active?.id, request = ++projectOpening;
   saveEditorView(); saveChatDraft(); ++chatOpening; chatLoading = false; ++opening;
   active = null; suspendPickerForProject(); clearFilePreview(); closeLayoutTools();
-  releasePdf(pdfDocument); pdfDocument = null; pdfRenderRevision++;
+  clearCompiledPdf();
   stopUiMotion();
   $('#projects').hidden = false; $('#workspace').hidden = true; workspaceBar.hidden = true; $('#project-navigation').hidden = true;
   const focusProject = (projectId = id) => {
@@ -856,14 +856,49 @@ $('#chats-tab').onclick = () => {
 store.list().then(p => { projects = p; renderProjects(); }).catch(error => report('load projects', error));
 let compiledProject = null, compiledPdf: string | null = null, compileLog = '';
 type PdfDocument = import('pdfjs-dist').PDFDocumentProxy;
+type PdfPage = import('pdfjs-dist').PDFPageProxy;
+type PdfJs = typeof import('pdfjs-dist');
+interface CompiledPage {
+  page: PdfPage;
+  frame: HTMLDivElement;
+  canvas: HTMLCanvasElement;
+  viewport: ReturnType<PdfPage['getViewport']>;
+  scale: number;
+}
+interface CompiledPreview {
+  doc: PdfDocument;
+  pdfjs: PdfJs;
+  pages: CompiledPage[];
+  loaded: Set<CompiledPage>;
+  rendering?: { page: CompiledPage; controller: AbortController };
+}
 let pdfZoom=100, pdfPage=1, pdfPageCount=0, requestedPdfPage=1;
 let pdfFitMode: 'width' | 'page' | 'custom' = 'width';
-let pdfDocument:PdfDocument | null = null, pdfRenderRevision=0;
+let pdfDocument:PdfDocument | null = null;
+let compiledPreview: CompiledPreview | undefined;
 function releasePdf(pdf: PdfDocument | null | undefined): void {
   void pdf?.destroy().catch(error => console.error('Could not release PDF', error));
 }
 let lastPdfSync:{page:number;x:number;y:number}|null=null;
-let pdfSharpTimer: ReturnType<typeof setTimeout> | null = null;
+let pdfAnimationFrame = 0, pdfNavigationRevision = 0;
+function disposeCompiledPreview(): void {
+  if (compiledPreview) {
+    compiledPreview.rendering?.controller.abort();
+    for (const page of compiledPreview.loaded) unloadPdfPage(page);
+    compiledPreview = undefined;
+  }
+  releasePdf(pdfDocument);
+  pdfDocument = null;
+}
+function clearCompiledPdf(): void {
+  disposeCompiledPreview();
+  compiledProject = null;
+  compiledPdf = null;
+  lastPdfSync = null;
+  pdfPageCount = 0;
+  pdfPage = 1;
+  pdfArea.replaceChildren();
+}
 const pdfControls=document.createElement('div');pdfControls.className='pdf-controls';
 pdfControls.innerHTML='<div class="pdf-page-controls"><span class="pdf-control-label" aria-hidden="true">Page</span><button type="button" aria-label="Previous compiled PDF page">‹</button><span aria-live="polite" class="pdf-page-count"><button type="button" class="pdf-current-page" aria-label="Change compiled PDF page" title="Go to page">0</button><input hidden type="text" inputmode="numeric" aria-label="Go to compiled PDF page"><span class="pdf-page-total"> / 0</span></span><button type="button" aria-label="Next compiled PDF page">›</button></div><div class="pdf-zoom-controls"><span class="pdf-control-label pdf-zoom-label" aria-hidden="true">Zoom</span><button type="button" aria-label="Zoom out compiled PDF">−</button><span class="pdf-zoom-value">100%</span><button type="button" aria-label="Zoom in compiled PDF">+</button></div>';
 $('#zoom-fit').textContent='Fit width'; $('#zoom-fit').setAttribute('aria-label','Fit PDF to width');
@@ -906,39 +941,141 @@ function updatePdfControls() {
   pdfControls.querySelector<HTMLButtonElement>('[aria-label="Zoom in compiled PDF"]')!.disabled=pdfPageCount===0 || pdfZoom>=250;
   $('#zoom-fit').disabled=pdfPageCount===0;
 }
-async function sharpenPdfPages(doc:PdfDocument, revision:number, zoom:number) {
-  const canvases = [...pdfArea.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')];
-  try {
-    for (let i=0; i<canvases.length; i++) {
-      if (revision !== pdfRenderRevision || doc !== pdfDocument) return;
-      const bounds = canvases[i].getBoundingClientRect(), area = pdfArea.getBoundingClientRect();
-      if (bounds.bottom < area.top - area.height || bounds.top > area.bottom + area.height) continue;
-      const page = await doc.getPage(i+1), base=page.getViewport({scale:1});
-      if (revision !== pdfRenderRevision || doc !== pdfDocument) return;
-      // Match physical display pixels while bounding the canvas for unusually large pages.
-      const requested=Math.max(1.4*Math.max(1,zoom/100),bounds.width*Math.max(1,window.devicePixelRatio || 1)/base.width);
-      const scale=Math.min(requested,8192/base.width,8192/base.height,Math.sqrt(16000000/(base.width*base.height)));
-      if (Number(canvases[i].dataset.renderScale || 0) >= scale) continue;
-      const viewport = page.getViewport({scale});
-      const replacement = document.createElement('canvas');
-      replacement.width = Math.ceil(viewport.width); replacement.height = Math.ceil(viewport.height);
-      replacement.dataset.renderScale = String(scale);
-      replacement.style.width = '100%'; replacement.setAttribute('aria-label', `Page ${i+1}`);replacement.tabIndex=0;
-      const context = replacement.getContext('2d'); if (!context) throw new Error('Could not render PDF page');
-      await page.render({canvasContext:context,viewport}).promise;
-      if (revision !== pdfRenderRevision || doc !== pdfDocument || !canvases[i].isConnected) return;
-      replacement.title = canvases[i].title;
-      const focused=document.activeElement===canvases[i];canvases[i].replaceWith(replacement);if(focused)replacement.focus({preventScroll:true});
-    }
-  } catch (error) { if (doc === pdfDocument) console.error('PDF zoom rendering failed', error); }
+function unloadPdfRaster(page: CompiledPage): void {
+  if (page.canvas.width) page.canvas.width = page.canvas.height = 0;
+  delete page.canvas.dataset.renderScale;
+  page.scale = 0;
 }
-function schedulePdfSharpen() {
-  const revision=++pdfRenderRevision;
-  if (pdfSharpTimer) clearTimeout(pdfSharpTimer);
-  pdfSharpTimer=setTimeout(() => { pdfSharpTimer=null; if(pdfDocument) void sharpenPdfPages(pdfDocument,revision,pdfZoom); }, 80);
+function unloadPdfPage(page: CompiledPage): void {
+  unloadPdfRaster(page);
+  page.frame.querySelectorAll('.pdf-text-layer, .pdf-annotation-link').forEach(layer => layer.remove());
+  page.page.cleanup();
+}
+async function renderPdfPage(preview: CompiledPreview, entry: CompiledPage, scale: number, signal: AbortSignal): Promise<void> {
+  const {page, canvas, frame, viewport: base} = entry;
+  const viewport = page.getViewport({scale});
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const canvasContext = canvas.getContext('2d');
+  if (!canvasContext) throw new Error('Could not render PDF page');
+  const render = page.render({canvasContext, viewport});
+  const cancelRender = () => render.cancel();
+  signal.addEventListener('abort', cancelRender, {once:true});
+  try {
+    await render.promise;
+  } finally { signal.removeEventListener('abort', cancelRender); }
+  signal.throwIfAborted();
+  if (!frame.querySelector('.pdf-text-layer')) {
+    const {doc} = preview;
+    const textLayer = document.createElement('div');
+    textLayer.className = 'pdf-text-layer';
+    // PDF.js positions text in unscaled PDF units. Follow the displayed page width.
+    textLayer.style.setProperty('--scale-factor', `calc(100cqw / ${base.width / base.userUnit}px)`);
+    const text = new preview.pdfjs.TextLayer({container:textLayer, textContentSource:page.streamTextContent(), viewport:base});
+    const cancelText = () => text.cancel();
+    signal.addEventListener('abort', cancelText, {once:true});
+    try { await text.render(); }
+    catch (error) { if (!signal.aborted) console.error('Could not render PDF page text', error); }
+    finally { signal.removeEventListener('abort', cancelText); }
+    signal.throwIfAborted();
+    const annotations = await page.getAnnotations({intent:'display'});
+    signal.throwIfAborted();
+    frame.append(textLayer);
+    for (const annotation of annotations) {
+      if (annotation.subtype !== 'Link' || (!annotation.url && !annotation.dest)) continue;
+      const [left,bottom,right,top] = base.convertToViewportRectangle(annotation.rect);
+      const link = document.createElement('a');
+      link.className = 'pdf-annotation-link';
+      link.setAttribute('aria-label', annotation.url ? 'Open PDF link' : 'Go to linked PDF location');
+      link.style.left = `${Math.min(left,right) / base.width * 100}%`;
+      link.style.top = `${Math.min(top,bottom) / base.height * 100}%`;
+      link.style.width = `${Math.abs(right-left) / base.width * 100}%`;
+      link.style.height = `${Math.abs(bottom-top) / base.height * 100}%`;
+      link.href = annotation.url || '#';
+      link.addEventListener('click', event => {
+        event.preventDefault();
+        void (async () => {
+          if (annotation.url) { await store.openExternal(annotation.url); return; }
+          const destination = typeof annotation.dest === 'string' ? await doc.getDestination(annotation.dest) : annotation.dest;
+          if (!destination?.length) return;
+          const pageIndex = typeof destination[0] === 'number' ? destination[0] : await doc.getPageIndex(destination[0]);
+          if (doc === pdfDocument) goToPdfPage(pageIndex + 1);
+        })().catch(error => report('open PDF link', error));
+      });
+      frame.append(link);
+    }
+  }
+  entry.scale = scale;
+  canvas.dataset.renderScale = String(scale);
+}
+function visiblePdfPages(preview: CompiledPreview): Map<CompiledPage, number> {
+  const area = pdfArea.getBoundingClientRect();
+  const visible = new Map<CompiledPage, number>();
+  if (!pdfArea.clientHeight) return visible;
+  for (const entry of preview.pages) {
+    const bounds = entry.frame.getBoundingClientRect();
+    if (bounds.bottom <= area.top || bounds.top >= area.bottom) continue;
+    const {width, height} = entry.viewport;
+    const requested = Math.max(1.4 * pdfZoom / 100, bounds.width * window.devicePixelRatio / width);
+    // Large paper sizes and high-DPI displays still get a finite backing store.
+    const scale = Math.min(requested, 8192 / width, 8192 / height, Math.sqrt(16000000 / (width * height)));
+    visible.set(entry, scale);
+  }
+  return visible;
+}
+async function updatePdfPages(): Promise<void> {
+  const preview = compiledPreview;
+  if (!preview) return;
+  let visible = visiblePdfPages(preview);
+  const selection = document.getSelection();
+  for (const entry of preview.loaded) {
+    if (visible.has(entry) || entry === preview.rendering?.page) continue;
+    // Keep selectable text and focused links alive while the reader uses them.
+    if (entry.frame.contains(document.activeElement) ||
+        (selection?.rangeCount && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(entry.frame))) {
+      unloadPdfRaster(entry);
+      continue;
+    }
+    unloadPdfPage(entry);
+    preview.loaded.delete(entry);
+  }
+  if (preview.rendering) {
+    if (!visible.has(preview.rendering.page)) preview.rendering.controller.abort();
+    return;
+  }
+  // Re-read the viewport after every render so a jump never waits behind pages
+  // that have already scrolled away. Each document has at most one active task.
+  const failed = new Set<CompiledPage>();
+  while (preview === compiledPreview) {
+    const next = [...visible].find(([entry, scale]) => !failed.has(entry) && entry.scale !== scale);
+    if (!next) return;
+    const [entry, scale] = next;
+    const controller = new AbortController();
+    preview.rendering = {page:entry, controller};
+    preview.loaded.add(entry);
+    try { await renderPdfPage(preview, entry, scale, controller.signal); }
+    catch (error) {
+      unloadPdfRaster(entry);
+      entry.page.cleanup();
+      if (!controller.signal.aborted) {
+        failed.add(entry);
+        console.error('Could not render PDF page', error);
+      }
+    } finally { preview.rendering = undefined; }
+    visible = visiblePdfPages(preview);
+    if (!visible.has(entry) && preview === compiledPreview) schedulePdfPages();
+  }
+}
+function schedulePdfPages(): void {
+  if (pdfAnimationFrame || !compiledPreview) return;
+  pdfAnimationFrame = requestAnimationFrame(() => {
+    pdfAnimationFrame = 0;
+    void updatePdfPages();
+  });
 }
 function changePdfZoom(zoom:number, mode:'width'|'page'|'custom'='custom') {
   if(!pdfPageCount) return;
+  pdfNavigationRevision++;
   const pages=[...pdfArea.querySelectorAll<HTMLElement>('.pdf-pages .pdf-page-frame')];
   const area=pdfArea.getBoundingClientRect(),center=area.top+pdfArea.clientHeight/2;
   const anchor=pages.reduce<HTMLElement | undefined>((closest,canvas)=>{
@@ -957,10 +1094,11 @@ function changePdfZoom(zoom:number, mode:'width'|'page'|'custom'='custom') {
     pdfArea.scrollTop+=resized.top+position.y*resized.height-viewport.top-pdfArea.clientHeight/2;
     pdfArea.scrollLeft+=resized.left+position.x*resized.width-viewport.left-pdfArea.clientWidth/2;
   }
-  schedulePdfSharpen();
+  schedulePdfPages();
 }
 function goToPdfPage(page:number) {
   const pages=pdfArea.querySelectorAll<HTMLElement>('.pdf-pages canvas'), target=pages[page-1];if(!target) return;
+  pdfNavigationRevision++;
   pdfPage=page;pdfArea.scrollTop+=target.getBoundingClientRect().top-pdfArea.getBoundingClientRect().top-18;updatePdfControls();
 }
 pdfControls.querySelector<HTMLButtonElement>('[aria-label="Previous compiled PDF page"]')!.onclick=()=>goToPdfPage(pdfPage-1);
@@ -1001,9 +1139,10 @@ showInPdf.onclick=async()=>{
     else paneLayout.preview = true;
     applyPaneLayout();
     if (sourceFocused && compactWorkspace.matches) $('#pane-preview').focus();
-    schedulePdfSharpen();
+    schedulePdfPages();
     const canvas=pdfArea.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')[position.page-1];if(!canvas)return;
     const bounds=canvas.getBoundingClientRect(),area=pdfArea.getBoundingClientRect();
+    pdfNavigationRevision++;
     lastPdfSync=position;pdfPage=position.page;pdfArea.scrollTop+=bounds.top-area.top+(position.y/viewport.height)*bounds.height-area.height/2;updatePdfControls();
   }
   catch(error){if(active?.id===id && revision===version)report('find source in PDF',error);}
@@ -1049,9 +1188,14 @@ pdfArea.addEventListener('scroll',()=>{
   const rect=pdfArea.getBoundingClientRect(),center=rect.top+rect.height/2;let page=1,closest=Infinity;
   pages.forEach((canvas,index)=>{const bounds=canvas.getBoundingClientRect();const distance=center<bounds.top ? bounds.top-center : center>bounds.bottom ? center-bounds.bottom : 0;if(distance<closest){closest=distance;page=index+1;}});
   if(page!==pdfPage){pdfPage=page;updatePdfControls();}
-  schedulePdfSharpen();
+  schedulePdfPages();
 });
-window.addEventListener('resize',()=>{if(pdfDocument){if(pdfFitMode==='page') fitPdfPage(); else schedulePdfSharpen();}});
+pdfArea.addEventListener('focusout', schedulePdfPages);
+for (const type of ['wheel', 'pointerdown', 'keydown']) {
+  pdfArea.addEventListener(type, () => { pdfNavigationRevision++; }, {passive:true});
+}
+document.addEventListener('selectionchange', schedulePdfPages);
+window.addEventListener('resize',()=>{if(pdfDocument){if(pdfFitMode==='page') fitPdfPage(); else schedulePdfPages();}});
 updatePdfControls();
 const pendingDraftSaves=new Set<string>();
 const versionFileOptions = new WeakMap<HTMLButtonElement, readonly string[]>();
@@ -1157,44 +1301,19 @@ async function compilePreview(force=false) {
     pdfjs.GlobalWorkerOptions.workerSrc = '../node_modules/pdfjs-dist/build/pdf.worker.mjs';
     const doc = pendingPdf = await pdfjs.getDocument({ data: bytes, isEvalSupported:false }).promise;
     const container = document.createElement('div'); container.className = 'pdf-pages';
+    const pages: CompiledPage[] = [];
     for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i), viewport = page.getViewport({scale:1});
       if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
-      const page = await doc.getPage(i), base = page.getViewport({scale:1});
-      // Prepare every page before publishing the preview, so even a jump to the
-      // end has content immediately. Bound this first pass to roughly 16M pixels
-      // across the document; visible pages are sharpened separately below.
-      const scale = Math.min(1.4,1024/base.width,1024/base.height,Math.sqrt(16000000/(doc.numPages*base.width*base.height)));
-      const viewport = page.getViewport({scale});
-      const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
-      const context = canvas.getContext('2d'); if (!context) throw new Error('Could not render PDF page');
-      await page.render({canvasContext:context,viewport}).promise;
-      if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
-      canvas.dataset.renderScale = String(scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 0;
       canvas.setAttribute('aria-label', `Page ${i}`);canvas.tabIndex=0;canvas.title='Double-click or press Enter to find this position in the source';
       const frame=document.createElement('div');frame.className='pdf-page-frame';frame.style.width=`${pdfZoom}%`;
-      // Keep the page geometry independent of the canvas backing resolution.
-      frame.style.aspectRatio = `${base.width} / ${base.height}`;
+      // Stable page geometry makes jumps and SyncTeX work without rasterizing.
+      frame.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
       frame.append(canvas);
-      const textLayer = document.createElement('div');
-      textLayer.className = 'pdf-text-layer';
-      // PDF.js positions text in unscaled PDF units. Follow the displayed page width.
-      const naturalWidth = base.width / base.userUnit;
-      textLayer.style.setProperty('--scale-factor', `calc(100cqw / ${naturalWidth}px)`);
-      const text = new pdfjs.TextLayer({container:textLayer, textContentSource:page.streamTextContent(), viewport:base});
-      void text.render().then(() => frame.append(textLayer))
-        .catch(error => console.error('Could not render PDF page text', error));
-      const annotations=await page.getAnnotations({intent:'display'});
-      for(const annotation of annotations){
-        if(annotation.subtype!=='Link' || (!annotation.url && !annotation.dest))continue;
-        const [left,bottom,right,top]=viewport.convertToViewportRectangle(annotation.rect);
-        const link=document.createElement('a');link.className='pdf-annotation-link';link.setAttribute('aria-label',annotation.url?'Open PDF link':'Go to linked PDF location');
-        link.style.left=`${Math.min(left,right)/viewport.width*100}%`;link.style.top=`${Math.min(top,bottom)/viewport.height*100}%`;
-        link.style.width=`${Math.abs(right-left)/viewport.width*100}%`;link.style.height=`${Math.abs(bottom-top)/viewport.height*100}%`;
-        if(annotation.url){link.href=annotation.url;link.addEventListener('click',event=>{event.preventDefault();void store.openExternal(annotation.url).catch(error=>report('open PDF link',error));});}
-        else { link.href='#'; link.addEventListener('click',event=>{event.preventDefault();void (async()=>{const destination=typeof annotation.dest==='string'?await doc.getDestination(annotation.dest):annotation.dest;if(!destination?.length)return;const pageIndex=typeof destination[0]==='number'?destination[0]:await doc.getPageIndex(destination[0]);if(doc===pdfDocument)goToPdfPage(pageIndex+1);})().catch(error=>report('open PDF link',error));}); }
-        frame.append(link);
-      }
       container.append(frame);
+      pages.push({page, frame, canvas, viewport, scale:0});
     }
     if (!active || active.id !== id || revision !== version) { compileQueued = !!active; return; }
     const readingPage = Math.min(pdfDocument ? pdfPage : requestedPdfPage, doc.numPages);
@@ -1203,8 +1322,9 @@ async function compilePreview(force=false) {
     const previouslyFocused = Array.from(pdfArea.querySelectorAll('.pdf-pages canvas')).indexOf(document.activeElement);
     previewStatus.hidden = true; previewError?.remove(); previewError = undefined;
     compiledProject = id; compiledPdf = result.pdf;
-    releasePdf(pdfDocument);
+    disposeCompiledPreview();
     pdfArea.replaceChildren(container);
+    compiledPreview = {doc, pdfjs, pages, loaded:new Set()};
     pdfDocument = doc; pdfPageCount = doc.numPages; pdfPage = readingPage;
     changePdfZoom(pdfZoom, pdfFitMode);
     if (pdfFitMode === 'page') fitPdfPage();
@@ -1212,7 +1332,16 @@ async function compilePreview(force=false) {
     else pdfArea.scrollTo(scrollLeft, scrollTop);
     if (firstPreview) playWorkspaceMotion(container, false);
     if (previouslyFocused >= 0) container.querySelectorAll('canvas')[Math.min(previouslyFocused, doc.numPages - 1)]?.focus({preventScroll:true});
+    const navigation = pdfNavigationRevision;
+    await updatePdfPages();
+    if (!firstPreview && (scrollLeft || scrollTop) && !document.hidden && pdfArea.clientHeight) {
+      // Wait for layout to commit the newly painted scroll contents.
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      if (pdfDocument === doc && navigation === pdfNavigationRevision) pdfArea.scrollTo(scrollLeft, scrollTop);
+    }
+    if (!active || active.id !== id || revision !== version || pdfDocument !== doc) return;
     $('#download').disabled = false; $('#compile').textContent = 'Compiled';
+    schedulePdfPages();
   } catch (error) {
     if (active && active.id === id && revision === version) {
       compiledProject = null; compiledPdf = null; $('#download').disabled = true;
@@ -1230,13 +1359,18 @@ $('#compile').onclick = () => { if (!compileRunning) { scheduleCompile(); clearT
 $('#download').onclick = () => { if (active && compiledProject === active.id && compiledPdf) store.savePdf(compiledPdf).catch(error => report('save PDF', error)); };
 const purifierPath: string='../node_modules/dompurify/dist/purify.es.mjs';
 const katexPath: string='../node_modules/katex/dist/katex.mjs';
-const mathFormatting = Promise.all([import(purifierPath), import(katexPath)]).then(([{default:purify}, {default:katex}]) => ({
-  renderMath: (text:string, displayMode:boolean):string => katex.renderToString(text,{displayMode,output:'mathml',throwOnError:false,trust:false}),
-  sanitize: (html:string, dropContents:string[] = []):string => purify.sanitize(html,{ADD_FORBID_CONTENTS:dropContents,USE_PROFILES:{html:true,mathMl:true},FORBID_TAGS:['img','style','iframe'],FORBID_ATTR:['src','style']})
-}));
-const assistantFormatter: Promise<(text:string)=>string> = (async () => {
+function loadMathFormatting() {
+  return Promise.all([import(purifierPath), import(katexPath)]).then(([{default:purify}, {default:katex}]) => ({
+    renderMath: (text:string, displayMode:boolean):string => katex.renderToString(text,{displayMode,output:'mathml',throwOnError:false,trust:false}),
+    sanitize: (html:string, dropContents:string[] = []):string => purify.sanitize(html,{ADD_FORBID_CONTENTS:dropContents,USE_PROFILES:{html:true,mathMl:true},FORBID_TAGS:['img','style','iframe'],FORBID_ATTR:['src','style']})
+  }));
+}
+let mathFormatting: ReturnType<typeof loadMathFormatting> | undefined;
+function getMathFormatting() { return mathFormatting ??= loadMathFormatting(); }
+let assistantFormatter: ReturnType<typeof loadAssistantFormatter> | undefined;
+async function loadAssistantFormatter(): Promise<(text:string)=>string> {
   const markedPath: string='../node_modules/marked/lib/marked.esm.js';
-  const [{Marked}, {renderMath, sanitize}] = await Promise.all([import(markedPath), mathFormatting]);
+  const [{Marked}, {renderMath, sanitize}] = await Promise.all([import(markedPath), getMathFormatting()]);
   const math = (display:boolean) => ({
     name:display ? 'displayMath' : 'inlineMath', level:display ? 'block' : 'inline',
     start(source:string) { return source.search(display ? /\$\$|\\\[/ : /\$|\\\(/); },
@@ -1248,7 +1382,7 @@ const assistantFormatter: Promise<(text:string)=>string> = (async () => {
   });
   const parser=new Marked({extensions:[math(true),math(false)]});
   return (text:string) => sanitize(parser.parse(text));
-})();
+}
 function publishProviderStatus(provider: HTMLSelectElement, status: 'loading' | 'ready' | 'error'): void {
   provider.dataset.pickerStatus = status;
   provider.dispatchEvent(new Event('providerstate'));
@@ -1357,7 +1491,7 @@ function renderChat(chat, animateReply = false) {
     const block = document.createElement('div'); block.className = `message ${message.role}`;
     if (animateReply && index === chat.messages.length - 1 && message.role !== 'user') block.classList.add('message-arriving');
     const content=document.createElement('div');content.textContent=message.text;block.append(content);
-    if(message.role==='assistant') void assistantFormatter.then(format=>{if(content.isConnected) {
+    if(message.role==='assistant') void (assistantFormatter ??= loadAssistantFormatter()).then(format=>{if(content.isConnected) {
       content.className='formatted-response';content.innerHTML=format(message.text);
       content.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(link=>{
         const href=link.getAttribute('href')!;
@@ -2803,7 +2937,7 @@ function applyPaneLayout(persist=true):void {
   expandChat.textContent=visible.editor?'Expand chat':'Show editor';expandChat.setAttribute('aria-pressed',String(!visible.editor));
   syncPaneButtons();
   if(persist) {try {localStorage.setItem(layoutStorageKey,JSON.stringify(paneLayout));} catch { /* Layout remains usable without storage. */ }}
-  requestAnimationFrame(()=>{if(pdfFitMode==='page')fitPdfPage();else schedulePdfSharpen();});
+  requestAnimationFrame(()=>{if(pdfFitMode==='page')fitPdfPage();schedulePdfPages();});
 }
 function displayedPaneLayout():PaneLayout {
   const visible=visiblePaneLayout();

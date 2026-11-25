@@ -134,7 +134,7 @@ test('recompiling after an edit preserves both PDF preview scroll offsets', {tim
   await page.locator('#source').press('End');
   await page.locator('#source').press('Space');
   await canvas!.waitForElementState('hidden');
-  await preview.locator('canvas').first().waitFor({state:'attached'});
+  await page.getByText('Compiled',{exact:true}).waitFor();
   assert.deepEqual(await preview.evaluate(element => ({
    top:element.scrollTop,left:element.scrollLeft
   })),position);

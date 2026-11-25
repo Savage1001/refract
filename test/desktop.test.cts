@@ -993,6 +993,7 @@ test('SyncTeX navigates between a nested source and compiled PDF', {timeout:9000
  const position=await page.evaluate(async id=>store.syncForward(id,'sections/body.tex',121),project.id);
  await page.locator('#file-list [title="main.tex"]').click();
  const canvas=page.locator('.pdf-pages canvas').nth(1);await canvas.scrollIntoViewIfNeeded();
+ await page.waitForFunction(()=>!!document.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')[1]?.dataset.renderScale);
  await canvas.evaluate((element:HTMLCanvasElement,p)=>{const bounds=element.getBoundingClientRect(),scale=Number(element.dataset.renderScale)||1.4;const x=bounds.left+p.x*bounds.width/(element.width/scale),y=bounds.top+p.y*bounds.height/(element.height/scale);element.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:x,clientY:y}));},position);
  await page.waitForFunction(()=>{const element=document.querySelector('#source') as HTMLTextAreaElement;return element?.value.endsWith('Nested synchronized text.\n') && element.value.slice(element.selectionStart,element.selectionEnd)==='Nested synchronized text.';});
  const assertSourceVisible=async()=>{
@@ -1033,11 +1034,12 @@ test('SyncTeX navigates an accented LuaLaTeX source file', {timeout:90000}, asyn
  await page.locator('#file-list [title="sections/résumé.tex"]').click();await page.getByRole('button',{name:'Show in PDF'}).click();await page.waitForFunction(()=>document.querySelector('.pdf-page-count')?.textContent==='2 / 2');
  const position=await page.evaluate(async id=>store.syncForward(id,'sections/résumé.tex',1),project.id);await page.locator('#file-list [title="main.tex"]').click();
  const canvas=page.locator('.pdf-pages canvas').nth(1);await canvas.scrollIntoViewIfNeeded();
+ await page.waitForFunction(()=>!!document.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')[1]?.dataset.renderScale);
  await canvas.evaluate((element:HTMLCanvasElement,p)=>{const bounds=element.getBoundingClientRect(),scale=Number(element.dataset.renderScale)||1.4;element.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:bounds.left+p.x*bounds.width/(element.width/scale),clientY:bounds.top+p.y*bounds.height/(element.height/scale)}));},position);
  await page.waitForFunction(()=>{const el=document.querySelector('#source') as HTMLTextAreaElement;return el?.value==='Accented source filename.\n' && el.value.slice(el.selectionStart,el.selectionEnd)==='Accented source filename.';});assert.deepEqual(dialogs,[]);
 });
 
-test('long PDFs have content immediately on fast scroll and sharpen pages in view', {timeout:60000}, async t=>{
+test('long PDFs render jump destinations and release pages outside the viewport', {timeout:60000}, async t=>{
  const data: string=await fs.mkdtemp(path.join(os.tmpdir(),'refract-ui-long-pdf-'));
  const env: NodeJS.ProcessEnv={...process.env,REFRACT_DATA_DIR:data,REFRACT_TEST_HIDDEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  const app=await launchDesktop(env);t.after(async()=>{await app.close().catch(()=>{});await fs.rm(data,{recursive:true,force:true,maxRetries:5,retryDelay:200});});
@@ -1045,26 +1047,15 @@ test('long PDFs have content immediately on fast scroll and sharpen pages in vie
  await page.locator('#source').fill('\\documentclass{article}\n\\begin{document}\n' + Array.from({length:20},(_,i)=>`Page ${i+1}\\newpage\n`).join('') + '\\end{document}');
  await page.getByText('Compiled',{exact:true}).waitFor({timeout:45000});
  const canvases=page.locator('.pdf-pages canvas');assert.equal(await canvases.count(),20);
- // Check actual painted pixels, including pages that have never been in view.
- const painted = await canvases.evaluateAll(elements=>elements.map(element=>{
-   const canvas=element as HTMLCanvasElement, pixels=canvas.getContext('2d')!.getImageData(0,0,canvas.width,canvas.height).data;
-   return pixels.some((value,index)=>index%4!==3 && value<200 && pixels[index-index%4+3]>0);
- }));
- assert.deepEqual(painted,Array(20).fill(true));
- // Jump without waiting for the scroll debounce or another render.
- const immediate = await page.evaluate(()=>{
-   const area=document.querySelector<HTMLElement>('#pdf-area')!;
-   area.scrollTop=area.scrollHeight;
-   const canvas=[...area.querySelectorAll('canvas')].at(-1)!;
-   return {scale:Number(canvas.dataset.renderScale),width:canvas.width};
- });
- assert.ok(immediate.scale>0);
- await page.waitForFunction(width=>([...document.querySelectorAll('.pdf-pages canvas')].at(-1) as HTMLCanvasElement).width>width,immediate.width);
+ assert.equal(await canvases.last().evaluate((canvas:HTMLCanvasElement)=>canvas.width),0);
+ await page.locator('#pdf-area').evaluate(area=>{area.scrollTop=area.scrollHeight;});
+ await page.waitForFunction(()=>!![...document.querySelectorAll<HTMLCanvasElement>('.pdf-pages canvas')].at(-1)?.dataset.renderScale);
+ assert.equal(await canvases.first().evaluate((canvas:HTMLCanvasElement)=>canvas.width),0);
  const initialWidth:number=await canvases.last().evaluate(el=>(el as HTMLCanvasElement).width);
  await canvases.first().scrollIntoViewIfNeeded();
  await page.getByLabel('Zoom in compiled PDF').click();
  await page.waitForFunction(width=>(document.querySelector('.pdf-pages canvas') as HTMLCanvasElement)?.width>width,initialWidth);
- assert.equal(await canvases.last().evaluate(el=>(el as HTMLCanvasElement).width),initialWidth);
+ assert.equal(await canvases.last().evaluate(el=>(el as HTMLCanvasElement).width),0);
  const jump=page.getByLabel('Go to compiled PDF page');await page.getByRole('button',{name:'Change compiled PDF page'}).click();await jump.fill('12');await jump.press('Enter');
  const pagePosition=()=>canvases.nth(11).evaluate(el=>{
    const area=document.querySelector('#pdf-area') as HTMLElement,bounds=el.getBoundingClientRect();
@@ -1081,6 +1072,7 @@ test('long PDFs have content immediately on fast scroll and sharpen pages in vie
  await canvases.last().scrollIntoViewIfNeeded();
  await page.waitForFunction(width=>[...document.querySelectorAll('.pdf-pages canvas')].at(-1) instanceof HTMLCanvasElement && ([...document.querySelectorAll('.pdf-pages canvas')].at(-1) as HTMLCanvasElement).width>width,initialWidth);
  await canvases.first().scrollIntoViewIfNeeded();
+ await page.waitForFunction(()=>!!document.querySelector<HTMLCanvasElement>('.pdf-pages canvas')?.dataset.renderScale);
  const beforeScaling:number=await canvases.first().evaluate(el=>(el as HTMLCanvasElement).width);
  await canvases.first().focus();
  await page.evaluate(()=>{Object.defineProperty(window,'devicePixelRatio',{configurable:true,value:4});window.dispatchEvent(new Event('resize'));});
