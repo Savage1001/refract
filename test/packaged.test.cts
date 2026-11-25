@@ -34,7 +34,9 @@ test('packaged application compiles a project', {timeout:90000}, async t => {
  await page.getByText('Compiled',{exact:true}).waitFor({timeout:30000});
  assert.equal(await page.locator('#pdf-area canvas').count(),1);
  const source=await page.locator('#source').inputValue();
- const font = process.platform === 'darwin' ? 'Helvetica' : 'Latin Modern Roman';
+ // Resolve the TeX Live font directly on Linux, where fontconfig family aliases vary by distribution.
+ const font = process.platform === 'linux' ? 'lmroman10-regular.otf'
+  : process.platform === 'darwin' ? 'Helvetica' : 'Latin Modern Roman';
  await page.locator('#source').fill(source.replace('\\begin{document}',`\\usepackage{fontspec}\n\\setmainfont{${font}}\n\\begin{document}`));
  await page.locator('#tools').click(); await page.locator('#tool-info').click();
  await page.getByRole('combobox',{name:'LaTeX engine'}).selectOption('xelatex');
