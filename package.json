@@ -1,6 +1,6 @@
 {
   "name": "refract",
-  "version": "0.3.3",
+  "version": "0.3.5-pre-release-1",
   "private": true,
   "homepage": "https://github.com/Savage1001/refract",
   "main": "build/main.cjs",
@@ -83,25 +83,57 @@
       "allowAnywhere": false,
       "allowCurrentUserHome": false,
       "isRelocatable": false,
-      "mustClose": ["app.refract.desktop"]
+      "mustClose": [
+        "app.refract.desktop"
+      ]
     },
     "deb": {
       "depends": [
-        "libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils",
-        "libatspi2.0-0", "libuuid1", "libsecret-1-0", "libgbm1", "libasound2 | libasound2t64",
-        "texlive-binaries", "texlive-latex-base", "texlive-latex-recommended",
-        "texlive-xetex", "texlive-luatex", "lmodern", "biber"
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libgbm1",
+        "libasound2 | libasound2t64",
+        "texlive-binaries",
+        "texlive-latex-base",
+        "texlive-latex-recommended",
+        "texlive-xetex",
+        "texlive-luatex",
+        "lmodern",
+        "biber"
       ]
     },
     "pacman": {
       "artifactName": "${productName}-${version}-archlinux-${arch}.pkg.tar.zst",
       "compression": "zstd",
       "depends": [
-        "alsa-lib", "at-spi2-core", "gtk3", "libcups", "libdrm", "libnotify",
-        "libsecret", "libxss", "libxtst", "mesa", "nss", "xdg-utils",
-        "texlive-bin", "texlive-latex", "texlive-latexrecommended",
-        "texlive-xetex", "texlive-luatex", "texlive-fontsrecommended", "otf-latin-modern",
-        "texlive-bibtexextra", "biber"
+        "alsa-lib",
+        "at-spi2-core",
+        "gtk3",
+        "libcups",
+        "libdrm",
+        "libnotify",
+        "libsecret",
+        "libxss",
+        "libxtst",
+        "mesa",
+        "nss",
+        "xdg-utils",
+        "texlive-bin",
+        "texlive-latex",
+        "texlive-latexrecommended",
+        "texlive-xetex",
+        "texlive-luatex",
+        "texlive-fontsrecommended",
+        "otf-latin-modern",
+        "texlive-bibtexextra",
+        "biber"
       ]
     },
     "nsis": {
