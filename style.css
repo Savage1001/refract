@@ -2347,6 +2347,8 @@ main {
 }
 
 .pdf-pages canvas {
+  position:absolute;
+  inset:0;
   display:block;
   background:white;
   width:100%;
