@@ -183,6 +183,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Install Arch packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarchive-tools zstd
       - run: npm run build:arch
       - name: Install and verify the package in Arch Linux
         run: |
