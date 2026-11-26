@@ -10,6 +10,8 @@ Right-click a file or folder or focus its row and press `Shift+F10` to open its 
 
 Use **Search files** above the project tree to search saved files. Select a result to open the file and select the matching text. Press Escape in the search field to clear it.
 
+Use **Find** or Ctrl+F (Cmd+F on macOS) to find and replace text in the active file. Enter and Shift+Enter move between matches. Match case, Whole word, and Wrap control which matches are selected. Escape closes the bar and returns focus to the source.
+
 Use **Download file** to save a copy of a project file or **Export project ZIP** to save the visible project files and folders, including empty folders.
 
 Use **More file options** in the New file dialog to upload files or a folder into the selected project folder. Existing files at the destination are preserved.

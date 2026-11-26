@@ -379,7 +379,7 @@ impl Library {
         project_id: &str,
         entry: DeletedEntry,
         tree: io::Result<Vec<ProjectEntry>>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(selection) = self

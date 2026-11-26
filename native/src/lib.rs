@@ -6,6 +6,7 @@ use std::{
 };
 
 pub mod comments;
+pub mod editor_find;
 mod project_entries;
 mod project_management;
 pub mod project_search;

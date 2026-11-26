@@ -194,7 +194,7 @@ impl Library {
         cx.notify();
     }
 
-    fn reveal_root_document(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn reveal_root_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selection) = &self.selection else {
             return;
         };

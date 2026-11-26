@@ -1,7 +1,7 @@
 use super::{Library, Palette, Selection};
 use gpui::{
-    AssetSource, Context, Entity, FontWeight, HighlightStyle, KeyDownEvent, SharedString,
-    StyledText, Subscription, Task, Window, div, prelude::*, px, rgb, svg,
+    AssetSource, Context, Entity, Focusable, FontWeight, HighlightStyle, KeyDownEvent,
+    SharedString, StyledText, Subscription, Task, Window, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     actions::SelectRight,

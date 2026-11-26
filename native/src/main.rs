@@ -29,6 +29,7 @@ mod build_log_view;
 mod comments_view;
 mod compile_view;
 mod deleted_projects_view;
+mod editor_find_view;
 mod file_creation_view;
 mod file_move_view;
 mod file_search_view;
@@ -45,6 +46,7 @@ use build_log_view::BuildLogView;
 use comments_view::CommentDrafts;
 use compile_view::{RunningBuild, WorkspaceBuild};
 use deleted_projects_view::DeletedProjectsDialog;
+use editor_find_view::EditorFind;
 use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
 use file_search_view::{FileSearch, RefractAssets};
@@ -84,6 +86,7 @@ struct Library {
     deleted_files_dialog: Option<Rc<RefCell<DeletedFilesDialog>>>,
     move_draft: Option<EntryMoveDraft>,
     preview_task: Option<Task<()>>,
+    editor_find: EditorFind,
     comments_task: Option<Task<()>>,
     comment_write_task: Option<Task<()>>,
     comment_drafts: HashMap<String, CommentDrafts>,
@@ -146,6 +149,7 @@ struct EditorDocument {
     saved: String,
     save_error: Option<String>,
     _autosave: Subscription,
+    _find_selection: Subscription,
 }
 
 enum Navigation {
@@ -209,6 +213,7 @@ impl Library {
             deleted_files_dialog: None,
             move_draft: None,
             preview_task: None,
+            editor_find: EditorFind::new(window, cx),
             comments_task: None,
             comment_write_task: None,
             comment_drafts: HashMap::new(),
@@ -299,7 +304,7 @@ impl Library {
         window.focus(&self.project_name_focus);
     }
 
-    fn open_file(&mut self, file: String, window: &Window, cx: &mut Context<Self>) {
+    fn open_file(&mut self, file: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selection) = &mut self.selection else {
             return;
         };
@@ -323,6 +328,7 @@ impl Library {
             .iter()
             .any(|tab| tab.path == file && tab.editor.as_ref().is_some_and(Result::is_ok))
         {
+            self.refresh_find_for_file(window, cx);
             cx.notify();
             return;
         }
@@ -345,17 +351,29 @@ impl Library {
                     let state = cx.new(|cx| {
                         InputState::new(window, cx)
                             .code_editor("text")
+                            .searchable(false)
                             .soft_wrap(false)
                             .default_value(source.clone())
                     });
                     let autosave = Self::watch_source(&state, &file, window, cx);
+                    let find_selection =
+                        cx.observe_in(&state, window, |library, editor, window, cx| {
+                            library.sync_find_selection(&editor, false, window, cx);
+                        });
                     EditorDocument {
                         state,
                         saved: source,
                         save_error: None,
                         _autosave: autosave,
+                        _find_selection: find_selection,
                     }
                 }));
+                if tab.editor.as_ref().is_some_and(Result::is_err) {
+                    library.editor_find.visible = false;
+                }
+                let has_source_destination = selection.pending_comment.is_some()
+                    || selection.pending_source_jump.is_some()
+                    || selection.file_search.pending_hit.is_some();
                 if let Some(comment) = selection.pending_comment.take()
                     && let Some(Ok(editor)) = tab.editor.as_ref()
                 {
@@ -383,6 +401,9 @@ impl Library {
                         .update(cx, |editor, cx| editor.focus(window, cx));
                 }
                 cx.notify();
+                if !has_source_destination {
+                    library.refresh_find_for_file(window, cx);
+                }
             });
         }));
         cx.notify();
@@ -398,9 +419,10 @@ impl Library {
         cx.subscribe_in(
             state,
             window,
-            move |library, _, event: &InputEvent, window, cx| {
+            move |library, editor, event: &InputEvent, window, cx| {
                 if matches!(event, InputEvent::Change) {
                     library.queue_save(&file, window, cx);
+                    library.sync_find_selection(&editor, true, window, cx);
                 }
             },
         )
@@ -421,6 +443,7 @@ impl Library {
                 self.open_file(path, window, cx);
             } else {
                 self.preview_task = None;
+                self.editor_find.visible = false;
                 selection.file = None;
                 selection.pending_comment = None;
                 selection.comment_status = None;
@@ -448,6 +471,7 @@ impl Library {
         self.tree_task = None;
         self.entry_menu = None;
         self.preview_task = None;
+        self.editor_find.visible = false;
         self.comments_task = None;
         self.comparison_task = None;
         if let Some(previous) = self.selection.take()
@@ -1041,7 +1065,7 @@ impl Render for Library {
             None => self.projects(window, palette, cx).into_any_element(),
         };
         let dialog = Root::render_dialog_layer(window, cx);
-        div()
+        Self::find_shortcuts(cx)
             .id("library")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|library, _: &SaveSource, window, cx| {
@@ -1707,7 +1731,7 @@ impl Library {
             .child(self.show_in_pdf_button(selection, palette, cx));
         if editor.is_some_and(Result::is_ok) {
             let saving = self.save_task.is_some();
-            header = header.child(
+            header = header.child(self.source_find_button(palette, cx)).child(
                 div()
                     .id("save-file")
                     .tab_index(3)
@@ -1741,6 +1765,8 @@ impl Library {
             Some(Ok(editor)) => div()
                 // The input retains its own focus handle, so order it through its parent group.
                 .id("document-editor")
+                .capture_action(Self::capture_editor_find(cx))
+                .capture_action(Self::capture_editor_find_escape(cx))
                 .tab_index(4)
                 .tab_stop(false)
                 .tab_group()
@@ -1757,6 +1783,10 @@ impl Library {
                 .into_any_element(),
         };
         pane.child(header)
+            .when(
+                self.editor_find.visible && editor.is_some_and(Result::is_ok),
+                |pane| pane.child(self.source_find_panel(palette, cx)),
+            )
             .children(
                 editor
                     .and_then(|editor| editor.as_ref().ok()?.save_error.clone())
@@ -1811,6 +1841,7 @@ fn projects_dir() -> Option<PathBuf> {
 
 fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
+    editor_find_view::init(cx);
     file_trash_view::init(cx);
     comments_view::init(cx);
     deleted_projects_view::init(cx);
