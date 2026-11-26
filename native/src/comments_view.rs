@@ -364,6 +364,7 @@ fn comment_card(
                 cx,
                 move |library, window, cx| library.open_comment(&open_id, window, cx),
             )
+            .debug_selector(|| format!("comment-reference-{}", comment.id))
             .text_color(rgb(palette.focus)),
         )
         .when(comment.selection_unavailable(), |card| {
@@ -437,7 +438,7 @@ fn comment_control(
     palette: Palette,
     cx: &Context<Library>,
     activate: impl Fn(&mut Library, &mut Window, &mut Context<Library>) + Clone + 'static,
-) -> impl IntoElement + Styled {
+) -> impl IntoElement + Styled + InteractiveElement {
     let by_key = activate.clone();
     div()
         .id(id)

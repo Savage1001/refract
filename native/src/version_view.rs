@@ -235,16 +235,19 @@ impl Library {
                 self.can_restore_project(cx),
                 RestoreKind::Project,
             ))
-            .child(comparison_button(
-                "compare",
-                "Compare with current",
-                comparison.is_some(),
-                palette,
-                cx,
-                move |library, _, cx| {
-                    library.toggle_comparison(&version_id, cx);
-                },
-            ))
+            .child(
+                comparison_button(
+                    "compare",
+                    "Compare with current",
+                    comparison.is_some(),
+                    palette,
+                    cx,
+                    move |library, _, cx| {
+                        library.toggle_comparison(&version_id, cx);
+                    },
+                )
+                .debug_selector(|| format!("compare-version-{}", version.sequence)),
+            )
             .when_some(comparison, |row, comparison| {
                 row.child(self.comparison_entries(comparison, palette, cx))
             })
@@ -277,16 +280,19 @@ impl Library {
                         let difference = difference.clone();
                         div()
                             .id(("difference", index))
-                            .child(comparison_button(
-                                "select-file",
-                                label,
-                                file.is_some(),
-                                palette,
-                                cx,
-                                move |library, _, cx| {
-                                    library.toggle_compared_file(&difference, cx);
-                                },
-                            ))
+                            .child(
+                                comparison_button(
+                                    "select-file",
+                                    label,
+                                    file.is_some(),
+                                    palette,
+                                    cx,
+                                    move |library, _, cx| {
+                                        library.toggle_compared_file(&difference, cx);
+                                    },
+                                )
+                                .debug_selector(|| format!("compared-file-{index}")),
+                            )
                             .when_some(file, |row, file| {
                                 row.child(self.compared_lines(file, palette, cx))
                             })
@@ -379,7 +385,7 @@ fn comparison_button<F>(
     palette: Palette,
     cx: &Context<Library>,
     action: F,
-) -> impl IntoElement
+) -> impl IntoElement + InteractiveElement
 where
     F: Fn(&mut Library, &mut Window, &mut Context<Library>) + Clone + 'static,
 {

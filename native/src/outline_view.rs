@@ -614,10 +614,11 @@ mod tests {
         let toggle = cx.debug_bounds("outline-toggle").unwrap().center();
         cx.simulate_click(toggle, Modifiers::none());
         cx.refresh().unwrap();
-        assert!(cx.debug_bounds("outline-resize").is_none());
+        cx.update(|_, app| assert!(!library.read(app).outline.expanded));
         let toggle = cx.debug_bounds("outline-toggle").unwrap().center();
         cx.simulate_click(toggle, Modifiers::none());
         cx.refresh().unwrap();
+        cx.update(|_, app| assert!(library.read(app).outline.expanded));
         assert_eq!(cx.debug_bounds("outline-list").unwrap().size.height, taller);
     }
 }

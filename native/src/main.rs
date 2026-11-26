@@ -1960,8 +1960,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(all(test, feature = "ui-tests"))]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
     use std::fs;
+
+    fn click(cx: &mut VisualTestContext, selector: &'static str) {
+        cx.refresh().unwrap();
+        let bounds = cx.debug_bounds(selector).expect(selector);
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.run_until_parked();
+    }
 
     #[gpui::test]
     fn confirms_version_restores_and_reloads_the_editor(cx: &mut TestAppContext) {
@@ -2098,13 +2105,19 @@ mod tests {
             let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(editor.state.read(app).value().as_ref(), "A line of LaTeX\n");
         });
-        cx.simulate_keystrokes("tab tab tab enter");
+        click(cx, "tree/sections");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.expanded_folders.contains("sections"));
         });
+        cx.simulate_keystrokes("space");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert!(!selection.expanded_folders.contains("sections"));
+        });
+        cx.simulate_keystrokes("enter");
         cx.simulate_keystrokes("tab enter");
-        let tree_focus = cx.update(|window, app| {
+        cx.update(|window, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));
             assert_eq!(selection.tabs.len(), 2);
@@ -2117,11 +2130,9 @@ mod tests {
                 .state
                 .clone();
             assert_eq!(editor.read(app).value().as_ref(), "An abstract\n");
-            let tree_focus = window.focused(app).unwrap();
             editor.update(app, |editor, cx| {
                 editor.set_cursor_position(gpui_component::input::Position::new(0, 11), window, cx);
             });
-            tree_focus
         });
         cx.update(|window, app| {
             window.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), app);
@@ -2144,8 +2155,11 @@ mod tests {
             assert_eq!(versions.len(), 2);
             assert_eq!(versions[0].sequence, 2);
         });
-        cx.update(|window, _| window.focus(&tree_focus));
-        cx.simulate_keystrokes("tab tab tab tab tab enter");
+        cx.update(|window, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            window.focus(&selection.tabs[0].open_focus);
+        });
+        cx.simulate_keystrokes("enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.file.as_deref(), Some("main.tex"));
@@ -2171,18 +2185,17 @@ mod tests {
             assert!(selection.tabs.is_empty());
             assert!(library.home_focus.is_focused(window));
         });
-        cx.simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab enter");
+        click(cx, "project-tools");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.tool, Some(WorkspaceTool::Logs));
         });
-        cx.simulate_keystrokes("tab tab enter");
-        let versions_focus = cx.update(|window, app| {
+        click(cx, "tool-versions");
+        cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.tool, Some(WorkspaceTool::Versions));
-            window.focused(app).unwrap()
         });
-        cx.simulate_keystrokes("tab tab tab tab tab tab tab enter");
+        click(cx, "compare-version-1");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             let comparison = selection.comparison.as_ref().unwrap();
@@ -2190,17 +2203,16 @@ mod tests {
             assert_eq!(changes.len(), 1);
             assert_eq!(changes[0].name, "sections/abstract.tex");
         });
-        cx.simulate_keystrokes("tab enter");
-        cx.update(|window, app| {
+        click(cx, "compared-file-0");
+        cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             let comparison = selection.comparison.as_ref().unwrap();
             let file = comparison.selection.as_ref().unwrap();
             let lines = file.lines.as_ref().unwrap().as_ref().unwrap();
             let current = &lines.current.as_ref().unwrap().content;
             assert_eq!(current.lines[current.changed_indices[0]].text, "A draft");
-            window.focus(&versions_focus);
         });
-        cx.simulate_keystrokes("tab enter");
+        click(cx, "tool-comments");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.tool, Some(WorkspaceTool::Comments));
@@ -2208,7 +2220,7 @@ mod tests {
             assert_eq!(comments[0].replies[0].text, "Checked");
             assert!(comments[0].resolved);
         });
-        cx.simulate_keystrokes("tab tab tab tab tab enter");
+        click(cx, "comment-reference-fixture-comment");
         cx.update(|_, app| {
             let library = library.read(app);
             let selection = library.selection.as_ref().unwrap();
