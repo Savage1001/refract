@@ -24,3 +24,9 @@ Run the project-library tests without building GPUI or opening a window.
 ```sh
 cargo test --locked --no-default-features --manifest-path native/Cargo.toml
 ```
+
+The Windows CI job also exercises keyboard navigation through GPUI's simulated platform, using a temporary profile.
+
+```sh
+cargo test --locked --bin refract-native --features ui-tests --manifest-path native/Cargo.toml
+```

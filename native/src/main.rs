@@ -297,6 +297,13 @@ fn projects_dir() -> Option<PathBuf> {
     config_dir.map(|dir| dir.join("Refract").join("projects"))
 }
 
+fn bind_library_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("tab", NextProject, None),
+        KeyBinding::new("shift-tab", PreviousProject, None),
+    ]);
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let projects_dir = projects_dir().ok_or_else(|| {
         io::Error::new(
@@ -305,10 +312,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     })?;
     Application::new().run(move |cx: &mut App| {
-        cx.bind_keys([
-            KeyBinding::new("tab", NextProject, None),
-            KeyBinding::new("shift-tab", PreviousProject, None),
-        ]);
+        bind_library_keys(cx);
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -335,4 +339,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     Ok(())
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use std::fs;
+
+    #[gpui::test]
+    fn opens_the_existing_project_with_the_keyboard(cx: &mut TestAppContext) {
+        let profile = tempfile::tempdir().unwrap();
+        let projects = profile.path().join("projects");
+        let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
+        let project = projects.join(id);
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join(".refract.json"),
+            serde_json::json!({"id": id, "name": "A paper", "created": "2026-01-01T00:00:00Z"})
+                .to_string(),
+        )
+        .unwrap();
+        fs::write(project.join("main.tex"), "A line of LaTeX\n").unwrap();
+
+        cx.update(bind_library_keys);
+        let (library, cx) = cx.add_window_view(|window, cx| Library::new(projects, window, cx));
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().expect("open project");
+            assert_eq!(selection.project.id, id);
+            let preview = selection.preview.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(preview.lines[0].as_ref(), "A line of LaTeX");
+        });
+    }
 }
