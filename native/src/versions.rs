@@ -1,3 +1,4 @@
+use crate::project_entries::CreatedFolders;
 use crate::{
     Project, ProjectEntry, comments, is_project_id, open_local_file, project_directory,
     read_local_file, read_project_entries, source_path, stage_file, valid_project_component,
@@ -213,9 +214,9 @@ pub fn restore_version_file(
             ));
         }
     }
-    let mut created_folders = CreatedFolders::default();
+    let mut created_folders = CreatedFolders::new(&folder)?;
     if let Some((parent, _)) = name.rsplit_once('/') {
-        created_folders.ensure(&folder, parent)?;
+        created_folders.ensure(parent)?;
     }
     let current = open_restore_target(&folder, &name)?
         .map(|file| copy_and_hash(file, &mut io::sink()))
@@ -231,7 +232,7 @@ pub fn restore_version_file(
         None => staged.persist_noclobber(&target),
     };
     result.map_err(|error| error.error)?;
-    created_folders.0.clear();
+    created_folders.keep();
     if let Some(staged_comments) = staged_comments {
         let update = comments::read_comments_file(&folder).and_then(|current| {
             if current != original_comments {
@@ -270,38 +271,6 @@ fn read_anchor_text(mut file: File) -> io::Result<Option<String>> {
         return Ok(None);
     }
     Ok(String::from_utf8(bytes).ok())
-}
-
-#[derive(Default)]
-struct CreatedFolders(Vec<PathBuf>);
-
-impl CreatedFolders {
-    fn ensure(&mut self, folder: &Path, parent: &str) -> io::Result<()> {
-        let mut path = folder.to_owned();
-        for name in parent.split('/') {
-            path.push(name);
-            match fs::create_dir(&path) {
-                Ok(()) => self.0.push(path.clone()),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
-            }
-            if !path.symlink_metadata()?.is_dir() || !path.canonicalize()?.starts_with(folder) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Invalid folder for version restore",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Drop for CreatedFolders {
-    fn drop(&mut self) {
-        for path in self.0.iter().rev() {
-            let _ = fs::remove_dir(path);
-        }
-    }
 }
 
 pub fn compare_project(

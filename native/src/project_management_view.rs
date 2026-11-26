@@ -405,7 +405,8 @@ impl Library {
     }
 
     fn open_rename_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.rename_draft.is_some() || !self.can_rename_project() {
+        if self.rename_draft.is_some() || !self.can_rename_project() || window.has_active_dialog(cx)
+        {
             return;
         }
         let Some(selection) = &self.selection else {

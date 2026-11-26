@@ -4,6 +4,8 @@ This opt-in Rust and GPUI app opens the existing Refract project library in list
 
 Use **Duplicate** in a project’s library menu to open a copy with its files, comments, version history, and LaTeX settings. **Delete** moves the project to **Deleted projects**, where it can be restored for up to 30 days.
 
+Use **+** in Files to create a file at the project root or in a selected folder. Open **More file options** to create a folder. A folder’s **Add items** menu preselects that destination.
+
 Open Comments to search discussions, add a file comment or comment on selected source, write replies, and resolve or reopen threads. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
 
 Versions lists existing and newly captured snapshots. Refract captures a snapshot when you open a project and after saved edits settle, using the same manifest and ZIP format as the Electron app. Compare with current shows file, folder, and root document changes. Open a changed file to see its previous and current lines side by side. Restore file replaces the active file. Restore project restores files, folders, and the root document. Both save the current project as a snapshot first. An interrupted project restore recovers the previous version on startup.

@@ -6,8 +6,10 @@ use std::{
 };
 
 pub mod comments;
+mod project_entries;
 mod project_management;
 pub mod versions;
+pub use project_entries::{ProjectEntryKind, create_project_entry};
 pub use project_management::{
     DeletedProject, create_project, duplicate_project, list_deleted_projects, rename_project,
     restore_deleted_project, trash_project,

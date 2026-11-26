@@ -194,7 +194,7 @@ fn copy_project_file(root: &Path, source: &Path, target: &Path, private: bool) -
     io::copy(&mut file, &mut destination).map(|_| ())
 }
 
-fn is_link(info: &Metadata) -> bool {
+pub(super) fn is_link(info: &Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

@@ -27,10 +27,12 @@ use std::{
 
 mod comments_view;
 mod deleted_projects_view;
+mod file_creation_view;
 mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
 use deleted_projects_view::DeletedProjectsDialog;
+use file_creation_view::EntryDraft;
 use project_management_view::{ProjectFocus, RenameDraft};
 use version_view::Comparison;
 
@@ -52,6 +54,8 @@ struct Library {
     rename_draft: Option<RenameDraft>,
     selection: Option<Selection>,
     tree_task: Option<Task<()>>,
+    entry_write_task: Option<Task<()>>,
+    entry_draft: Option<EntryDraft>,
     preview_task: Option<Task<()>>,
     comments_task: Option<Task<()>>,
     comment_write_task: Option<Task<()>>,
@@ -75,6 +79,7 @@ struct Library {
 struct Selection {
     project: Project,
     tree: Option<io::Result<Vec<ProjectEntry>>>,
+    file_action_error: Option<String>,
     expanded_folders: HashSet<String>,
     file: Option<String>,
     tabs: Vec<FileTab>,
@@ -155,6 +160,8 @@ impl Library {
             rename_draft: None,
             selection: None,
             tree_task: None,
+            entry_write_task: None,
+            entry_draft: None,
             preview_task: None,
             comments_task: None,
             comment_write_task: None,
@@ -196,6 +203,7 @@ impl Library {
         self.selection = Some(Selection {
             project: project.clone(),
             tree: None,
+            file_action_error: None,
             expanded_folders,
             file: None,
             tabs: Vec::new(),
@@ -390,10 +398,14 @@ impl Library {
     }
 
     fn project_writes_idle(&self) -> bool {
+        self.project_writes_ready() && self.rename_draft.is_none() && self.entry_draft.is_none()
+    }
+
+    fn project_writes_ready(&self) -> bool {
         self.restore_task.is_none()
             && self.comment_write_task.is_none()
             && self.project_rename_task.is_none()
-            && self.rename_draft.is_none()
+            && self.entry_write_task.is_none()
             && self.save_task.is_none()
             && self.save_queue.is_empty()
             && self.snapshot_task.is_none()
@@ -579,6 +591,7 @@ impl Library {
             || self.snapshot_task.is_some()
             || self.restore_task.is_some()
             || self.comment_write_task.is_some()
+            || self.entry_write_task.is_some()
         {
             return;
         }
@@ -667,6 +680,7 @@ impl Library {
             || self.snapshot_task.is_some()
             || self.restore_task.is_some()
             || self.comment_write_task.is_some()
+            || self.entry_write_task.is_some()
         {
             return;
         }
@@ -705,6 +719,7 @@ impl Library {
             && self.restore_task.is_none()
             && self.comment_write_task.is_none()
             && self.project_rename_task.is_none()
+            && self.entry_write_task.is_none()
             && let Some(navigation) = self.navigation_after_save.take()
         {
             self.request_navigation(navigation, window, cx);
@@ -737,7 +752,9 @@ impl Library {
     ) {
         if self.discard_prompt.is_some()
             || self.project_action_prompt.is_some()
-            || (self.rename_draft.is_some() || self.deleted_projects_dialog.is_some())
+            || (self.rename_draft.is_some()
+                || self.deleted_projects_dialog.is_some()
+                || self.entry_draft.is_some())
                 && !matches!(navigation, Navigation::CloseWindow)
         {
             return;
@@ -747,6 +764,7 @@ impl Library {
             || self.restore_task.is_some()
             || self.comment_write_task.is_some()
             || self.project_rename_task.is_some()
+            || self.entry_write_task.is_some()
             || self.project_library_task.is_some() && matches!(navigation, Navigation::CloseWindow)
         {
             self.navigation_after_save = Some(navigation);
@@ -1256,7 +1274,15 @@ impl Library {
                     .child(home)
                     .child(self.project_name_control(&selection.project, palette, cx))
                     .children(self.project_action_error.clone())
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Files"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Files"))
+                            .child(self.add_items_button(palette, cx)),
+                    )
+                    .children(selection.file_action_error.clone())
                     .child(self.file_tree(selection, palette, cx)),
             )
             .child(self.source_pane(selection, palette, cx))
@@ -1393,7 +1419,14 @@ impl Library {
                     }
                 }),
             );
-        let mut node = div().child(row);
+        let row = if is_folder {
+            Self::folder_add_menu(row, entry.path.clone(), cx).into_any_element()
+        } else {
+            row.into_any_element()
+        };
+        let mut node = div()
+            .id(SharedString::from(format!("entry/{}", entry.path)))
+            .child(row);
         if let Some(children) = entry.children.as_ref().filter(|_| expanded) {
             node = node.children(
                 children
@@ -1698,6 +1731,7 @@ fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
     comments_view::init(cx);
     deleted_projects_view::init(cx);
+    file_creation_view::init(cx);
     cx.bind_keys([KeyBinding::new("secondary-s", SaveSource, None)]);
 }
 
@@ -1899,7 +1933,7 @@ mod tests {
             let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(editor.state.read(app).value().as_ref(), "A line of LaTeX\n");
         });
-        cx.simulate_keystrokes("tab enter");
+        cx.simulate_keystrokes("tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.expanded_folders.contains("sections"));
@@ -1972,7 +2006,7 @@ mod tests {
             assert!(selection.tabs.is_empty());
             assert!(library.home_focus.is_focused(window));
         });
-        cx.simulate_keystrokes("tab tab tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab tab enter");
         let versions_focus = cx.update(|window, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.show_versions);
