@@ -32,6 +32,7 @@ mod file_creation_view;
 mod file_move_view;
 mod file_transfer_view;
 mod file_trash_view;
+mod pdf_view;
 mod project_import_view;
 mod project_management_view;
 mod version_view;
@@ -79,6 +80,7 @@ struct Library {
     save_task: Option<Task<()>>,
     save_queue: VecDeque<String>,
     build_task: Option<RunningBuild>,
+    pdf_task: Option<Task<()>>,
     #[cfg(all(test, feature = "ui-tests"))]
     test_compiler: Option<compile_view::Compiler>,
     snapshot_task: Option<Task<()>>,
@@ -196,6 +198,7 @@ impl Library {
             save_task: None,
             save_queue: VecDeque::new(),
             build_task: None,
+            pdf_task: None,
             #[cfg(all(test, feature = "ui-tests"))]
             test_compiler: None,
             snapshot_task: None,

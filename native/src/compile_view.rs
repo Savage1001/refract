@@ -1,3 +1,4 @@
+use super::pdf_view::{PDF_PANE_WIDTH, PdfViewport};
 use super::{Library, Navigation, Palette, monospace_font};
 use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb};
 use gpui_component::WindowExt;
@@ -24,6 +25,7 @@ pub(super) struct WorkspaceBuild {
     queued: bool,
     outcome: Option<Result<BuildResult, String>>,
     show_log: bool,
+    pub(super) preview: PdfViewport,
 }
 
 impl WorkspaceBuild {
@@ -32,6 +34,7 @@ impl WorkspaceBuild {
             queued: true,
             outcome: None,
             show_log: false,
+            preview: PdfViewport::default(),
         }
     }
 
@@ -54,7 +57,7 @@ impl WorkspaceBuild {
 
 impl Library {
     pub(super) fn start_queued_build(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.project_writes_idle() || window.has_active_dialog(cx) {
+        if self.pdf_task.is_some() || !self.project_writes_idle() || window.has_active_dialog(cx) {
             return;
         }
         // GPUI tests use a fixture compiler so opening a project never launches TeX.
@@ -101,6 +104,7 @@ impl Library {
                     && !selection.build.queued
                 {
                     selection.build.outcome = Some(result);
+                    library.request_pdf_frame(window, cx);
                 }
                 library.start_next_save(window, cx);
                 if library.snapshot_timer.is_none() {
@@ -164,6 +168,15 @@ impl Library {
         };
         let body = if build.show_log {
             build_log(build, status, palette).into_any_element()
+        } else if build.preview.has_content() {
+            let status = if compiling || build.queued {
+                Some("Showing the last successful build while changes compile.")
+            } else if build.pdf().is_none() {
+                Some(status)
+            } else {
+                None
+            };
+            build.preview.content(status, palette).into_any_element()
         } else {
             div()
                 .size_full()
@@ -180,7 +193,7 @@ impl Library {
         };
         div()
             .id("preview-pane")
-            .w(px(352.))
+            .w(px(PDF_PANE_WIDTH))
             .flex_none()
             .flex()
             .flex_col()
@@ -220,6 +233,9 @@ impl Library {
                         Self::toggle_build_log,
                     )),
             )
+            .when(!build.show_log, |pane| {
+                pane.child(self.pdf_controls(&build.preview, build.pdf().is_some(), palette, cx))
+            })
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
 }
