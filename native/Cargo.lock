@@ -4746,6 +4746,7 @@ name = "refract-native"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dunce",
  "gpui",
  "gpui-component",
  "rustix 1.1.6",

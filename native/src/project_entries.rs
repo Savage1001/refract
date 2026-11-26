@@ -22,7 +22,10 @@ pub enum ProjectEntryKind {
     Folder,
 }
 
-fn checked_project_directory(projects_dir: &Path, project: &Project) -> io::Result<PathBuf> {
+pub(crate) fn checked_project_directory(
+    projects_dir: &Path,
+    project: &Project,
+) -> io::Result<PathBuf> {
     let folder = project_directory(projects_dir, project)?;
     if is_link(&folder.symlink_metadata()?) || folder.canonicalize()? != folder {
         return Err(invalid_destination());

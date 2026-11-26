@@ -32,6 +32,17 @@ jobs:
         run: cargo +stable fmt --all -- --check
       - name: Test project library
         run: cargo +stable test --locked --no-default-features
+      - name: Compile a LaTeX fixture with TinyTeX
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'TinyTeX-v2026.10.zip'
+          Invoke-WebRequest 'https://github.com/rstudio/tinytex-releases/releases/download/v2026.10/TinyTeX-v2026.10.zip' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'dc1d6e63b21af62130ede1dcc4113bffdc184544690a23e3f489d75340f4ff61') {
+            throw 'TinyTeX archive checksum mismatch'
+          }
+          tar -xf $archive -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to extract TinyTeX' }
+          $env:REFRACT_TEX_BIN = Join-Path $env:RUNNER_TEMP 'TinyTeX/bin/windows'
+          cargo +stable test --locked --no-default-features --lib tex::tests::compiles_with_the_configured_toolchain -- --ignored
       - name: Build GPUI preview
         run: cargo +stable build --locked
       - name: Test GPUI keyboard interaction

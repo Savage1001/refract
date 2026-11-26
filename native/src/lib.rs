@@ -8,6 +8,7 @@ use std::{
 pub mod comments;
 mod project_entries;
 mod project_management;
+pub mod tex;
 pub mod versions;
 pub use project_entries::{
     DeletedEntry, ProjectEntryKind, ProjectEntryMove, create_project_entry, download_project_file,

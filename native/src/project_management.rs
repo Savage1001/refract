@@ -210,7 +210,7 @@ pub(super) fn is_link(info: &Metadata) -> bool {
 }
 
 #[cfg(windows)]
-fn has_one_link(file: &File) -> io::Result<bool> {
+pub(super) fn has_one_link(file: &File) -> io::Result<bool> {
     use std::{mem::MaybeUninit, os::windows::io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
@@ -225,7 +225,7 @@ fn has_one_link(file: &File) -> io::Result<bool> {
 }
 
 #[cfg(unix)]
-fn has_one_link(file: &File) -> io::Result<bool> {
+pub(super) fn has_one_link(file: &File) -> io::Result<bool> {
     use std::os::unix::fs::MetadataExt;
     Ok(file.metadata()?.nlink() == 1)
 }
