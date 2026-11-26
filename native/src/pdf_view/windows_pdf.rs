@@ -75,6 +75,8 @@ fn render(path: &Path, request: PageRequest) -> Result<RasterizedPage, Box<dyn s
         count,
         width,
         height,
+        point_width: f64::from(size.Width) * 72. / 96.,
+        point_height: f64::from(size.Height) * 72. / 96.,
         png,
     })
 }

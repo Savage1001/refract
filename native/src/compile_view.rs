@@ -24,7 +24,8 @@ pub(super) struct RunningBuild {
 pub(super) struct WorkspaceBuild {
     queued: bool,
     outcome: Option<Result<BuildResult, String>>,
-    show_log: bool,
+    pub(super) show_log: bool,
+    pub(super) sync_error: Option<String>,
     pub(super) preview: PdfViewport,
 }
 
@@ -34,6 +35,7 @@ impl WorkspaceBuild {
             queued: true,
             outcome: None,
             show_log: false,
+            sync_error: None,
             preview: PdfViewport::default(),
         }
     }
@@ -41,6 +43,8 @@ impl WorkspaceBuild {
     pub(super) fn invalidate(&mut self) {
         self.queued = true;
         self.outcome = None;
+        self.sync_error = None;
+        self.preview.clear_sync();
     }
 
     pub(super) fn pdf(&self) -> Option<&Path> {
@@ -125,6 +129,9 @@ impl Library {
         if let Some(build) = &self.build_task {
             build.cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(sync) = &self.sync_task {
+            sync.cancel.store(true, Ordering::Relaxed);
+        }
         if let Some(selection) = &mut self.selection {
             selection.build.queued = false;
         }
@@ -176,7 +183,15 @@ impl Library {
             } else {
                 None
             };
-            build.preview.content(status, palette).into_any_element()
+            build
+                .preview
+                .content(
+                    status,
+                    palette,
+                    build.pdf().is_some() && self.sync_task.is_none(),
+                    cx,
+                )
+                .into_any_element()
         } else {
             div()
                 .size_full()
@@ -236,6 +251,13 @@ impl Library {
             .when(!build.show_log, |pane| {
                 pane.child(self.pdf_controls(&build.preview, build.pdf().is_some(), palette, cx))
             })
+            .children(build.sync_error.clone().map(|error| {
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_color(rgb(palette.warning))
+                    .child(error)
+            }))
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
 }

@@ -4,7 +4,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const PROCESS_LOG_LIMIT: usize = 100_000;
@@ -14,44 +14,105 @@ pub(super) struct ProcessOutput {
     pub(super) log: String,
 }
 
-pub(super) fn run_process(mut command: Command, cancel: &AtomicBool) -> io::Result<ProcessOutput> {
+pub(super) fn run_process(command: Command, cancel: &AtomicBool) -> io::Result<ProcessOutput> {
     if cancel.load(Ordering::Relaxed) {
         return Ok(ProcessOutput {
             code: None,
             log: "Compilation cancelled.".into(),
         });
     }
+    let (code, mut output) =
+        capture_process(command, cancel, None, PROCESS_LOG_LIMIT).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "A local LaTeX installation with pdflatex is required.",
+                )
+            } else {
+                error
+            }
+        })?;
+    let mut log = String::from_utf8_lossy(output.bytes.make_contiguous()).into_owned();
+    if cancel.load(Ordering::Relaxed) {
+        log.push_str("\nCompilation cancelled.");
+    }
+    Ok(ProcessOutput { code, log })
+}
+
+pub(super) fn query_process(
+    command: Command,
+    cancel: &AtomicBool,
+    timeout: Duration,
+    limit: usize,
+) -> io::Result<Vec<u8>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "SyncTeX query cancelled",
+        ));
+    }
+    let (code, mut output) = capture_process(command, cancel, Some(timeout), limit)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "SyncTeX query cancelled",
+        ));
+    }
+    if output.truncated {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "SyncTeX output is too large",
+        ));
+    }
+    match code {
+        Some(0) => Ok(output.bytes.into()),
+        _ => Err(io::Error::other(format!(
+            "SyncTeX query failed. {}",
+            String::from_utf8_lossy(output.bytes.make_contiguous()).trim()
+        ))),
+    }
+}
+
+fn capture_process(
+    mut command: Command,
+    cancel: &AtomicBool,
+    timeout: Option<Duration>,
+    limit: usize,
+) -> io::Result<(Option<i32>, CapturedOutput)> {
     let (mut reader, writer) = io::pipe()?;
     command
         .stdin(Stdio::null())
         .stdout(writer.try_clone()?)
         .stderr(writer);
     configure_process(&mut command);
-    let mut child = command.spawn().map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "A local LaTeX installation with pdflatex is required.",
-            )
-        } else {
-            error
-        }
-    })?;
+    let mut child = command.spawn()?;
     drop(command);
     let tree = match ProcessTree::attach(&child) {
         Ok(tree) => tree,
         Err(error) => {
+            if let Ok(Some(status)) = child.try_wait() {
+                return Ok((status.code(), read_tail(&mut reader, limit)?));
+            }
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
         }
     };
+    let started = Instant::now();
     thread::scope(|scope| {
-        let output = scope.spawn(move || read_tail(&mut reader));
+        let output = scope.spawn(move || read_tail(&mut reader, limit));
         let status = loop {
             if cancel.load(Ordering::Relaxed) {
                 tree.stop(&mut child);
                 break child.wait().map(|_| None);
+            }
+            if timeout.is_some_and(|timeout| started.elapsed() >= timeout) {
+                tree.stop(&mut child);
+                let _ = child.wait();
+                break Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "SyncTeX query timed out",
+                ));
             }
             match child.try_wait() {
                 Ok(Some(status)) => break Ok(status.code()),
@@ -64,25 +125,29 @@ pub(super) fn run_process(mut command: Command, cancel: &AtomicBool) -> io::Resu
             }
         };
         drop(tree);
-        let mut log = output
+        let output = output
             .join()
             .map_err(|_| io::Error::other("Compiler output reader failed"))??;
-        if cancel.load(Ordering::Relaxed) {
-            log.push_str("\nCompilation cancelled.");
-        }
-        Ok(ProcessOutput { code: status?, log })
+        Ok((status?, output))
     })
 }
 
-fn read_tail(reader: &mut impl Read) -> io::Result<String> {
+struct CapturedOutput {
+    bytes: VecDeque<u8>,
+    truncated: bool,
+}
+
+fn read_tail(reader: &mut impl Read, limit: usize) -> io::Result<CapturedOutput> {
     let mut buffer = [0u8; 8192];
     let mut bytes = VecDeque::new();
+    let mut truncated = false;
     loop {
-        let count = reader.read(&mut buffer)?;
+        let count = reader.read(&mut buffer[..limit.min(8192)])?;
         if count == 0 {
-            return Ok(String::from_utf8_lossy(bytes.make_contiguous()).into_owned());
+            return Ok(CapturedOutput { bytes, truncated });
         }
-        let discard = (bytes.len() + count).saturating_sub(PROCESS_LOG_LIMIT);
+        let discard = (bytes.len() + count).saturating_sub(limit);
+        truncated |= discard != 0;
         bytes.drain(..discard);
         bytes.extend(&buffer[..count]);
     }
@@ -193,8 +258,9 @@ mod tests {
     fn keeps_the_tail_when_compiler_output_exceeds_the_limit() {
         let mut bytes = vec![b'x'; PROCESS_LOG_LIMIT + 1];
         bytes.extend_from_slice(b"final error");
-        let tail = read_tail(&mut bytes.as_slice()).unwrap();
-        assert_eq!(tail.len(), PROCESS_LOG_LIMIT);
-        assert!(tail.ends_with("final error"));
+        let mut tail = read_tail(&mut bytes.as_slice(), PROCESS_LOG_LIMIT).unwrap();
+        assert_eq!(tail.bytes.len(), PROCESS_LOG_LIMIT);
+        assert!(tail.bytes.make_contiguous().ends_with(b"final error"));
+        assert!(tail.truncated);
     }
 }

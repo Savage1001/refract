@@ -35,6 +35,7 @@ mod file_trash_view;
 mod pdf_view;
 mod project_import_view;
 mod project_management_view;
+mod synctex_view;
 mod version_view;
 use comments_view::CommentDrafts;
 use compile_view::{RunningBuild, WorkspaceBuild};
@@ -44,6 +45,7 @@ use file_move_view::{EntryMenu, EntryMoveDraft};
 use file_trash_view::DeletedFilesDialog;
 use project_import_view::ImportDraft;
 use project_management_view::{ProjectFocus, RenameDraft};
+use synctex_view::RunningSync;
 use version_view::Comparison;
 
 actions!(editor, [SaveSource]);
@@ -81,6 +83,7 @@ struct Library {
     save_queue: VecDeque<String>,
     build_task: Option<RunningBuild>,
     pdf_task: Option<Task<()>>,
+    sync_task: Option<RunningSync>,
     #[cfg(all(test, feature = "ui-tests"))]
     test_compiler: Option<compile_view::Compiler>,
     snapshot_task: Option<Task<()>>,
@@ -113,6 +116,7 @@ struct Selection {
     comments: Option<io::Result<Vec<Comment>>>,
     comment_error: Option<String>,
     pending_comment: Option<Comment>,
+    pending_source_jump: Option<refract_native::tex::synctex::SourcePosition>,
     comment_status: Option<&'static str>,
     build: WorkspaceBuild,
 }
@@ -199,6 +203,7 @@ impl Library {
             save_queue: VecDeque::new(),
             build_task: None,
             pdf_task: None,
+            sync_task: None,
             #[cfg(all(test, feature = "ui-tests"))]
             test_compiler: None,
             snapshot_task: None,
@@ -250,6 +255,7 @@ impl Library {
             comments: None,
             comment_error: None,
             pending_comment: None,
+            pending_source_jump: None,
             comment_status: None,
             build: WorkspaceBuild::new(),
         });
@@ -289,6 +295,7 @@ impl Library {
         }
         selection.file = Some(file.clone());
         selection.pending_comment = None;
+        selection.pending_source_jump = None;
         selection.comment_status = None;
         self.preview_task = None;
         if selection
@@ -334,6 +341,12 @@ impl Library {
                 {
                     selection.comment_status =
                         Self::jump_to_comment(&editor.state, &comment, window, cx);
+                }
+                if let Some(target) = selection.pending_source_jump.take()
+                    && target.file == file
+                    && let Some(Ok(editor)) = tab.editor.as_ref()
+                {
+                    Self::select_source_line(&editor.state, target.line, window, cx);
                 }
                 cx.notify();
             });
@@ -454,6 +467,7 @@ impl Library {
     fn project_writes_ready(&self) -> bool {
         self.restore_task.is_none()
             && self.build_task.is_none()
+            && self.sync_task.is_none()
             && self.comment_write_task.is_none()
             && self.project_rename_task.is_none()
             && self.entry_write_task.is_none()
@@ -784,6 +798,7 @@ impl Library {
     fn resume_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save_task.is_none()
             && self.build_task.is_none()
+            && self.sync_task.is_none()
             && self.snapshot_task.is_none()
             && self.restore_task.is_none()
             && self.comment_write_task.is_none()
@@ -838,7 +853,9 @@ impl Library {
         {
             return;
         }
-        if self.build_task.is_some() && !matches!(navigation, Navigation::CloseFile(_)) {
+        if (self.build_task.is_some() || self.sync_task.is_some())
+            && !matches!(navigation, Navigation::CloseFile(_))
+        {
             self.stop_build();
             self.navigation_after_save = Some(navigation);
             return;
@@ -1709,7 +1726,8 @@ impl Library {
             .items_center()
             .justify_between()
             .gap_2()
-            .child(file);
+            .child(file)
+            .child(self.show_in_pdf_button(selection, palette, cx));
         if editor.is_some_and(Result::is_ok) {
             let saving = self.save_task.is_some();
             header = header.child(
@@ -1859,6 +1877,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             && library.snapshot_task.is_none()
                             && library.entry_write_task.is_none()
                             && library.build_task.is_none()
+                            && library.sync_task.is_none()
                             && library.project_library_task.is_none()
                             && !library.snapshot_needed
                             && !library.has_unsaved_changes(&close, cx)

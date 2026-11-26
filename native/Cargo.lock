@@ -4747,6 +4747,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dunce",
+ "flate2",
  "gpui",
  "gpui-component",
  "rustix 1.1.6",

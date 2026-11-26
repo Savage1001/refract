@@ -16,6 +16,7 @@ use std::{
 };
 
 mod process;
+pub mod synctex;
 #[cfg(test)]
 mod tests;
 mod toolchain;

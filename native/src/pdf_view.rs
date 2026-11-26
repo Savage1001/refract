@@ -1,6 +1,10 @@
 use super::{Library, Palette};
-use gpui::{Context, Image, ImageFormat, KeyDownEvent, Window, div, img, prelude::*, px, rgb};
-use std::{io, path::Path, sync::Arc};
+use gpui::{
+    Bounds, Context, Image, ImageFormat, KeyDownEvent, MouseButton, MouseDownEvent, Pixels,
+    ScrollHandle, Window, canvas, div, img, point, prelude::*, px, rgb,
+};
+use refract_native::tex::synctex::PdfPosition;
+use std::{cell::Cell, io, path::Path, rc::Rc, sync::Arc};
 
 pub(super) const PDF_PANE_WIDTH: f32 = 352.;
 const PADDING: f32 = 16.;
@@ -29,6 +33,9 @@ pub(super) struct PdfViewport {
     frame: Option<PageImage>,
     pending: bool,
     error: Option<String>,
+    last_sync: Option<PdfPosition>,
+    center_sync: bool,
+    scroll: ScrollHandle,
 }
 
 struct PageImage {
@@ -36,6 +43,8 @@ struct PageImage {
     count: u32,
     width: f32,
     height: f32,
+    point_width: f64,
+    point_height: f64,
     image: Arc<Image>,
 }
 
@@ -51,6 +60,8 @@ struct RasterizedPage {
     count: u32,
     width: f32,
     height: f32,
+    point_width: f64,
+    point_height: f64,
     png: Vec<u8>,
 }
 
@@ -108,8 +119,26 @@ impl Library {
                                 count: page.count,
                                 width: page.width,
                                 height: page.height,
+                                point_width: page.point_width,
+                                point_height: page.point_height,
                                 image: Arc::new(Image::from_bytes(ImageFormat::Png, page.png)),
                             });
+                            if pane.center_sync {
+                                pane.center_sync = false;
+                                if let Some(position) = pane
+                                    .last_sync
+                                    .filter(|position| position.page == page.current + 1)
+                                {
+                                    let height =
+                                        f32::from(pane.scroll.bounds().size.height).max(64.);
+                                    let y = ((position.y / page.point_height) as f32 * page.height
+                                        + PADDING
+                                        - height / 2.)
+                                        .max(0.);
+                                    pane.scroll
+                                        .set_offset(point(pane.scroll.offset().x, px(-y)));
+                                }
+                            }
                         }
                         Err(error) => pane.error = Some(error.to_string()),
                     }
@@ -236,6 +265,17 @@ impl Library {
 }
 
 impl PdfViewport {
+    pub(super) fn jump_to(&mut self, position: PdfPosition) {
+        self.page = position.page.saturating_sub(1);
+        self.last_sync = Some(position);
+        self.center_sync = true;
+    }
+
+    pub(super) fn clear_sync(&mut self) {
+        self.last_sync = None;
+        self.center_sync = false;
+    }
+
     pub(super) fn has_content(&self) -> bool {
         self.frame.is_some() || self.error.is_some()
     }
@@ -244,6 +284,8 @@ impl PdfViewport {
         &self,
         status: Option<&'static str>,
         palette: Palette,
+        ready: bool,
+        cx: &Context<Library>,
     ) -> impl IntoElement {
         div()
             .flex()
@@ -269,21 +311,90 @@ impl PdfViewport {
                     .flex_1()
                     .min_h(px(0.))
                     .overflow_scroll()
+                    .track_scroll(&self.scroll)
                     .p(px(PADDING))
-                    .children(self.frame.as_ref().map(|frame| {
-                        div()
-                            .w(px(frame.width))
-                            .min_w(px(frame.width))
-                            .mx_auto()
-                            .bg(rgb(0xffffff))
-                            .shadow_sm()
-                            .child(
-                                img(frame.image.clone())
-                                    .w(px(frame.width))
-                                    .h(px(frame.height)),
-                            )
-                    })),
+                    .children(
+                        self.frame
+                            .as_ref()
+                            .map(|frame| frame.render(self.last_sync, ready, cx)),
+                    ),
             )
+    }
+}
+
+impl PageImage {
+    fn render(
+        &self,
+        last_sync: Option<PdfPosition>,
+        ready: bool,
+        cx: &Context<Library>,
+    ) -> impl IntoElement {
+        let page = self.current + 1;
+        let point_width = self.point_width;
+        let point_height = self.point_height;
+        div()
+            .id("pdf-page")
+            .relative()
+            .w(px(self.width))
+            .min_w(px(self.width))
+            .mx_auto()
+            .bg(rgb(0xffffff))
+            .shadow_sm()
+            .child(img(self.image.clone()).w(px(self.width)).h(px(self.height)))
+            .when(ready, |image| {
+                let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
+                let layout = bounds.clone();
+                image
+                    .tab_index(5)
+                    .child(
+                        canvas(move |bounds, _, _| layout.set(bounds), |_, (), _, _| {})
+                            .absolute()
+                            .inset_0(),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |library, event: &MouseDownEvent, window, cx| {
+                            let bounds = bounds.get();
+                            if event.click_count == 2
+                                && bounds.size.width > px(0.)
+                                && bounds.size.height > px(0.)
+                            {
+                                let x = f64::from(
+                                    f32::from(event.position.x - bounds.origin.x)
+                                        / f32::from(bounds.size.width),
+                                );
+                                let y = f64::from(
+                                    f32::from(event.position.y - bounds.origin.y)
+                                        / f32::from(bounds.size.height),
+                                );
+                                library.reverse_pdf_at(
+                                    PdfPosition {
+                                        page,
+                                        x: x.clamp(0., 1.) * point_width,
+                                        y: y.clamp(0., 1.) * point_height,
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
+                    )
+                    .on_key_down(
+                        cx.listener(move |library, event: &KeyDownEvent, window, cx| {
+                            if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                                let position = last_sync
+                                    .filter(|position| position.page == page)
+                                    .unwrap_or(PdfPosition {
+                                        page,
+                                        x: point_width / 2.,
+                                        y: point_height / 2.,
+                                    });
+                                library.reverse_pdf_at(position, window, cx);
+                                cx.stop_propagation();
+                            }
+                        }),
+                    )
+            })
     }
 }
 

@@ -222,15 +222,15 @@ fn compiles_with_the_configured_toolchain() {
     let project = Fixture::new();
     fs::create_dir(project.dir.join("sections")).unwrap();
     fs::write(
-        project.dir.join("sections/body.tex"),
+        project.dir.join("sections/résumé.tex"),
         "A Refract compiler fixture.\n",
     )
     .unwrap();
     fs::write(
         project.dir.join("main.tex"),
-        br"\documentclass{article}
+        r"\documentclass{article}
 \begin{document}
-\input{sections/body}
+\input{sections/résumé}
 \end{document}
 ",
     )
@@ -249,4 +249,24 @@ fn compiles_with_the_configured_toolchain() {
     assert_eq!(result.exit_code, Some(0));
     assert!(fs::read(pdf).unwrap().starts_with(b"%PDF-"));
     assert!(project.output.join("main.synctex.gz").is_file());
+    let position = synctex::forward(
+        &project.projects,
+        &project.project,
+        &toolchain,
+        "sections/résumé.tex",
+        1,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(position.page, 1);
+    let source = synctex::reverse(
+        &project.projects,
+        &project.project,
+        &toolchain,
+        position,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(source.file, "sections/résumé.tex");
+    assert_eq!(source.line, 1);
 }
