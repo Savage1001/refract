@@ -14,6 +14,9 @@ use std::{
 use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
+mod restore_stage;
+pub use restore_stage::retry_retained_restore_stages;
+
 const MANIFEST_LIMIT: usize = 4 * 1024 * 1024;
 const COMPARISON_LIMIT: u64 = 100_000;
 const LINE_ALIGNMENT_LIMIT: usize = 1_000_000;

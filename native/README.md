@@ -6,6 +6,8 @@ Open Comments to read existing project comments and replies. Selecting a referen
 
 Versions lists existing and newly captured snapshots. Refract captures a snapshot when you open a project and after saved edits settle, using the same manifest and ZIP format as the Electron app. Compare with current shows file, folder, and root document changes. Open a changed file to see its previous and current lines side by side. Restore file replaces the active file from the selected version after saving the current project as a snapshot. Use Electron to restore a whole project.
 
+When opening a project, the preview retries cleanup of temporary restore data recorded by Electron. It shows a notice if a stage still contains data that could not be verified or removed.
+
 From the repository root, use stable Rust and the Windows MSVC toolchain to build the preview. Running the binary opens a desktop window.
 
 ```sh

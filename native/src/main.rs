@@ -8,7 +8,9 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
-use refract_native::versions::{Version, list_versions, restore_version_file, snapshot_project};
+use refract_native::versions::{
+    Version, list_versions, restore_version_file, retry_retained_restore_stages, snapshot_project,
+};
 use refract_native::{
     Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
 };
@@ -58,6 +60,7 @@ struct Selection {
     show_versions: bool,
     versions: Option<io::Result<Vec<Version>>>,
     restore_error: Option<String>,
+    retained_restore_stages: bool,
     comparison: Option<Comparison>,
     comments: Option<io::Result<Vec<Comment>>>,
     pending_comment: Option<Comment>,
@@ -152,20 +155,24 @@ impl Library {
             show_versions: false,
             versions: None,
             restore_error: None,
+            retained_restore_stages: false,
             comparison: None,
             comments: None,
             pending_comment: None,
             comment_status: None,
         });
         let path = self.projects_dir.clone();
-        let load = cx
-            .background_executor()
-            .spawn(async move { project_tree(&path, &project) });
+        let load = cx.background_executor().spawn(async move {
+            let retained =
+                retry_retained_restore_stages(&path, &project).is_ok_and(|count| count > 0);
+            (project_tree(&path, &project), retained)
+        });
         self.tree_task = Some(cx.spawn(async move |library, cx| {
-            let tree = load.await;
+            let (tree, retained) = load.await;
             let _ = library.update(cx, |library, cx| {
                 if let Some(selection) = &mut library.selection {
                     selection.tree = Some(tree);
+                    selection.retained_restore_stages = retained;
                     cx.notify();
                 }
             });
@@ -1454,7 +1461,14 @@ impl Library {
                     .truncate()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(selection.project.name.clone()),
-            );
+            )
+            .when(selection.retained_restore_stages, |pane| {
+                pane.child(
+                    div().p_2().bg(rgb(palette.warning_surface)).child(
+                        "Temporary restore data remains in this project. It has been preserved because it could not be safely cleaned.",
+                    ),
+                )
+            });
         let pane = pane
             .child(
                 div()
