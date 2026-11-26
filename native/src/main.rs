@@ -31,8 +31,15 @@ struct Selection {
     project: Project,
     tree: Option<io::Result<Vec<ProjectEntry>>>,
     expanded_folders: HashSet<String>,
-    file: String,
+    file: Option<String>,
+    tabs: Vec<FileTab>,
     preview: Option<io::Result<SourcePreview>>,
+}
+
+struct FileTab {
+    path: String,
+    open_focus: FocusHandle,
+    close_focus: FocusHandle,
 }
 
 struct SourcePreview {
@@ -107,7 +114,8 @@ impl Library {
             project: project.clone(),
             tree: None,
             expanded_folders,
-            file: file.clone(),
+            file: None,
+            tabs: Vec::new(),
             preview: None,
         });
         let path = self.projects_dir.clone();
@@ -131,7 +139,14 @@ impl Library {
         let Some(selection) = &mut self.selection else {
             return;
         };
-        selection.file = file.clone();
+        if !selection.tabs.iter().any(|tab| tab.path == file) {
+            selection.tabs.push(FileTab {
+                path: file.clone(),
+                open_focus: cx.focus_handle().tab_stop(true).tab_index(2),
+                close_focus: cx.focus_handle().tab_stop(true).tab_index(2),
+            });
+        }
+        selection.file = Some(file.clone());
         selection.preview = None;
         let project = selection.project.clone();
         let path = self.projects_dir.clone();
@@ -148,6 +163,43 @@ impl Library {
                 }
             });
         }));
+        cx.notify();
+    }
+
+    fn close_file(&mut self, file: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        let Some(index) = selection.tabs.iter().position(|tab| tab.path == file) else {
+            return;
+        };
+        let had_focus = selection.tabs[index].close_focus.is_focused(window);
+        selection.tabs.remove(index);
+        if selection.file.as_deref() == Some(file) {
+            if let Some(last) = selection.tabs.last() {
+                let path = last.path.clone();
+                self.open_file(path, cx);
+            } else {
+                self.preview_task = None;
+                selection.file = None;
+                selection.preview = None;
+            }
+        }
+        if had_focus {
+            let focus = self
+                .selection
+                .as_ref()
+                .and_then(|selection| {
+                    let file = selection.file.as_deref()?;
+                    selection
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.path == file)
+                        .map(|tab| &tab.open_focus)
+                })
+                .unwrap_or(&self.home_focus);
+            window.focus(focus);
+        }
         cx.notify();
     }
 
@@ -543,7 +595,7 @@ impl Library {
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Files"))
                     .child(self.file_tree(selection, palette, cx)),
             )
-            .child(self.source_pane(selection, palette))
+            .child(self.source_pane(selection, palette, cx))
     }
 
     fn file_tree(
@@ -597,9 +649,10 @@ impl Library {
             .py_1()
             .hover(move |style| style.bg(rgb(palette.selection)))
             .focus(move |style| style.text_color(rgb(palette.focus)))
-            .when(selection.file == entry.path, |row| {
-                row.bg(rgb(palette.selection))
-            })
+            .when(
+                selection.file.as_deref() == Some(entry.path.as_str()),
+                |row| row.bg(rgb(palette.selection)),
+            )
             .child(div().w(px(12.)).flex_none().child(indicator))
             .child(div().min_w(px(0.)).truncate().child(entry.name.clone()))
             .on_click(cx.listener(move |library, _, _, cx| {
@@ -631,16 +684,125 @@ impl Library {
         node.into_any_element()
     }
 
-    fn source_pane(&self, selection: &Selection, palette: Palette) -> impl IntoElement {
-        let pane = div().flex_1().min_w(px(0.)).flex().flex_col().p_4().gap_2();
-        let title = div()
-            .truncate()
-            .font_weight(FontWeight::SEMIBOLD)
-            .child(selection.project.name.clone());
+    fn file_tabs(
+        &self,
+        selection: &Selection,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("file-tabs")
+            .flex()
+            .flex_none()
+            .w_full()
+            .min_h(px(44.))
+            .gap_1()
+            .overflow_x_scroll()
+            .children(selection.tabs.iter().map(|tab| {
+                let is_active = selection.file.as_deref() == Some(tab.path.as_str());
+                let text = if is_active {
+                    palette.text
+                } else {
+                    palette.muted
+                };
+                let name = tab.path.rsplit('/').next().unwrap_or(&tab.path).to_owned();
+                let open = tab.path.clone();
+                let open_by_key = open.clone();
+                let close = open.clone();
+                let close_by_key = open.clone();
+                div()
+                    .id(SharedString::from(format!("tab/{}", tab.path)))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .border_b_2()
+                    .border_color(gpui::transparent_black())
+                    .text_color(rgb(text))
+                    .when(is_active, |tab| {
+                        tab.bg(rgb(palette.selection))
+                            .border_color(rgb(palette.focus))
+                    })
+                    .child(
+                        div()
+                            .id("open")
+                            .track_focus(&tab.open_focus)
+                            .cursor_pointer()
+                            .py(px(9.))
+                            .px(px(8.))
+                            .text_size(px(12.))
+                            .focus(move |style| style.text_color(rgb(palette.focus)))
+                            .hover(move |style| style.bg(rgb(palette.selection)))
+                            .child(name)
+                            .on_click(cx.listener(move |library, _, _, cx| {
+                                library.open_file(open.clone(), cx)
+                            }))
+                            .on_key_down(cx.listener(
+                                move |library, event: &gpui::KeyDownEvent, _, cx| {
+                                    if event.keystroke.key == "enter"
+                                        || event.keystroke.key == "space"
+                                    {
+                                        library.open_file(open_by_key.clone(), cx);
+                                    }
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("close")
+                            .track_focus(&tab.close_focus)
+                            .cursor_pointer()
+                            .px(px(6.))
+                            .text_size(px(16.))
+                            .focus(move |style| style.text_color(rgb(palette.focus)))
+                            .hover(move |style| style.bg(rgb(palette.selection)))
+                            .child("×")
+                            .on_click(cx.listener(move |library, _, window, cx| {
+                                library.close_file(&close, window, cx)
+                            }))
+                            .on_key_down(cx.listener(
+                                move |library, event: &gpui::KeyDownEvent, window, cx| {
+                                    if event.keystroke.key == "enter"
+                                        || event.keystroke.key == "space"
+                                    {
+                                        library.close_file(&close_by_key, window, cx);
+                                    }
+                                },
+                            )),
+                    )
+            }))
+    }
+
+    fn source_pane(
+        &self,
+        selection: &Selection,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let pane = div()
+            .flex_1()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .p_4()
+            .gap_2()
+            .child(
+                div()
+                    .truncate()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(selection.project.name.clone()),
+            );
+        let Some(path) = &selection.file else {
+            return pane.child(
+                div()
+                    .text_color(rgb(palette.muted))
+                    .child("Choose a file from the sidebar."),
+            );
+        };
+        let pane = pane.child(self.file_tabs(selection, palette, cx));
         let file = div()
             .truncate()
             .text_color(rgb(palette.muted))
-            .child(format!("{} · Read only", selection.file));
+            .child(format!("{path} · Read only"));
         let preview = match &selection.preview {
             None => div().child("Loading source…").into_any_element(),
             Some(Err(error)) => div()
@@ -652,10 +814,7 @@ impl Library {
             Some(Ok(source)) => {
                 let lines = source.lines.clone();
                 uniform_list(
-                    SharedString::from(format!(
-                        "source-{}-{}",
-                        selection.project.id, selection.file
-                    )),
+                    SharedString::from(format!("source-{}-{}", selection.project.id, path)),
                     lines.len(),
                     move |range, _, _| {
                         range
@@ -686,7 +845,7 @@ impl Library {
                 .into_any_element()
             }
         };
-        pane.child(title).child(file).child(preview)
+        pane.child(file).child(preview)
     }
 }
 
@@ -767,7 +926,7 @@ mod tests {
     use std::fs;
 
     #[gpui::test]
-    fn opens_nested_source_and_restores_library_focus(cx: &mut TestAppContext) {
+    fn navigates_between_file_tabs_and_restores_library_focus(cx: &mut TestAppContext) {
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
         let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
@@ -803,11 +962,33 @@ mod tests {
         cx.simulate_keystrokes("tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
-            assert_eq!(selection.file, "sections/abstract.tex");
+            assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));
+            assert_eq!(selection.tabs.len(), 2);
             let preview = selection.preview.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(preview.lines[0].as_ref(), "An abstract");
         });
-        cx.simulate_keystrokes("shift-tab shift-tab enter");
+        cx.simulate_keystrokes("tab tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert_eq!(selection.file.as_deref(), Some("main.tex"));
+            assert_eq!(selection.tabs.len(), 2);
+        });
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|window, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));
+            assert_eq!(selection.tabs.len(), 1);
+            assert!(selection.tabs[0].open_focus.is_focused(window));
+        });
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|window, app| {
+            let library = library.read(app);
+            let selection = library.selection.as_ref().unwrap();
+            assert!(selection.file.is_none());
+            assert!(selection.tabs.is_empty());
+            assert!(library.home_focus.is_focused(window));
+        });
+        cx.simulate_keystrokes("enter");
         cx.update(|window, app| {
             let library = library.read(app);
             assert!(library.selection.is_none());
