@@ -6,7 +6,7 @@ Use **Duplicate** in a project’s library menu to open a copy with its files, c
 
 Use **+** in Files to create a file at the project root or in a selected folder. Open **More file options** to create a folder. A folder’s **Add items** menu preselects that destination.
 
-Right-click a file to rename it, or right-click a folder to move or rename it. Open tabs, the root document, and comment references follow the new path.
+Right-click a file or folder or focus its row and press `Shift+F10` to open its actions. Open tabs, the root document, and comment references follow a renamed or moved path.
 
 Open Comments to search discussions, add a file comment or comment on selected source, write replies, and resolve or reopen threads. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
 

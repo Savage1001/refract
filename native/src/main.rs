@@ -34,7 +34,7 @@ mod version_view;
 use comments_view::CommentDrafts;
 use deleted_projects_view::DeletedProjectsDialog;
 use file_creation_view::EntryDraft;
-use file_move_view::EntryMoveDraft;
+use file_move_view::{EntryMenu, EntryMoveDraft};
 use project_management_view::{ProjectFocus, RenameDraft};
 use version_view::Comparison;
 
@@ -58,6 +58,7 @@ struct Library {
     tree_task: Option<Task<()>>,
     entry_write_task: Option<Task<()>>,
     entry_draft: Option<EntryDraft>,
+    entry_menu: Option<EntryMenu>,
     move_draft: Option<EntryMoveDraft>,
     preview_task: Option<Task<()>>,
     comments_task: Option<Task<()>>,
@@ -165,6 +166,7 @@ impl Library {
             tree_task: None,
             entry_write_task: None,
             entry_draft: None,
+            entry_menu: None,
             move_draft: None,
             preview_task: None,
             comments_task: None,
@@ -198,6 +200,7 @@ impl Library {
             return;
         }
         self.project_menu = None;
+        self.entry_menu = None;
         self.project_open_sequence = self.project_open_sequence.wrapping_add(1);
         let file = project.root_file().replace('\\', "/");
         let expanded_folders = file
@@ -368,6 +371,7 @@ impl Library {
 
     fn return_to_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tree_task = None;
+        self.entry_menu = None;
         self.preview_task = None;
         self.comments_task = None;
         self.comparison_task = None;
@@ -944,6 +948,7 @@ impl Render for Library {
             .text_color(rgb(palette.text))
             .text_sm()
             .child(view)
+            .children(self.entry_menu_layer(palette, cx))
             .children(dialog)
     }
 }
@@ -1401,6 +1406,7 @@ impl Library {
         };
         let row = div()
             .id(SharedString::from(format!("tree/{}", entry.path)))
+            .debug_selector(|| format!("tree/{}", entry.path))
             .tab_index(1)
             .cursor_pointer()
             .flex()

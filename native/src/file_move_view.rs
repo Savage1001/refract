@@ -1,10 +1,12 @@
-use super::{Library, ProjectEntry, Selection};
-use gpui::{Context, Entity, Keystroke, Subscription, Window, div, prelude::*};
+use super::{Library, Palette, ProjectEntry, Selection};
+use gpui::{
+    Context, Div, Entity, FocusHandle, KeyDownEvent, Keystroke, MouseButton, Pixels, Point,
+    Stateful, Subscription, Window, anchored, canvas, deferred, div, point, prelude::*, px, rgb,
+};
 use gpui_component::{
     WindowExt,
     dialog::DialogButtonProps,
     input::{Input, InputEvent, InputState},
-    menu::{ContextMenuExt, PopupMenuItem},
 };
 use refract_native::{
     Project, ProjectEntryKind, ProjectEntryMove, move_project_entry, project_tree,
@@ -26,6 +28,32 @@ pub(super) struct EntryMoveDraft {
     _watch_input: Subscription,
 }
 
+pub(super) struct EntryMenu {
+    path: String,
+    position: Point<Pixels>,
+    focus: FocusHandle,
+    origin: Option<FocusHandle>,
+    actions: Vec<(EntryAction, FocusHandle)>,
+    _focus_out: Subscription,
+}
+
+#[derive(Clone, Copy)]
+enum EntryAction {
+    AddItems,
+    MoveFolder,
+    RenameFile,
+}
+
+impl EntryAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AddItems => "Add items",
+            Self::MoveFolder => "Move or rename folder",
+            Self::RenameFile => "Rename file",
+        }
+    }
+}
+
 struct MovedEntry {
     project: Project,
     tree: io::Result<Vec<ProjectEntry>>,
@@ -33,43 +61,218 @@ struct MovedEntry {
 }
 
 impl Library {
-    pub(super) fn entry_menu<E>(
-        row: E,
+    pub(super) fn entry_menu(
+        row: Stateful<Div>,
         path: String,
         is_folder: bool,
         cx: &Context<Self>,
-    ) -> impl IntoElement
-    where
-        E: ParentElement + Styled + IntoElement + 'static,
-    {
-        let library = cx.weak_entity();
-        row.context_menu(move |menu, _, _| {
-            let menu = if is_folder {
-                let path = path.clone();
-                let library = library.clone();
-                menu.item(
-                    PopupMenuItem::new("Add items").on_click(move |_, window, app| {
-                        let _ = library.update(app, |library, cx| {
-                            library.open_create_entry_dialog(&path, window, cx)
-                        });
-                    }),
+    ) -> impl IntoElement {
+        let keyboard_position = Rc::new(Cell::new(Point::default()));
+        let row_position = keyboard_position.clone();
+        let mouse_path = path.clone();
+        row.relative()
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        row_position.set(point(bounds.left(), bounds.bottom()));
+                    },
+                    |_, (), _, _| {},
                 )
-            } else {
-                menu
-            };
-            let path = path.clone();
-            let library = library.clone();
-            let (kind, label) = if is_folder {
-                (ProjectEntryKind::Folder, "Move or rename folder")
-            } else {
-                (ProjectEntryKind::File, "Rename file")
-            };
-            menu.item(PopupMenuItem::new(label).on_click(move |_, window, app| {
-                let _ = library.update(app, |library, cx| {
-                    library.open_entry_move_dialog(&path, kind, window, cx)
-                });
-            }))
-        })
+                .absolute()
+                .inset_0(),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |library, event: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    library.open_entry_menu(&mouse_path, is_folder, event.position, window, cx);
+                }),
+            )
+            .on_key_down(
+                cx.listener(move |library, event: &KeyDownEvent, window, cx| {
+                    let key = &event.keystroke;
+                    if key.key == "menu" || (key.key == "f10" && key.modifiers.shift) {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        library.open_entry_menu(
+                            &path,
+                            is_folder,
+                            keyboard_position.get(),
+                            window,
+                            cx,
+                        );
+                    }
+                }),
+            )
+    }
+
+    fn open_entry_menu(
+        &mut self,
+        path: &str,
+        is_folder: bool,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selection.is_none() || window.has_active_dialog(cx) {
+            return;
+        }
+        let items: &[EntryAction] = if is_folder {
+            &[EntryAction::AddItems, EntryAction::MoveFolder]
+        } else {
+            &[EntryAction::RenameFile]
+        };
+        let actions: Vec<_> = items
+            .iter()
+            .map(|&action| (action, cx.focus_handle().tab_stop(true).tab_index(1)))
+            .collect();
+        let focus = cx.focus_handle();
+        let origin = window.focused(cx);
+        let library = cx.weak_entity();
+        let focus_out = window.on_focus_out(&focus, cx, move |_, window, app| {
+            let _ = library.update(app, |library, cx| {
+                library.close_entry_menu(false, window, cx)
+            });
+        });
+        window.focus(&actions[0].1);
+        self.entry_menu = Some(EntryMenu {
+            path: path.to_owned(),
+            position,
+            focus,
+            origin,
+            actions,
+            _focus_out: focus_out,
+        });
+        cx.notify();
+    }
+
+    fn close_entry_menu(
+        &mut self,
+        restore_focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(menu) = self.entry_menu.take() {
+            if restore_focus && let Some(origin) = menu.origin {
+                window.focus(&origin);
+            }
+            cx.notify();
+        }
+    }
+
+    fn handle_entry_menu_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = event.keystroke.key.as_str();
+        let Some(menu) = &self.entry_menu else {
+            return;
+        };
+        let current = menu
+            .actions
+            .iter()
+            .position(|(_, focus)| focus.is_focused(window));
+        match key {
+            "escape" => self.close_entry_menu(true, window, cx),
+            "enter" | "space" => {
+                if let Some(index) = current {
+                    self.activate_entry_menu_action(index, window, cx);
+                }
+            }
+            "up" | "down" => {
+                let count = menu.actions.len();
+                let next = match (current, key) {
+                    (Some(index), "up") => (index + count - 1) % count,
+                    (Some(index), _) => (index + 1) % count,
+                    (None, _) => 0,
+                };
+                window.focus(&menu.actions[next].1);
+            }
+            _ => return,
+        }
+        window.prevent_default();
+        cx.stop_propagation();
+    }
+
+    fn activate_entry_menu_action(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(menu) = self.entry_menu.as_ref() else {
+            return;
+        };
+        let path = menu.path.clone();
+        let action = menu.actions[index].0;
+        self.close_entry_menu(true, window, cx);
+        match action {
+            EntryAction::AddItems => self.open_create_entry_dialog(&path, window, cx),
+            EntryAction::MoveFolder => {
+                self.open_entry_move_dialog(&path, ProjectEntryKind::Folder, window, cx)
+            }
+            EntryAction::RenameFile => {
+                self.open_entry_move_dialog(&path, ProjectEntryKind::File, window, cx)
+            }
+        }
+    }
+
+    pub(super) fn entry_menu_layer(
+        &self,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let menu = self.entry_menu.as_ref()?;
+        let items = menu
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(index, (action, focus))| {
+                div()
+                    .id(action.label())
+                    .track_focus(focus)
+                    .w_full()
+                    .px(px(10.))
+                    .py(px(8.))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(move |item| item.bg(rgb(palette.selection)))
+                    .focus(move |item| item.bg(rgb(palette.selection)))
+                    .child(action.label())
+                    .on_click(cx.listener(move |library, _, window, cx| {
+                        cx.stop_propagation();
+                        library.activate_entry_menu_action(index, window, cx);
+                    }))
+            });
+        let popup = div()
+            .id("entry-menu")
+            .debug_selector(|| "entry-menu".to_owned())
+            .track_focus(&menu.focus)
+            .occlude()
+            .min_w(px(180.))
+            .p(px(5.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(rgb(palette.input_border))
+            .bg(rgb(palette.surface))
+            .shadow_lg()
+            .text_size(px(12.))
+            .on_key_down(cx.listener(Self::handle_entry_menu_key))
+            .on_mouse_down_out(
+                cx.listener(|library, _, window, cx| library.close_entry_menu(true, window, cx)),
+            )
+            .children(items);
+        Some(
+            deferred(
+                anchored()
+                    .position(menu.position)
+                    .snap_to_window_with_margin(px(8.))
+                    .child(popup),
+            )
+            .with_priority(1),
+        )
     }
 
     fn open_entry_move_dialog(
@@ -345,10 +548,78 @@ fn remap_open_tabs(
 mod tests {
     use super::*;
     use crate::initialize_app;
-    use gpui::TestAppContext;
+    use gpui::{Modifiers, TestAppContext};
     use gpui_component::{Root, input::Position};
     use refract_native::{create_project, list_projects};
     use std::fs;
+
+    #[gpui::test]
+    fn tree_context_menu_restores_focus_and_dispatches_actions(cx: &mut TestAppContext) {
+        let profile = tempfile::tempdir().unwrap();
+        let projects = profile.path().join("projects");
+        let project = create_project(&projects, "Paper").unwrap();
+        fs::create_dir(projects.join(&project.id).join("sections")).unwrap();
+        cx.update(initialize_app);
+        let mut library = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| Library::new(projects.clone(), window, cx));
+            library = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let library = library.unwrap();
+        cx.update(|window, app| {
+            library.update(app, |view, cx| view.open_project(project, window, cx));
+        });
+        cx.run_until_parked();
+
+        let folder_row = cx.debug_bounds("tree/sections").unwrap();
+        cx.simulate_click(folder_row.center(), Modifiers::none());
+        let folder_focus = cx.update(|window, app| window.focused(app).unwrap());
+        cx.simulate_keystrokes("shift-f10");
+        cx.update(|window, app| {
+            let menu = library.read(app).entry_menu.as_ref().unwrap();
+            assert_eq!(menu.path, "sections");
+            assert_eq!(menu.position, point(folder_row.left(), folder_row.bottom()));
+            assert!(menu.actions[0].1.is_focused(window));
+        });
+        assert!(cx.debug_bounds("entry-menu").is_some());
+        cx.simulate_keystrokes("up");
+        cx.update(|window, app| {
+            let menu = library.read(app).entry_menu.as_ref().unwrap();
+            assert!(menu.actions[1].1.is_focused(window));
+        });
+        cx.simulate_keystrokes("down escape");
+        cx.update(|window, app| {
+            assert!(library.read(app).entry_menu.is_none());
+            assert!(folder_focus.is_focused(window));
+        });
+        cx.simulate_keystrokes("menu down enter");
+        cx.update(|window, app| {
+            let view = library.read(app);
+            assert!(view.entry_menu.is_none());
+            let draft = view.move_draft.as_ref().unwrap();
+            assert_eq!(draft.source, "sections");
+            assert!(window.has_active_dialog(app));
+        });
+        cx.simulate_keystrokes("escape");
+
+        let file_row = cx.debug_bounds("tree/main.tex").unwrap();
+        cx.simulate_mouse_down(file_row.center(), MouseButton::Right, Modifiers::none());
+        cx.simulate_mouse_up(file_row.center(), MouseButton::Right, Modifiers::none());
+        cx.update(|window, app| {
+            let menu = library.read(app).entry_menu.as_ref().unwrap();
+            assert_eq!(menu.path, "main.tex");
+            assert_eq!(menu.position, file_row.center());
+            assert!(menu.actions[0].1.is_focused(window));
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, app| {
+            let view = library.read(app);
+            assert!(view.entry_menu.is_none());
+            assert_eq!(view.move_draft.as_ref().unwrap().source, "main.tex");
+            assert!(window.has_active_dialog(app));
+        });
+    }
 
     #[gpui::test]
     fn renames_and_moves_open_files_without_losing_editor_state(cx: &mut TestAppContext) {
