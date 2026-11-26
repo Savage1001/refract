@@ -1538,12 +1538,12 @@ mod tests {
         });
         cx.simulate_keystrokes("enter");
         assert!(cx.has_pending_prompt());
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Keep editing");
         cx.run_until_parked();
         cx.update(|_, app| assert!(library.read(app).selection.is_some()));
         cx.simulate_keystrokes("enter");
         assert!(cx.has_pending_prompt());
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Discard changes");
         cx.run_until_parked();
         cx.update(|window, app| {
             let library = library.read(app);
