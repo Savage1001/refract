@@ -10,6 +10,8 @@ Right-click a file or folder or focus its row and press `Shift+F10` to open its 
 
 Use **Download file** to save a copy of a project file or **Export project ZIP** to save the visible project files and folders, including empty folders.
 
+Use **Import ZIP** in the project library to open a LaTeX project archive. Select a root document when the archive has multiple candidates. **Import all** creates a separate project for each root in its own top-level folder.
+
 Open Comments to search discussions, add a file comment or comment on selected source, write replies, and resolve or reopen threads. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
 
 Versions lists existing and newly captured snapshots. Refract captures a snapshot when you open a project and after saved edits settle, using the same manifest and ZIP format as the Electron app. Compare with current shows file, folder, and root document changes. Open a changed file to see its previous and current lines side by side. Restore file replaces the active file. Restore project restores files, folders, and the root document. Both save the current project as a snapshot first. An interrupted project restore recovers the previous version on startup.

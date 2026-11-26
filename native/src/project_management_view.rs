@@ -69,6 +69,7 @@ impl Library {
             && self.project_rename_task.is_none()
             && self.project_action_prompt.is_none()
             && self.deleted_projects_dialog.is_none()
+            && self.import_draft.is_none()
     }
 
     fn can_rename_project(&self) -> bool {

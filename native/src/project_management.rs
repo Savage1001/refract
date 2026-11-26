@@ -11,7 +11,9 @@ use std::{
 };
 use uuid::Uuid;
 
+mod archive;
 mod trash;
+pub use archive::ProjectArchive;
 pub use trash::{DeletedProject, list_deleted_projects, restore_deleted_project, trash_project};
 
 const DEFAULT_SOURCE: &str = r"\documentclass[11pt]{article}

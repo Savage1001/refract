@@ -262,7 +262,7 @@ fn move_checked(
 }
 
 #[cfg(windows)]
-pub(super) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     let source: Vec<u16> = source.as_os_str().encode_wide().chain([0]).collect();
@@ -275,7 +275,7 @@ pub(super) fn rename_without_replacement(source: &Path, destination: &Path) -> i
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-pub(super) fn rename_without_replacement(_source: &Path, _destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_without_replacement(_source: &Path, _destination: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Safe project entry moves are unavailable on this platform",
@@ -403,7 +403,7 @@ mod tests {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(super) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
     use rustix::fs::{CWD, RenameFlags, renameat_with};
     renameat_with(CWD, source, CWD, destination, RenameFlags::NOREPLACE).map_err(Into::into)
 }

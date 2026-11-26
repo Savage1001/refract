@@ -31,6 +31,7 @@ mod file_creation_view;
 mod file_move_view;
 mod file_transfer_view;
 mod file_trash_view;
+mod project_import_view;
 mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
@@ -38,6 +39,7 @@ use deleted_projects_view::DeletedProjectsDialog;
 use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
 use file_trash_view::DeletedFilesDialog;
+use project_import_view::ImportDraft;
 use project_management_view::{ProjectFocus, RenameDraft};
 use version_view::Comparison;
 
@@ -48,6 +50,8 @@ struct Library {
     projects: Option<io::Result<Vec<Project>>>,
     project_open_sequence: u64,
     project_library_task: Option<Task<()>>,
+    import_draft: Option<ImportDraft>,
+    import_focus: FocusHandle,
     project_action_prompt: Option<Task<()>>,
     project_menu: Option<String>,
     project_action_source: Option<String>,
@@ -159,6 +163,8 @@ impl Library {
             projects: None,
             project_open_sequence: 0,
             project_library_task: None,
+            import_draft: None,
+            import_focus: cx.focus_handle().tab_stop(true).tab_index(1),
             project_action_prompt: None,
             project_menu: None,
             project_action_source: None,
@@ -985,103 +991,103 @@ impl Library {
             .px(px(padding))
             .py(px(44.))
             .on_click(cx.listener(|library, _, _, cx| library.dismiss_project_menu(cx)));
-        let content = div()
-            .w_full()
-            .max_w(px(1120.))
-            .mx_auto()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(24.))
-                    .mb(px(20.))
-                    .child(img(self.logo.clone()).size(px(50.)).rounded(px(14.)))
-                    .child(
-                        div()
-                            .text_size(px(32.))
-                            .font_weight(FontWeight::BOLD)
-                            .child("Refract"),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .mb(px(40.))
-                    .child(
-                        div()
-                            .text_size(px(28.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Your projects"),
-                    )
-                    .child(self.create_project_button("new-project", "New project", palette, cx)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .border_y_1()
-                    .border_color(rgb(palette.border))
-                    .py(px(16.))
-                    .child(
-                        div()
-                            .flex()
-                            .p(px(2.))
-                            .border_1()
-                            .border_color(rgb(palette.border))
-                            .rounded_md()
-                            .child(self.view_toggle(false, "List", palette, cx))
-                            .child(self.view_toggle(true, "Grid", palette, cx)),
-                    )
-                    .child(self.deleted_projects_button(palette, cx)),
-            )
-            .children(self.project_action_error.clone())
-            .child(match &self.projects {
-                Some(Ok(projects)) if !projects.is_empty() => {
-                    let count = if projects.len() == 1 {
-                        "1 project".to_owned()
-                    } else {
-                        format!("{} projects", projects.len())
-                    };
+        let content =
+            div()
+                .w_full()
+                .max_w(px(1120.))
+                .mx_auto()
+                .child(
                     div()
+                        .flex()
+                        .items_center()
+                        .gap(px(24.))
+                        .mb(px(20.))
+                        .child(img(self.logo.clone()).size(px(50.)).rounded(px(14.)))
                         .child(
                             div()
-                                .pt(px(20.))
-                                .pb(px(8.))
-                                .text_size(px(12.))
-                                .text_color(rgb(palette.muted))
-                                .child(count),
+                                .text_size(px(32.))
+                                .font_weight(FontWeight::BOLD)
+                                .child("Refract"),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .mb(px(40.))
+                        .child(
+                            div()
+                                .text_size(px(28.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Your projects"),
                         )
-                        .when(!self.grid_view, |content| {
-                            content.child(
+                        .child(self.project_library_actions(palette, cx)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .border_y_1()
+                        .border_color(rgb(palette.border))
+                        .py(px(16.))
+                        .child(
+                            div()
+                                .flex()
+                                .p(px(2.))
+                                .border_1()
+                                .border_color(rgb(palette.border))
+                                .rounded_md()
+                                .child(self.view_toggle(false, "List", palette, cx))
+                                .child(self.view_toggle(true, "Grid", palette, cx)),
+                        )
+                        .child(self.deleted_projects_button(palette, cx)),
+                )
+                .children(self.project_action_error.clone())
+                .child(match &self.projects {
+                    Some(Ok(projects)) if !projects.is_empty() => {
+                        let count = if projects.len() == 1 {
+                            "1 project".to_owned()
+                        } else {
+                            format!("{} projects", projects.len())
+                        };
+                        div()
+                            .child(
                                 div()
-                                    .px(px(14.))
-                                    .py(px(10.))
-                                    .flex()
-                                    .border_b_1()
-                                    .border_color(rgb(palette.border))
-                                    .text_size(px(11.))
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .pt(px(20.))
+                                    .pb(px(8.))
+                                    .text_size(px(12.))
                                     .text_color(rgb(palette.muted))
-                                    .child(div().flex_1().child("NAME"))
-                                    .child(div().w(px(210.)).child("CREATED")),
+                                    .child(count),
                             )
-                        })
-                        .child(
-                            div()
-                                .when(self.grid_view, |list| {
-                                    list.grid().grid_cols(columns).gap(px(16.)).pt(px(16.))
-                                })
-                                .children(
-                                    projects
-                                        .iter()
-                                        .map(|project| self.project_row(project, palette, cx)),
-                                ),
-                        )
-                }
-                Some(Ok(_)) => {
-                    div()
+                            .when(!self.grid_view, |content| {
+                                content.child(
+                                    div()
+                                        .px(px(14.))
+                                        .py(px(10.))
+                                        .flex()
+                                        .border_b_1()
+                                        .border_color(rgb(palette.border))
+                                        .text_size(px(11.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(palette.muted))
+                                        .child(div().flex_1().child("NAME"))
+                                        .child(div().w(px(210.)).child("CREATED")),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .when(self.grid_view, |list| {
+                                        list.grid().grid_cols(columns).gap(px(16.)).pt(px(16.))
+                                    })
+                                    .children(
+                                        projects
+                                            .iter()
+                                            .map(|project| self.project_row(project, palette, cx)),
+                                    ),
+                            )
+                    }
+                    Some(Ok(_)) => div()
                         .py_6()
                         .flex()
                         .flex_col()
@@ -1100,17 +1106,16 @@ impl Library {
                             "Start from Scratch",
                             palette,
                             cx,
-                        ))
-                }
-                None => div()
-                    .py_6()
-                    .text_color(rgb(palette.muted))
-                    .child("Loading projects…"),
-                Some(Err(error)) => div()
-                    .py_6()
-                    .text_color(rgb(palette.muted))
-                    .child(format!("Couldn’t read projects: {error}")),
-            });
+                        )),
+                    None => div()
+                        .py_6()
+                        .text_color(rgb(palette.muted))
+                        .child("Loading projects…"),
+                    Some(Err(error)) => div()
+                        .py_6()
+                        .text_color(rgb(palette.muted))
+                        .child(format!("Couldn’t read projects: {error}")),
+                });
         page.child(content)
     }
 
@@ -1805,6 +1810,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             && library.save_queue.is_empty()
                             && library.snapshot_task.is_none()
                             && library.entry_write_task.is_none()
+                            && library.project_library_task.is_none()
                             && !library.snapshot_needed
                             && !library.has_unsaved_changes(&close, cx)
                         {
@@ -1960,7 +1966,7 @@ mod tests {
         });
         let library = library.unwrap();
         cx.refresh().unwrap();
-        cx.simulate_keystrokes("tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab enter");
         cx.update(|_, app| assert!(library.read(app).grid_view));
         cx.simulate_keystrokes("tab tab enter");
         cx.update(|_, app| {
