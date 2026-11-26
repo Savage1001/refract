@@ -1888,6 +1888,7 @@ fn initialize_app(cx: &mut App) {
     source_theme::init(cx);
     commands_view::init(cx);
     editor_find_view::init(cx);
+    pdf_view::init(cx);
     file_trash_view::init(cx);
     comments_view::init(cx);
     deleted_projects_view::init(cx);

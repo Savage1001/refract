@@ -1,7 +1,7 @@
 use super::{Library, Palette};
 use gpui::{
-    Bounds, Context, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point, RenderImage,
-    ScrollHandle, Size, Window, canvas, div, img, point, prelude::*, px, rgb, size,
+    Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point,
+    RenderImage, ScrollHandle, Size, Window, canvas, div, img, point, prelude::*, px, rgb, size,
 };
 use refract_native::{
     pdf_raster::{
@@ -12,21 +12,25 @@ use refract_native::{
 };
 use std::{cell::Cell, collections::BTreeMap, io, ops::Range, path::Path, rc::Rc, sync::Arc};
 
+mod controls;
+use controls::PageEdit;
+pub(super) use controls::init;
+
 pub(super) const PDF_PANE_WIDTH: f32 = 352.;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Zoom {
     #[default]
     FitWidth,
-    FitPage,
+    FitPage(u16),
     Percentage(u16),
 }
 
 impl Zoom {
     fn percentage(self) -> u16 {
         match self {
-            Self::FitWidth | Self::FitPage => 100,
-            Self::Percentage(zoom) => zoom,
+            Self::FitWidth => 100,
+            Self::FitPage(zoom) | Self::Percentage(zoom) => zoom,
         }
     }
 }
@@ -49,6 +53,8 @@ pub(super) struct PdfViewport {
     last_sync: Option<PdfPosition>,
     center_sync: bool,
     scroll: ScrollHandle,
+    page_focus: Option<FocusHandle>,
+    page_edit: Option<PageEdit>,
 }
 
 pub(super) struct RasterizedPage {
@@ -78,6 +84,10 @@ impl Library {
             preview.request_document = available;
             preview.loading_document = available;
             preview.error = None;
+            preview.page_edit = None;
+            if available && preview.page_focus.is_none() {
+                preview.page_focus = Some(cx.focus_handle().tab_index(5).tab_stop(true));
+            }
         }
         self.start_pdf_frame(window, cx);
     }
@@ -143,31 +153,6 @@ impl Library {
         cx.notify();
     }
 
-    fn change_pdf_page(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selection) = &mut self.selection else {
-            return;
-        };
-        let preview = &mut selection.build.preview;
-        if preview.loading_document || preview.layout.pages.is_empty() {
-            return;
-        }
-        let index = preview
-            .page
-            .saturating_add_signed(delta)
-            .min(preview.layout.pages.len().saturating_sub(1) as u32);
-        preview.go_to_page(index, window);
-        self.start_pdf_frame(window, cx);
-        cx.notify();
-    }
-
-    fn change_pdf_zoom(&mut self, zoom: Zoom, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(selection) = &mut self.selection {
-            selection.build.preview.resize_pages(zoom, window);
-            self.start_pdf_frame(window, cx);
-            cx.notify();
-        }
-    }
-
     fn pdf_scroll_changed(
         &mut self,
         measurement: &Rc<Cell<Option<(Point<Pixels>, Size<Pixels>)>>>,
@@ -191,104 +176,6 @@ impl Library {
         self.start_pdf_frame(window, cx);
         cx.notify();
     }
-
-    fn step_pdf_zoom(&mut self, delta: i16, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(selection) = &self.selection {
-            let zoom = selection
-                .build
-                .preview
-                .zoom
-                .percentage()
-                .saturating_add_signed(delta)
-                .clamp(25, 250);
-            self.change_pdf_zoom(Zoom::Percentage(zoom), window, cx);
-        }
-    }
-
-    pub(super) fn pdf_controls(
-        &self,
-        view: &PdfViewport,
-        ready: bool,
-        palette: Palette,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let zoom = view.zoom.percentage();
-        let label = if view.zoom == Zoom::FitWidth {
-            "Fit".to_owned()
-        } else {
-            format!("{zoom}%")
-        };
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_2()
-            .when(!view.layout.pages.is_empty(), |controls| {
-                controls.child({
-                    let count = view.layout.pages.len() as u32;
-                    let ready = ready && !view.loading_document;
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(pdf_button(
-                            "pdf-prev",
-                            "‹",
-                            ready && view.page > 0,
-                            palette,
-                            cx,
-                            |library, window, cx| library.change_pdf_page(-1, window, cx),
-                        ))
-                        .child(format!("{} / {count}", view.page + 1))
-                        .child(pdf_button(
-                            "pdf-next",
-                            "›",
-                            ready && view.page < count - 1,
-                            palette,
-                            cx,
-                            |library, window, cx| library.change_pdf_page(1, window, cx),
-                        ))
-                        .child(div().flex_1())
-                        .child(pdf_button(
-                            "pdf-zoom-out",
-                            "−",
-                            ready && zoom > 25,
-                            palette,
-                            cx,
-                            |library, window, cx| library.step_pdf_zoom(-25, window, cx),
-                        ))
-                        .child(label)
-                        .child(pdf_button(
-                            "pdf-zoom-in",
-                            "+",
-                            ready && zoom < 250,
-                            palette,
-                            cx,
-                            |library, window, cx| library.step_pdf_zoom(25, window, cx),
-                        ))
-                        .child(pdf_button(
-                            "pdf-fit-width",
-                            "Fit width",
-                            ready,
-                            palette,
-                            cx,
-                            |library, window, cx| {
-                                library.change_pdf_zoom(Zoom::FitWidth, window, cx)
-                            },
-                        ))
-                        .child(pdf_button(
-                            "pdf-fit-page",
-                            "Fit page",
-                            ready,
-                            palette,
-                            cx,
-                            |library, window, cx| {
-                                library.change_pdf_zoom(Zoom::FitPage, window, cx)
-                            },
-                        ))
-                })
-            })
-    }
 }
 
 impl PdfViewport {
@@ -298,13 +185,15 @@ impl PdfViewport {
         }
     }
 
+    fn page_width(&self) -> f32 {
+        (f32::from(self.viewport.width) - 2. * INSET).max(1.)
+    }
+
     fn request(&self, index: u32, display_scale: f32) -> PageRequest {
-        let width = f32::from(self.viewport.width).max(2. * INSET + 1.);
         PageRequest {
             index,
-            width: Some((width - 2. * INSET) * f32::from(self.zoom.percentage()) / 100.),
-            height: (self.zoom == Zoom::FitPage)
-                .then(|| (f32::from(self.viewport.height) - 2. * INSET).max(1.)),
+            width: Some(self.page_width() * f32::from(self.zoom.percentage()) / 100.),
+            height: None,
             display_scale,
             pixel_budget: self.pixel_budget(),
         }
@@ -678,39 +567,6 @@ fn render_page_slot(
                                 });
                             library.reverse_pdf_at(position, window, cx);
                             cx.stop_propagation();
-                        }
-                    }),
-                )
-        })
-}
-
-fn pdf_button(
-    id: &'static str,
-    label: &'static str,
-    enabled: bool,
-    palette: Palette,
-    cx: &Context<Library>,
-    activate: fn(&mut Library, &mut Window, &mut Context<Library>),
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .debug_selector(|| id.to_owned())
-        .px_1()
-        .py_1()
-        .rounded_md()
-        .child(label)
-        .when(!enabled, |button| button.text_color(rgb(palette.muted)))
-        .when(enabled, |button| {
-            button
-                .tab_index(5)
-                .cursor_pointer()
-                .hover(move |style| style.bg(rgb(palette.selection)))
-                .focus(move |style| style.bg(rgb(palette.selection)))
-                .on_click(cx.listener(move |library, _, window, cx| activate(library, window, cx)))
-                .on_key_down(
-                    cx.listener(move |library, event: &KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                            activate(library, window, cx);
                         }
                     }),
                 )
