@@ -1,18 +1,18 @@
 use gpui::{
     AnyElement, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight, Image,
-    ImageFormat, KeyBinding, SharedString, Task, Window, WindowAppearance, WindowBounds,
-    WindowOptions, actions, div, img, prelude::*, px, rgb, size,
+    ImageFormat, KeyBinding, PromptLevel, SharedString, Subscription, Task, Window,
+    WindowAppearance, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, rgb, size,
 };
 use gpui_component::{
     Root,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
 use refract_native::{
     Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     env, io,
     path::PathBuf,
     sync::Arc,
@@ -28,6 +28,9 @@ struct Library {
     preview_task: Option<Task<()>>,
     comments_task: Option<Task<()>>,
     save_task: Option<Task<()>>,
+    save_queue: VecDeque<String>,
+    navigation_after_save: Option<Navigation>,
+    discard_prompt: Option<Task<()>>,
     focus_handle: FocusHandle,
     project_focus: HashMap<String, FocusHandle>,
     home_focus: FocusHandle,
@@ -58,6 +61,13 @@ struct EditorDocument {
     state: Entity<InputState>,
     saved: String,
     save_error: Option<String>,
+    _autosave: Subscription,
+}
+
+enum Navigation {
+    CloseFile(String),
+    Projects,
+    CloseWindow,
 }
 
 impl Library {
@@ -93,6 +103,9 @@ impl Library {
             preview_task: None,
             comments_task: None,
             save_task: None,
+            save_queue: VecDeque::new(),
+            navigation_after_save: None,
+            discard_prompt: None,
             focus_handle,
             project_focus: HashMap::new(),
             home_focus: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -184,10 +197,21 @@ impl Library {
                             .soft_wrap(false)
                             .default_value(source.clone())
                     });
+                    let autosave_file = file.clone();
+                    let autosave = cx.subscribe_in(
+                        &state,
+                        window,
+                        move |library, _, event: &InputEvent, window, cx| {
+                            if matches!(event, InputEvent::Change) {
+                                library.queue_save(&autosave_file, window, cx);
+                            }
+                        },
+                    );
                     EditorDocument {
                         state,
                         saved: source,
                         save_error: None,
+                        _autosave: autosave,
                     }
                 }));
                 if let Some(comment) = selection.pending_comment.take()
@@ -203,9 +227,6 @@ impl Library {
     }
 
     fn close_file(&mut self, file: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.save_task.is_some() {
-            return;
-        }
         let Some(selection) = &mut self.selection else {
             return;
         };
@@ -244,9 +265,6 @@ impl Library {
     }
 
     fn return_to_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.save_task.is_some() {
-            return;
-        }
         self.tree_task = None;
         self.preview_task = None;
         self.comments_task = None;
@@ -273,6 +291,7 @@ impl Library {
         };
         selection.show_comments = !selection.show_comments;
         if selection.show_comments {
+            selection.comments = None;
             self.load_comments(cx);
         }
         cx.notify();
@@ -282,7 +301,6 @@ impl Library {
         let Some(selection) = &mut self.selection else {
             return;
         };
-        selection.comments = None;
         let project = selection.project.clone();
         let path = self.projects_dir.clone();
         let load = cx
@@ -299,41 +317,65 @@ impl Library {
         }));
     }
 
-    fn save_active_file(&mut self, cx: &mut Context<Self>) {
+    fn save_active_file(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if let Some(file) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.file.clone())
+        {
+            self.queue_save(&file, window, cx);
+        }
+    }
+
+    fn queue_save(&mut self, file: &str, window: &Window, cx: &mut Context<Self>) {
+        // Queue the path so later edits can share one write of the latest document.
+        if !self.save_queue.iter().any(|queued| queued == file) {
+            self.save_queue.push_back(file.to_owned());
+        }
+        self.start_next_save(window, cx);
+    }
+
+    fn start_next_save(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.save_task.is_some() {
             return;
         }
         let Some(selection) = &mut self.selection else {
+            self.save_queue.clear();
             return;
         };
-        let Some(file) = selection.file.clone() else {
-            return;
+        let (file, expected, edited) = loop {
+            let Some(file) = self.save_queue.pop_front() else {
+                return;
+            };
+            let Some(document) = selection
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.path == file)
+                .and_then(|tab| tab.editor.as_mut()?.as_mut().ok())
+            else {
+                continue;
+            };
+            let edited = document.state.read(cx).value();
+            if document.saved == edited.as_ref() {
+                continue;
+            }
+            document.save_error = None;
+            break (file, document.saved.clone(), edited.to_string());
         };
-        let document = selection
-            .tabs
-            .iter_mut()
-            .find(|tab| tab.path == file)
-            .and_then(|tab| tab.editor.as_mut()?.as_mut().ok());
-        let Some(document) = document else {
-            return;
-        };
-        let edited = document.state.read(cx).value().to_string();
-        if document.saved == edited {
-            return;
-        }
-        document.save_error = None;
-        let expected = document.saved.clone();
         let project = selection.project.clone();
         let path = self.projects_dir.clone();
         let saved_file = file.clone();
         let save = cx.background_executor().spawn(async move {
             save_source(&path, &project, &saved_file, &expected, &edited).map(|()| edited)
         });
-        self.save_task = Some(cx.spawn(async move |library, cx| {
+        self.save_task = Some(cx.spawn_in(window, async move |library, cx| {
             let result = save.await;
             let reload_comments = result.is_ok();
-            let _ = library.update(cx, |library, cx| {
+            let _ = library.update_in(cx, |library, window, cx| {
                 library.save_task = None;
+                if result.is_err() {
+                    library.save_queue.retain(|queued| queued != &file);
+                }
                 if let Some(selection) = &mut library.selection {
                     if let Some(document) = selection
                         .tabs
@@ -346,14 +388,85 @@ impl Library {
                             Err(error) => document.save_error = Some(error.to_string()),
                         }
                     }
-                    if reload_comments && selection.show_comments {
+                    if reload_comments && selection.show_comments && library.save_queue.is_empty() {
                         library.load_comments(cx);
                     }
+                }
+                library.start_next_save(window, cx);
+                if library.save_task.is_none()
+                    && let Some(navigation) = library.navigation_after_save.take()
+                {
+                    library.request_navigation(navigation, window, cx);
                 }
                 cx.notify();
             });
         }));
         cx.notify();
+    }
+
+    fn has_unsaved_changes(&self, navigation: &Navigation, cx: &App) -> bool {
+        self.selection.as_ref().is_some_and(|selection| {
+            selection.tabs.iter().any(|tab| {
+                if let Navigation::CloseFile(file) = navigation
+                    && tab.path != *file
+                {
+                    return false;
+                }
+                tab.editor
+                    .as_ref()
+                    .and_then(|editor| editor.as_ref().ok())
+                    .is_some_and(|document| {
+                        document.state.read(cx).value().as_ref() != document.saved.as_str()
+                    })
+            })
+        })
+    }
+
+    fn request_navigation(
+        &mut self,
+        navigation: Navigation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.discard_prompt.is_some() {
+            return;
+        }
+        if self.save_task.is_some() {
+            self.navigation_after_save = Some(navigation);
+            return;
+        }
+        if !self.has_unsaved_changes(&navigation, cx) {
+            self.navigate(navigation, window, cx);
+            return;
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Discard unsaved changes?",
+            Some("Refract couldn’t save these changes. You can return to the editor to keep your draft."),
+            &["Keep editing", "Discard changes"],
+            cx,
+        );
+        self.discard_prompt = Some(cx.spawn_in(window, async move |library, cx| {
+            let should_discard = matches!(answer.await, Ok(1));
+            let _ = library.update_in(cx, |library, window, cx| {
+                library.discard_prompt = None;
+                if should_discard {
+                    if library.save_task.is_some() {
+                        library.navigation_after_save = Some(navigation);
+                    } else {
+                        library.navigate(navigation, window, cx);
+                    }
+                }
+            });
+        }));
+    }
+
+    fn navigate(&mut self, navigation: Navigation, window: &mut Window, cx: &mut Context<Self>) {
+        match navigation {
+            Navigation::CloseFile(file) => self.close_file(&file, window, cx),
+            Navigation::Projects => self.return_to_projects(window, cx),
+            Navigation::CloseWindow => window.remove_window(),
+        }
     }
 
     fn open_comment(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -456,7 +569,9 @@ impl Render for Library {
         div()
             .id("library")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|library, _: &SaveSource, _, cx| library.save_active_file(cx)))
+            .on_action(cx.listener(|library, _: &SaveSource, window, cx| {
+                library.save_active_file(window, cx)
+            }))
             .size_full()
             .flex()
             .bg(rgb(palette.canvas))
@@ -747,11 +862,13 @@ impl Library {
             .hover(move |style| style.bg(rgb(palette.selection)))
             .child(img(self.logo.clone()).size(px(24.)))
             .child("Refract")
-            .on_click(cx.listener(|library, _, window, cx| library.return_to_projects(window, cx)))
+            .on_click(cx.listener(|library, _, window, cx| {
+                library.request_navigation(Navigation::Projects, window, cx)
+            }))
             .on_key_down(
                 cx.listener(|library, event: &gpui::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                        library.return_to_projects(window, cx);
+                        library.request_navigation(Navigation::Projects, window, cx);
                     }
                 }),
             );
@@ -1026,14 +1143,22 @@ impl Library {
                             .hover(move |style| style.bg(rgb(palette.selection)))
                             .child("×")
                             .on_click(cx.listener(move |library, _, window, cx| {
-                                library.close_file(&close, window, cx)
+                                library.request_navigation(
+                                    Navigation::CloseFile(close.clone()),
+                                    window,
+                                    cx,
+                                )
                             }))
                             .on_key_down(cx.listener(
                                 move |library, event: &gpui::KeyDownEvent, window, cx| {
                                     if event.keystroke.key == "enter"
                                         || event.keystroke.key == "space"
                                     {
-                                        library.close_file(&close_by_key, window, cx);
+                                        library.request_navigation(
+                                            Navigation::CloseFile(close_by_key.clone()),
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 },
                             )),
@@ -1120,12 +1245,16 @@ impl Library {
                             .hover(move |style| style.bg(rgb(palette.selection)))
                     })
                     .child(if saving { "Saving…" } else { "Save" })
-                    .on_click(cx.listener(|library, _, _, cx| library.save_active_file(cx)))
-                    .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                            library.save_active_file(cx);
-                        }
-                    })),
+                    .on_click(
+                        cx.listener(|library, _, window, cx| library.save_active_file(window, cx)),
+                    )
+                    .on_key_down(
+                        cx.listener(|library, event: &gpui::KeyDownEvent, window, cx| {
+                            if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                                library.save_active_file(window, cx);
+                            }
+                        }),
+                    ),
             );
         }
         let preview = match editor {
@@ -1217,10 +1346,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 window.set_window_title("Refract · Native Preview");
                 let library = cx.new(|cx| Library::new(projects_dir, window, cx));
                 let close_guard = library.downgrade();
-                window.on_window_should_close(cx, move |_, cx| {
-                    close_guard
-                        .upgrade()
-                        .is_none_or(|library| library.read(cx).save_task.is_none())
+                window.on_window_should_close(cx, move |window, cx| {
+                    let Some(library) = close_guard.upgrade() else {
+                        return true;
+                    };
+                    library.update(cx, |library, cx| {
+                        let close = Navigation::CloseWindow;
+                        if library.save_task.is_none() && !library.has_unsaved_changes(&close, cx) {
+                            return true;
+                        }
+                        library.request_navigation(close, window, cx);
+                        false
+                    })
                 });
                 cx.new(|cx| Root::new(library, window, cx))
             },
@@ -1243,7 +1380,7 @@ mod tests {
     use std::fs;
 
     #[gpui::test]
-    fn saves_source_drafts_and_restores_library_focus(cx: &mut TestAppContext) {
+    fn autosaves_edit_bursts_and_keeps_conflicting_drafts_until_confirmed(cx: &mut TestAppContext) {
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
         let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
@@ -1316,13 +1453,15 @@ mod tests {
             });
             tree_focus
         });
-        cx.simulate_keystrokes("enter");
-        cx.simulate_input("A draft");
-        assert_eq!(
-            fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),
-            "An abstract\n"
-        );
-        cx.simulate_keystrokes("secondary-s");
+        cx.update(|window, app| {
+            window.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), app);
+        });
+        cx.update(|window, app| {
+            assert!(library.read(app).save_task.is_some());
+            window.dispatch_keystroke(gpui::Keystroke::parse("A").unwrap(), app);
+        });
+        cx.update(|_, app| assert_eq!(library.read(app).save_queue.len(), 1));
+        cx.simulate_input(" draft");
         assert_eq!(
             fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),
             "An abstract\nA draft\n"
@@ -1363,7 +1502,7 @@ mod tests {
             assert!(comments[0].resolved);
         });
         cx.simulate_keystrokes("tab enter");
-        cx.update(|window, app| {
+        cx.update(|_, app| {
             let library = library.read(app);
             let selection = library.selection.as_ref().unwrap();
             assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));
@@ -1373,9 +1512,39 @@ mod tests {
                 gpui_component::input::Position::new(0, 3)
             );
             assert!(selection.comment_status.is_none());
+        });
+        fs::write(project.join("sections/abstract.tex"), "An external edit\n").unwrap();
+        cx.simulate_input("x");
+        cx.update(|window, app| {
+            let library = library.read(app);
+            let selection = library.selection.as_ref().unwrap();
+            let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
+            assert!(
+                editor
+                    .save_error
+                    .as_ref()
+                    .unwrap()
+                    .contains("changed on disk")
+            );
+            assert!(
+                editor
+                    .state
+                    .read(app)
+                    .value()
+                    .as_ref()
+                    .contains("xabstract")
+            );
             window.focus(&library.home_focus);
         });
         cx.simulate_keystrokes("enter");
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer(0);
+        cx.run_until_parked();
+        cx.update(|_, app| assert!(library.read(app).selection.is_some()));
+        cx.simulate_keystrokes("enter");
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer(1);
+        cx.run_until_parked();
         cx.update(|window, app| {
             let library = library.read(app);
             assert!(library.selection.is_none());
@@ -1384,7 +1553,7 @@ mod tests {
         });
         assert_eq!(
             fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),
-            "An abstract\nA draft\n"
+            "An external edit\n"
         );
     }
 }
