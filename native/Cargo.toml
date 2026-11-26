@@ -7,7 +7,8 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:gpui", "dep:gpui-component", "dep:image", "dep:katex-native", "dep:windows"]
+desktop = ["dep:gpui", "dep:gpui-component", "dep:image", "dep:katex-native", "dep:windows", "latex-syntax"]
+latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 ui-tests = ["desktop", "gpui/test-support"]
 
 [[bin]]
@@ -27,8 +28,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 tempfile = "3"
+tree-sitter = { version = "=0.25.10", optional = true }
+tree-sitter-language = { version = "0.1", optional = true }
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "=9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[build-dependencies]
+cc = { version = "1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 dunce = "=1.0.5"

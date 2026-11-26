@@ -1,6 +1,12 @@
 name: Native Windows preview
 
 on:
+  push:
+    branches: [feat/gpui-port]
+    paths:
+      - native/**
+      - .github/workflows/native-windows.yml
+      - scripts/capture-electron-parity.cts
   pull_request:
     paths:
       - native/**
@@ -31,7 +37,7 @@ jobs:
       - name: Check formatting
         run: cargo +stable fmt --all -- --check
       - name: Test project library
-        run: cargo +stable test --locked --no-default-features
+        run: cargo +stable test --locked --no-default-features --features latex-syntax
       - name: Verify LaTeX and SyncTeX with TinyTeX
         run: |
           $archive = Join-Path $env:RUNNER_TEMP 'TinyTeX-v2026.10.zip'

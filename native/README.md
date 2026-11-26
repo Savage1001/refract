@@ -14,6 +14,8 @@ Use **Find** or Ctrl+F (Cmd+F on macOS) to find and replace text in the active f
 
 Use **Commands** or Ctrl+Space (Cmd+Space on macOS) for LaTeX command suggestions. Use the arrow keys to choose a command and Enter or Tab to insert it.
 
+The source editor highlights LaTeX commands, comments, math delimiters, and brackets in the Refract light and dark palettes.
+
 **Outline** follows the active file as you edit LaTeX section headings. Select a heading to jump to the source. Drag the divider above Outline or focus it and use the arrow keys to resize the list.
 
 Inline math in outline titles uses KaTeX fonts under the [SIL Open Font License](licenses/KaTeX-OFL.txt).
@@ -58,6 +60,8 @@ Run the project-library tests without building GPUI or opening a window.
 ```sh
 cargo test --locked --no-default-features --manifest-path native/Cargo.toml
 ```
+
+Add `--features latex-syntax` to include the native lexer tests. To regenerate the lexer, run `tree-sitter generate --abi 14 --output generated grammar.json` from `native/latex-syntax` with Tree-sitter 0.25.10. Keep `generated/parser.c` and `generated/tree_sitter/parser.h` in sync with `grammar.json`.
 
 The Windows CI job also exercises keyboard navigation through GPUI's simulated platform, using a temporary profile.
 

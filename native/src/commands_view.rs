@@ -448,7 +448,8 @@ impl Library {
                     .h_full()
                     .appearance(false)
                     .font_family(monospace_font())
-                    .text_size(px(14.)),
+                    .text_size(px(14.))
+                    .line_height(px(23.)),
             )
     }
 }

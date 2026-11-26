@@ -8,6 +8,8 @@ use std::{
 pub mod comments;
 pub mod editor_find;
 pub mod latex_commands;
+#[cfg(feature = "latex-syntax")]
+pub mod latex_syntax;
 pub mod outline;
 mod project_entries;
 mod project_management;

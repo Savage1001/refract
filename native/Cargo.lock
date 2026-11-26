@@ -4908,6 +4908,7 @@ dependencies = [
 name = "refract-native"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "chrono",
  "dunce",
  "flate2",
@@ -4921,6 +4922,8 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+ "tree-sitter",
+ "tree-sitter-language",
  "uuid",
  "windows 0.61.3",
  "windows-sys 0.61.2",

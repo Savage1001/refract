@@ -41,6 +41,7 @@ mod pdf_view;
 mod project_import_view;
 mod project_info_view;
 mod project_management_view;
+mod source_theme;
 mod synctex_view;
 mod version_view;
 mod workspace_tools;
@@ -364,7 +365,7 @@ impl Library {
                 tab.editor = Some(source.map(|source| {
                     let state = cx.new(|cx| {
                         InputState::new(window, cx)
-                            .code_editor("text")
+                            .code_editor(refract_native::latex_syntax::NAME)
                             .searchable(false)
                             .soft_wrap(false)
                             .default_value(source.clone())
@@ -1855,6 +1856,7 @@ fn projects_dir() -> Option<PathBuf> {
 
 fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
+    source_theme::init(cx);
     commands_view::init(cx);
     editor_find_view::init(cx);
     file_trash_view::init(cx);

@@ -1,0 +1,31 @@
+{
+  "name": "refract_latex",
+  "extras": [],
+  "rules": {
+    "source_file": {
+      "type": "REPEAT",
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          { "type": "SYMBOL", "name": "command" },
+          { "type": "SYMBOL", "name": "comment" },
+          { "type": "SYMBOL", "name": "math_delimiter" },
+          { "type": "SYMBOL", "name": "bracket" },
+          { "type": "SYMBOL", "name": "_plain" },
+          { "type": "SYMBOL", "name": "_backslash" },
+          { "type": "SYMBOL", "name": "_newline" }
+        ]
+      }
+    },
+    "command": {
+      "type": "PATTERN",
+      "value": "\\\\([a-zA-Z@]+\\*?|[^a-zA-Z\\s\\u{feff}])"
+    },
+    "comment": { "type": "PATTERN", "value": "%[^\\n]*" },
+    "math_delimiter": { "type": "PATTERN", "value": "\\$\\$?" },
+    "bracket": { "type": "PATTERN", "value": "[{}\\[\\]]" },
+    "_plain": { "type": "PATTERN", "value": "[^\\\\%${}\\[\\]\\n]+" },
+    "_backslash": { "type": "STRING", "value": "\\" },
+    "_newline": { "type": "STRING", "value": "\n" }
+  }
+}
