@@ -1,10 +1,16 @@
 use gpui::{
-    App, Application, Bounds, Context, FocusHandle, FontWeight, Image, ImageFormat, KeyBinding,
-    ListHorizontalSizingBehavior, SharedString, Task, Window, WindowAppearance, WindowBounds,
-    WindowOptions, actions, div, img, prelude::*, px, rgb, size, uniform_list,
+    AnyElement, App, Application, Bounds, Context, FocusHandle, FontWeight, Image, ImageFormat,
+    KeyBinding, ListHorizontalSizingBehavior, SharedString, Task, Window, WindowAppearance,
+    WindowBounds, WindowOptions, actions, div, img, prelude::*, px, rgb, size, uniform_list,
 };
-use refract_native::{Project, list_projects, read_source};
-use std::{collections::HashMap, env, io, path::PathBuf, rc::Rc, sync::Arc};
+use refract_native::{Project, ProjectEntry, list_projects, project_tree, read_source};
+use std::{
+    collections::{HashMap, HashSet},
+    env, io,
+    path::PathBuf,
+    rc::Rc,
+    sync::Arc,
+};
 
 actions!(library, [NextProject, PreviousProject]);
 
@@ -12,6 +18,7 @@ struct Library {
     projects_dir: PathBuf,
     projects: Option<io::Result<Vec<Project>>>,
     selection: Option<Selection>,
+    tree_task: Option<Task<()>>,
     preview_task: Option<Task<()>>,
     focus_handle: FocusHandle,
     project_focus: HashMap<String, FocusHandle>,
@@ -22,6 +29,9 @@ struct Library {
 
 struct Selection {
     project: Project,
+    tree: Option<io::Result<Vec<ProjectEntry>>>,
+    expanded_folders: HashSet<String>,
+    file: String,
     preview: Option<io::Result<SourcePreview>>,
 }
 
@@ -74,6 +84,7 @@ impl Library {
             projects_dir,
             projects: None,
             selection: None,
+            tree_task: None,
             preview_task: None,
             focus_handle,
             project_focus: HashMap::new(),
@@ -87,15 +98,47 @@ impl Library {
     }
 
     fn open_project(&mut self, project: Project, window: &mut Window, cx: &mut Context<Self>) {
+        let file = project.root_file().replace('\\', "/");
+        let expanded_folders = file
+            .match_indices('/')
+            .map(|(index, _)| file[..index].to_owned())
+            .collect();
         self.selection = Some(Selection {
             project: project.clone(),
+            tree: None,
+            expanded_folders,
+            file: file.clone(),
             preview: None,
         });
         let path = self.projects_dir.clone();
         let load = cx
             .background_executor()
-            .spawn(async move { read_source(&path, &project) });
-        // Replacing the task cancels the previous UI update if projects are opened in quick succession.
+            .spawn(async move { project_tree(&path, &project) });
+        self.tree_task = Some(cx.spawn(async move |library, cx| {
+            let tree = load.await;
+            let _ = library.update(cx, |library, cx| {
+                if let Some(selection) = &mut library.selection {
+                    selection.tree = Some(tree);
+                    cx.notify();
+                }
+            });
+        }));
+        self.open_file(file, cx);
+        window.focus(&self.home_focus);
+    }
+
+    fn open_file(&mut self, file: String, cx: &mut Context<Self>) {
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        selection.file = file.clone();
+        selection.preview = None;
+        let project = selection.project.clone();
+        let path = self.projects_dir.clone();
+        let load = cx
+            .background_executor()
+            .spawn(async move { read_source(&path, &project, &file) });
+        // Replacing the task cancels the previous UI update if the file changes again.
         self.preview_task = Some(cx.spawn(async move |library, cx| {
             let preview = load.await.map(|source| SourcePreview::new(&source));
             let _ = library.update(cx, |library, cx| {
@@ -105,11 +148,11 @@ impl Library {
                 }
             });
         }));
-        window.focus(&self.home_focus);
         cx.notify();
     }
 
     fn return_to_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.tree_task = None;
         self.preview_task = None;
         if let Some(previous) = self.selection.take()
             && let Some(focus) = self.project_focus.get(&previous.project.id)
@@ -117,6 +160,15 @@ impl Library {
             window.focus(focus);
         }
         cx.notify();
+    }
+
+    fn toggle_folder(&mut self, path: &str, cx: &mut Context<Self>) {
+        if let Some(selection) = &mut self.selection {
+            if !selection.expanded_folders.remove(path) {
+                selection.expanded_folders.insert(path.to_owned());
+            }
+            cx.notify();
+        }
     }
 }
 
@@ -489,14 +541,94 @@ impl Library {
                     .border_color(rgb(palette.border))
                     .child(home)
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Files"))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_color(rgb(palette.muted))
-                            .child(selection.project.root_file().to_owned()),
-                    ),
+                    .child(self.file_tree(selection, palette, cx)),
             )
             .child(self.source_pane(selection, palette))
+    }
+
+    fn file_tree(
+        &self,
+        selection: &Selection,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let tree = div()
+            .id("file-tree")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll();
+        match &selection.tree {
+            None => tree.child(div().text_color(rgb(palette.muted)).child("Loading files…")),
+            Some(Err(error)) => tree.child(format!("Couldn’t list project files: {error}")),
+            Some(Ok(entries)) => tree.children(
+                entries
+                    .iter()
+                    .map(|entry| Self::file_tree_entry(entry, selection, palette, 0, cx)),
+            ),
+        }
+    }
+
+    fn file_tree_entry(
+        entry: &ProjectEntry,
+        selection: &Selection,
+        palette: Palette,
+        depth: usize,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let path = entry.path.clone();
+        let keyboard_path = path.clone();
+        let is_folder = entry.children.is_some();
+        let expanded = selection.expanded_folders.contains(&entry.path);
+        let indicator = match (is_folder, expanded) {
+            (true, true) => "⌄",
+            (true, false) => "›",
+            (false, _) => "",
+        };
+        let row = div()
+            .id(SharedString::from(format!("tree/{}", entry.path)))
+            .tab_index(1)
+            .cursor_pointer()
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded_md()
+            .pl(px(6. + 14. * depth as f32))
+            .pr_1()
+            .py_1()
+            .hover(move |style| style.bg(rgb(palette.selection)))
+            .focus(move |style| style.text_color(rgb(palette.focus)))
+            .when(selection.file == entry.path, |row| {
+                row.bg(rgb(palette.selection))
+            })
+            .child(div().w(px(12.)).flex_none().child(indicator))
+            .child(div().min_w(px(0.)).truncate().child(entry.name.clone()))
+            .on_click(cx.listener(move |library, _, _, cx| {
+                if is_folder {
+                    library.toggle_folder(&path, cx);
+                } else {
+                    library.open_file(path.clone(), cx);
+                }
+            }))
+            .on_key_down(
+                cx.listener(move |library, event: &gpui::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                        if is_folder {
+                            library.toggle_folder(&keyboard_path, cx);
+                        } else {
+                            library.open_file(keyboard_path.clone(), cx);
+                        }
+                    }
+                }),
+            );
+        let mut node = div().child(row);
+        if let Some(children) = entry.children.as_ref().filter(|_| expanded) {
+            node = node.children(
+                children
+                    .iter()
+                    .map(|entry| Self::file_tree_entry(entry, selection, palette, depth + 1, cx)),
+            );
+        }
+        node.into_any_element()
     }
 
     fn source_pane(&self, selection: &Selection, palette: Palette) -> impl IntoElement {
@@ -508,7 +640,7 @@ impl Library {
         let file = div()
             .truncate()
             .text_color(rgb(palette.muted))
-            .child(format!("{} · Read only", selection.project.root_file()));
+            .child(format!("{} · Read only", selection.file));
         let preview = match &selection.preview {
             None => div().child("Loading source…").into_any_element(),
             Some(Err(error)) => div()
@@ -520,7 +652,10 @@ impl Library {
             Some(Ok(source)) => {
                 let lines = source.lines.clone();
                 uniform_list(
-                    SharedString::from(format!("source-{}", selection.project.id)),
+                    SharedString::from(format!(
+                        "source-{}-{}",
+                        selection.project.id, selection.file
+                    )),
                     lines.len(),
                     move |range, _, _| {
                         range
@@ -632,7 +767,7 @@ mod tests {
     use std::fs;
 
     #[gpui::test]
-    fn opens_an_existing_project_and_restores_library_focus(cx: &mut TestAppContext) {
+    fn opens_nested_source_and_restores_library_focus(cx: &mut TestAppContext) {
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
         let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
@@ -645,6 +780,8 @@ mod tests {
         )
         .unwrap();
         fs::write(project.join("main.tex"), "A line of LaTeX\n").unwrap();
+        fs::create_dir(project.join("sections")).unwrap();
+        fs::write(project.join("sections/abstract.tex"), "An abstract\n").unwrap();
 
         cx.update(bind_library_keys);
         let (library, cx) = cx.add_window_view(|window, cx| Library::new(projects, window, cx));
@@ -658,7 +795,19 @@ mod tests {
             let preview = selection.preview.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(preview.lines[0].as_ref(), "A line of LaTeX");
         });
-        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert!(selection.expanded_folders.contains("sections"));
+        });
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert_eq!(selection.file, "sections/abstract.tex");
+            let preview = selection.preview.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(preview.lines[0].as_ref(), "An abstract");
+        });
+        cx.simulate_keystrokes("shift-tab shift-tab enter");
         cx.update(|window, app| {
             let library = library.read(app);
             assert!(library.selection.is_none());

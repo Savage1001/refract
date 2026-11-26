@@ -26,6 +26,12 @@ impl Project {
     }
 }
 
+pub struct ProjectEntry {
+    pub name: String,
+    pub path: String,
+    pub children: Option<Vec<ProjectEntry>>,
+}
+
 pub fn list_projects(projects_dir: &Path) -> io::Result<Vec<Project>> {
     let entries = match fs::read_dir(projects_dir) {
         Ok(entries) => entries,
@@ -63,7 +69,88 @@ pub fn list_projects(projects_dir: &Path) -> io::Result<Vec<Project>> {
     Ok(projects)
 }
 
-pub fn read_source(projects_dir: &Path, project: &Project) -> io::Result<String> {
+pub fn project_tree(projects_dir: &Path, project: &Project) -> io::Result<Vec<ProjectEntry>> {
+    read_project_entries(&project_directory(projects_dir, project)?, "")
+}
+
+fn read_project_entries(root: &Path, parent: &str) -> io::Result<Vec<ProjectEntry>> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(root.join(parent))? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|name| valid_project_component(name)) else {
+            continue;
+        };
+        let path = if parent.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{parent}/{name}")
+        };
+        let file_type = entry.file_type()?;
+        let children = if file_type.is_dir() {
+            Some(read_project_entries(root, &path)?)
+        } else if file_type.is_file() {
+            None
+        } else {
+            continue;
+        };
+        entries.push(ProjectEntry {
+            name: name.to_owned(),
+            path,
+            children,
+        });
+    }
+    entries.sort_by(|left, right| {
+        right
+            .children
+            .is_some()
+            .cmp(&left.children.is_some())
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(entries)
+}
+
+pub fn read_source(projects_dir: &Path, project: &Project, file: &str) -> io::Result<String> {
+    let parts = file.split(['/', '\\']);
+    if !parts.clone().all(valid_project_component) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid project file path",
+        ));
+    }
+    let project_dir = project_directory(projects_dir, project)?;
+    let mut target = project_dir.clone();
+    for part in parts {
+        target.push(part);
+        if fs::symlink_metadata(&target)?.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Linked files cannot be previewed",
+            ));
+        }
+    }
+    let source = read_local_file(&project_dir, &target, SOURCE_LIMIT)?;
+    let invalid_text = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "This file cannot be previewed as text.",
+        )
+    };
+    if source.starts_with(b"%PDF-")
+        || source.starts_with(b"\x7fELF")
+        || source.starts_with(b"MZ")
+        || source.starts_with(b"PK\x03\x04")
+        || source
+            .iter()
+            .any(|&byte| matches!(byte, 0..=8 | 11 | 14..=31 | 127))
+    {
+        return Err(invalid_text());
+    }
+    String::from_utf8(source).map_err(|_| invalid_text())
+}
+
+fn project_directory(projects_dir: &Path, project: &Project) -> io::Result<PathBuf> {
     if !is_project_id(&project.id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -78,10 +165,7 @@ pub fn read_source(projects_dir: &Path, project: &Project) -> io::Result<String>
             "Invalid project folder",
         ));
     }
-    let relative = relative_source_path(project.root_file())?;
-    let source = read_local_file(&project_dir, &project_dir.join(relative), SOURCE_LIMIT)?;
-    String::from_utf8(source)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "The source is not UTF-8 text"))
+    Ok(project_dir)
 }
 
 fn is_project_id(id: &str) -> bool {
@@ -92,22 +176,8 @@ fn is_project_id(id: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'-'))
 }
 
-fn relative_source_path(name: &str) -> io::Result<PathBuf> {
-    let invalid_path = || io::Error::new(io::ErrorKind::InvalidInput, "Invalid root source path");
-    let mut path = PathBuf::new();
-    for part in name.split(['/', '\\']) {
-        if part.is_empty() || part == "." || part == ".." || part.contains([':', '\0']) {
-            return Err(invalid_path());
-        }
-        path.push(part);
-    }
-    if !path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("tex"))
-    {
-        return Err(invalid_path());
-    }
-    Ok(path)
+fn valid_project_component(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && !name.contains(['/', '\\', ':', '\0'])
 }
 
 fn read_local_file(folder: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
@@ -170,12 +240,46 @@ mod tests {
         let projects = list_projects(root.path()).unwrap();
         assert_eq!(projects.len(), 2);
         assert_eq!(
-            read_source(root.path(), &projects[0]).unwrap(),
+            read_source(root.path(), &projects[0], projects[0].root_file()).unwrap(),
             "Legacy source"
         );
         assert_eq!(
-            read_source(root.path(), &projects[1]).unwrap(),
+            read_source(root.path(), &projects[1], projects[1].root_file()).unwrap(),
             "Imported source"
+        );
+    }
+
+    #[test]
+    fn opens_nested_text_from_the_visible_project_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = write_metadata(
+            root.path(),
+            LEGACY_ID,
+            json!({"id": LEGACY_ID, "name": "Paper"}),
+        );
+        fs::create_dir(folder.join("sections")).unwrap();
+        fs::create_dir(folder.join(".refract-build")).unwrap();
+        fs::write(folder.join("main.tex"), "Main document").unwrap();
+        fs::write(folder.join("sections/abstract.tex"), "Nested document").unwrap();
+        fs::write(folder.join("references.bib"), "@book{example}").unwrap();
+        fs::write(folder.join(".refract-build/output.pdf"), b"%PDF-1.7").unwrap();
+        let project = list_projects(root.path()).unwrap().pop().unwrap();
+        let tree = project_tree(root.path(), &project).unwrap();
+        assert_eq!(
+            tree.iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["sections", "main.tex", "references.bib"]
+        );
+        let child = &tree[0].children.as_ref().unwrap()[0];
+        assert_eq!(child.path, "sections/abstract.tex");
+        assert_eq!(
+            read_source(root.path(), &project, &child.path).unwrap(),
+            "Nested document"
+        );
+        assert_eq!(
+            read_source(root.path(), &project, "references.bib").unwrap(),
+            "@book{example}"
         );
     }
 
@@ -224,31 +328,41 @@ mod tests {
             LEGACY_ID,
             json!({"id": LEGACY_ID, "name": "Paper"}),
         );
-        let mut project = list_projects(root.path()).unwrap().pop().unwrap();
+        let project = list_projects(root.path()).unwrap().pop().unwrap();
         for path in [
             "../outside.tex",
             r"..\outside.tex",
             "/absolute.tex",
             r"C:\outside.tex",
             "main.tex:stream",
-            "image.png",
+            ".refract.json",
+            ".refract-build/output.pdf",
         ] {
-            project.root_file = Some(path.to_owned());
             assert_eq!(
-                read_source(root.path(), &project).unwrap_err().kind(),
+                read_source(root.path(), &project, path).unwrap_err().kind(),
                 io::ErrorKind::InvalidInput,
                 "{path}"
             );
         }
-        project.root_file = None;
         fs::write(folder.join("main.tex"), vec![b'x'; SOURCE_LIMIT + 1]).unwrap();
         assert_eq!(
-            read_source(root.path(), &project).unwrap_err().kind(),
+            read_source(root.path(), &project, "main.tex")
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::InvalidData
         );
         fs::write(folder.join("main.tex"), [0xff]).unwrap();
         assert_eq!(
-            read_source(root.path(), &project).unwrap_err().kind(),
+            read_source(root.path(), &project, "main.tex")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::write(folder.join("document.pdf"), b"%PDF-1.7").unwrap();
+        assert_eq!(
+            read_source(root.path(), &project, "document.pdf")
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::InvalidData
         );
     }
