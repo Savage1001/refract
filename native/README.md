@@ -1,6 +1,6 @@
 # Refract native preview
 
-This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. It opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 128 KiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
+This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. Create a project with **New project**, or select its name in the workspace to rename it. The workspace opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 128 KiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
 
 Open Comments to search discussions, add a file comment or comment on selected source, write replies, and resolve or reopen threads. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
 

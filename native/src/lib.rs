@@ -6,7 +6,9 @@ use std::{
 };
 
 pub mod comments;
+mod project_management;
 pub mod versions;
+pub use project_management::{create_project, rename_project};
 
 const METADATA_LIMIT: usize = 64 * 1024;
 const SOURCE_LIMIT: usize = 128 * 1024;

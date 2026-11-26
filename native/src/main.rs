@@ -24,8 +24,10 @@ use std::{
 };
 
 mod comments_view;
+mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
+use project_management_view::RenameDraft;
 use version_view::Comparison;
 
 actions!(editor, [SaveSource]);
@@ -33,6 +35,12 @@ actions!(editor, [SaveSource]);
 struct Library {
     projects_dir: PathBuf,
     projects: Option<io::Result<Vec<Project>>>,
+    project_open_sequence: u64,
+    project_create_task: Option<Task<()>>,
+    project_rename_task: Option<Task<()>>,
+    project_action_error: Option<String>,
+    project_name_focus: FocusHandle,
+    rename_draft: Option<RenameDraft>,
     selection: Option<Selection>,
     tree_task: Option<Task<()>>,
     preview_task: Option<Task<()>>,
@@ -114,15 +122,7 @@ impl Library {
         cx.spawn(async move |library, cx| {
             let projects = load.await;
             let _ = library.update(cx, |library, cx| {
-                if let Ok(projects) = &projects {
-                    library.project_focus.extend(projects.iter().map(|project| {
-                        (
-                            project.id.clone(),
-                            cx.focus_handle().tab_stop(true).tab_index(2),
-                        )
-                    }));
-                }
-                library.projects = Some(projects);
+                library.set_projects(projects, cx);
                 cx.notify();
             });
         })
@@ -133,6 +133,12 @@ impl Library {
         Self {
             projects_dir,
             projects: None,
+            project_open_sequence: 0,
+            project_create_task: None,
+            project_rename_task: None,
+            project_action_error: None,
+            project_name_focus: cx.focus_handle().tab_stop(true).tab_index(1),
+            rename_draft: None,
             selection: None,
             tree_task: None,
             preview_task: None,
@@ -160,6 +166,7 @@ impl Library {
     }
 
     fn open_project(&mut self, project: Project, window: &mut Window, cx: &mut Context<Self>) {
+        self.project_open_sequence = self.project_open_sequence.wrapping_add(1);
         let file = project.root_file().replace('\\', "/");
         let expanded_folders = file
             .match_indices('/')
@@ -201,7 +208,7 @@ impl Library {
         self.open_file(file, window, cx);
         self.snapshot_needed = true;
         self.start_snapshot(window, cx);
-        window.focus(&self.home_focus);
+        window.focus(&self.project_name_focus);
     }
 
     fn open_file(&mut self, file: String, window: &Window, cx: &mut Context<Self>) {
@@ -364,6 +371,8 @@ impl Library {
     fn project_writes_idle(&self) -> bool {
         self.restore_task.is_none()
             && self.comment_write_task.is_none()
+            && self.project_rename_task.is_none()
+            && self.rename_draft.is_none()
             && self.save_task.is_none()
             && self.save_queue.is_empty()
             && self.snapshot_task.is_none()
@@ -674,6 +683,7 @@ impl Library {
             && self.snapshot_task.is_none()
             && self.restore_task.is_none()
             && self.comment_write_task.is_none()
+            && self.project_rename_task.is_none()
             && let Some(navigation) = self.navigation_after_save.take()
         {
             self.request_navigation(navigation, window, cx);
@@ -704,13 +714,17 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.discard_prompt.is_some() {
+        if self.discard_prompt.is_some()
+            || self.rename_draft.is_some() && !matches!(navigation, Navigation::CloseWindow)
+        {
             return;
         }
         if self.save_task.is_some()
             || !self.save_queue.is_empty()
             || self.restore_task.is_some()
             || self.comment_write_task.is_some()
+            || self.project_rename_task.is_some()
+            || self.project_create_task.is_some() && matches!(navigation, Navigation::CloseWindow)
         {
             self.navigation_after_save = Some(navigation);
             return;
@@ -859,6 +873,7 @@ impl Render for Library {
             Some(selection) => self.workspace(selection, palette, cx).into_any_element(),
             None => self.projects(window, palette, cx).into_any_element(),
         };
+        let dialog = Root::render_dialog_layer(window, cx);
         div()
             .id("library")
             .track_focus(&self.focus_handle)
@@ -871,6 +886,7 @@ impl Render for Library {
             .text_color(rgb(palette.text))
             .text_sm()
             .child(view)
+            .children(dialog)
     }
 }
 
@@ -912,10 +928,17 @@ impl Library {
             )
             .child(
                 div()
-                    .text_size(px(28.))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .mb(px(40.))
-                    .child("Your projects"),
+                    .child(
+                        div()
+                            .text_size(px(28.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Your projects"),
+                    )
+                    .child(self.create_project_button("new-project", "New project", palette, cx)),
             )
             .child(
                 div()
@@ -935,6 +958,7 @@ impl Library {
                             .child(self.view_toggle(true, "Grid", palette, cx)),
                     ),
             )
+            .children(self.project_action_error.clone())
             .child(match &self.projects {
                 Some(Ok(projects)) if !projects.is_empty() => {
                     let count = if projects.len() == 1 {
@@ -978,14 +1002,36 @@ impl Library {
                                 ),
                         )
                 }
-                state => {
-                    let message = match state {
-                        None => "Loading projects…".into(),
-                        Some(Ok(_)) => "No projects found".into(),
-                        Some(Err(error)) => format!("Couldn’t read projects: {error}"),
-                    };
-                    div().py_6().text_color(rgb(palette.muted)).child(message)
+                Some(Ok(_)) => {
+                    div()
+                        .py_6()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Make space for your ideas"),
+                        )
+                        .child(div().text_color(rgb(palette.muted)).child(
+                            "Create your first project to start writing and compiling LaTeX.",
+                        ))
+                        .child(self.create_project_button(
+                            "start-project",
+                            "Start from Scratch",
+                            palette,
+                            cx,
+                        ))
                 }
+                None => div()
+                    .py_6()
+                    .text_color(rgb(palette.muted))
+                    .child("Loading projects…"),
+                Some(Err(error)) => div()
+                    .py_6()
+                    .text_color(rgb(palette.muted))
+                    .child(format!("Couldn’t read projects: {error}")),
             });
         page.child(content)
     }
@@ -1180,6 +1226,8 @@ impl Library {
                     .border_r_1()
                     .border_color(rgb(palette.border))
                     .child(home)
+                    .child(self.project_name_control(&selection.project, palette, cx))
+                    .children(self.project_action_error.clone())
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Files"))
                     .child(self.file_tree(selection, palette, cx)),
             )
@@ -1437,12 +1485,6 @@ impl Library {
             .flex_col()
             .p_4()
             .gap_2()
-            .child(
-                div()
-                    .truncate()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(selection.project.name.clone()),
-            )
             .when(selection.retained_restore_stages, |pane| {
                 pane.child(
                     div().p_2().bg(rgb(palette.warning_surface)).child(
@@ -1819,7 +1861,7 @@ mod tests {
         });
         let library = library.unwrap();
         cx.refresh().unwrap();
-        cx.simulate_keystrokes("tab tab enter");
+        cx.simulate_keystrokes("tab tab tab enter");
         cx.update(|_, app| assert!(library.read(app).grid_view));
         cx.simulate_keystrokes("tab enter");
         cx.update(|_, app| {
@@ -1901,7 +1943,7 @@ mod tests {
             assert!(selection.tabs.is_empty());
             assert!(library.home_focus.is_focused(window));
         });
-        cx.simulate_keystrokes("tab tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab enter");
         let versions_focus = cx.update(|window, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.show_versions);
