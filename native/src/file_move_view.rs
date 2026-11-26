@@ -73,6 +73,7 @@ impl Library {
         let keyboard_position = Rc::new(Cell::new(Point::default()));
         let row_position = keyboard_position.clone();
         let mouse_path = path.clone();
+        let library = cx.weak_entity();
         row.relative()
             .child(
                 canvas(
@@ -84,13 +85,17 @@ impl Library {
                 .absolute()
                 .inset_0(),
             )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |library, event: &gpui::MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    library.open_entry_menu(&mouse_path, is_folder, event.position, window, cx);
-                }),
-            )
+            .on_mouse_down(MouseButton::Right, move |event, window, app| {
+                let path = mouse_path.clone();
+                let position = event.position;
+                let library = library.clone();
+                // Let the row receive default pointer focus before recording the menu's origin.
+                window.defer(app, move |window, app| {
+                    let _ = library.update(app, |library, cx| {
+                        library.open_entry_menu(&path, is_folder, position, window, cx);
+                    });
+                });
+            })
             .on_key_down(
                 cx.listener(move |library, event: &KeyDownEvent, window, cx| {
                     let key = &event.keystroke;
@@ -623,7 +628,7 @@ mod tests {
             assert_eq!(menu.position, file_row.center());
             assert!(menu.actions[0].1.is_focused(window));
         });
-        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("escape shift-f10 enter");
         cx.update(|window, app| {
             let view = library.read(app);
             assert!(view.entry_menu.is_none());

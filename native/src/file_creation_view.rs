@@ -1,7 +1,7 @@
 use super::{Library, Palette};
 use gpui::{
     App, Context, Entity, KeyBinding, KeyDownEvent, SharedString, Subscription, WeakEntity, Window,
-    actions, div, prelude::*, px, rgb,
+    actions, div, prelude::*, rgb,
 };
 use gpui_component::{
     WindowExt,
