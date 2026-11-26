@@ -229,6 +229,9 @@ impl Library {
     ) -> impl IntoElement {
         let panel = div()
             .id("comments-pane")
+            .tab_index(3)
+            .tab_stop(false)
+            .tab_group()
             .w(px(300.))
             .flex_none()
             .flex()
@@ -280,7 +283,7 @@ impl Library {
             }
         };
         panel
-            .child(Input::new(&drafts.search).tab_index(3))
+            .child(Input::new(&drafts.search))
             .child(draft_input(&drafts.new_comment))
             .child(comment_control(
                 "comment-submit",
@@ -433,7 +436,7 @@ fn draft_input(input: &Entity<InputState>) -> impl IntoElement {
         .key_context("RefractCommentDraft")
         .on_action(|_: &NextControl, window, _| window.focus_next())
         .on_action(|_: &PreviousControl, window, _| window.focus_prev())
-        .child(Input::new(input).tab_index(3))
+        .child(Input::new(input))
 }
 
 fn comment_control(
@@ -455,7 +458,7 @@ fn comment_control(
         .when(!enabled, |button| button.text_color(rgb(palette.muted)))
         .when(enabled, |button| {
             button
-                .tab_index(3)
+                .tab_index(0)
                 .cursor_pointer()
                 .hover(move |style| style.bg(rgb(palette.selection)))
                 .focus(move |style| style.bg(rgb(palette.selection)))
