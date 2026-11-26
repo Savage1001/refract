@@ -10,8 +10,9 @@ mod project_entries;
 mod project_management;
 pub mod versions;
 pub use project_entries::{
-    DeletedEntry, ProjectEntryKind, ProjectEntryMove, create_project_entry, list_deleted_entries,
-    move_project_entry, restore_deleted_entry, trash_project_entry,
+    DeletedEntry, ProjectEntryKind, ProjectEntryMove, create_project_entry, download_project_file,
+    export_project_zip, list_deleted_entries, move_project_entry, restore_deleted_entry,
+    trash_project_entry,
 };
 pub use project_management::{
     DeletedProject, create_project, duplicate_project, list_deleted_projects, rename_project,
@@ -101,6 +102,9 @@ fn read_project_entries(root: &Path, parent: &str) -> io::Result<Vec<ProjectEntr
         };
         let file_type = entry.file_type()?;
         let children = if file_type.is_dir() {
+            if project_management::is_link(&entry.metadata()?) {
+                continue;
+            }
             Some(read_project_entries(root, &path)?)
         } else if file_type.is_file() {
             None

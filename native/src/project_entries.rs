@@ -6,8 +6,10 @@ use std::{
 };
 
 mod relocate;
+mod transfer;
 mod trash;
 pub use relocate::{ProjectEntryMove, move_project_entry};
+pub use transfer::{download_project_file, export_project_zip};
 pub use trash::{DeletedEntry, list_deleted_entries, restore_deleted_entry, trash_project_entry};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

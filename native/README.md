@@ -8,6 +8,8 @@ Use **+** in Files to create a file at the project root or in a selected folder.
 
 Right-click a file or folder or focus its row and press `Shift+F10` to open its actions. Open tabs, the root document, and comment references follow a renamed or moved path. Use **Deleted files** in the sidebar to restore files and folders to their original paths.
 
+Use **Download file** to save a copy of a project file or **Export project ZIP** to save the visible project files and folders, including empty folders.
+
 Open Comments to search discussions, add a file comment or comment on selected source, write replies, and resolve or reopen threads. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
 
 Versions lists existing and newly captured snapshots. Refract captures a snapshot when you open a project and after saved edits settle, using the same manifest and ZIP format as the Electron app. Compare with current shows file, folder, and root document changes. Open a changed file to see its previous and current lines side by side. Restore file replaces the active file. Restore project restores files, folders, and the root document. Both save the current project as a snapshot first. An interrupted project restore recovers the previous version on startup.

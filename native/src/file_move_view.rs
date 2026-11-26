@@ -42,6 +42,7 @@ enum EntryAction {
     AddItems,
     MoveFolder,
     RenameFile,
+    DownloadFile,
     Delete(ProjectEntryKind),
 }
 
@@ -51,6 +52,7 @@ impl EntryAction {
             Self::AddItems => "Add items",
             Self::MoveFolder => "Move or rename folder",
             Self::RenameFile => "Rename file",
+            Self::DownloadFile => "Download file",
             Self::Delete(ProjectEntryKind::File) => "Delete file",
             Self::Delete(ProjectEntryKind::Folder) => "Delete folder",
         }
@@ -134,6 +136,7 @@ impl Library {
         } else {
             &[
                 EntryAction::RenameFile,
+                EntryAction::DownloadFile,
                 EntryAction::Delete(ProjectEntryKind::File),
             ]
         };
@@ -231,6 +234,7 @@ impl Library {
             EntryAction::RenameFile => {
                 self.open_entry_move_dialog(&path, ProjectEntryKind::File, window, cx)
             }
+            EntryAction::DownloadFile => self.download_file(path, window, cx),
             EntryAction::Delete(kind) => self.confirm_entry_delete(path, kind, window, cx),
         }
     }

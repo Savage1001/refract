@@ -29,6 +29,7 @@ mod comments_view;
 mod deleted_projects_view;
 mod file_creation_view;
 mod file_move_view;
+mod file_transfer_view;
 mod file_trash_view;
 mod project_management_view;
 mod version_view;
@@ -1631,7 +1632,8 @@ impl Library {
                             }
                         }),
                     ),
-            );
+            )
+            .child(self.export_project_button(palette, cx));
         let Some(path) = &selection.file else {
             return pane.child(
                 div()
@@ -1802,6 +1804,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if library.save_task.is_none()
                             && library.save_queue.is_empty()
                             && library.snapshot_task.is_none()
+                            && library.entry_write_task.is_none()
                             && !library.snapshot_needed
                             && !library.has_unsaved_changes(&close, cx)
                         {
