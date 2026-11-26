@@ -13,6 +13,7 @@ const SOURCE_LIMIT: usize = 128 * 1024;
 pub struct Project {
     pub id: String,
     pub name: String,
+    pub created: Option<String>,
     root_file: Option<String>,
 }
 
@@ -52,7 +53,13 @@ pub fn list_projects(projects_dir: &Path) -> io::Result<Vec<Project>> {
             projects.push(project);
         }
     }
-    projects.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+    projects.sort_by(|left, right| {
+        right
+            .created
+            .cmp(&left.created)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then(left.id.cmp(&right.id))
+    });
     Ok(projects)
 }
 
@@ -170,6 +177,24 @@ mod tests {
             read_source(root.path(), &projects[1]).unwrap(),
             "Imported source"
         );
+    }
+
+    #[test]
+    fn lists_the_newest_projects_first() {
+        let root = tempfile::tempdir().unwrap();
+        write_metadata(
+            root.path(),
+            LEGACY_ID,
+            json!({"id": LEGACY_ID, "name": "A paper", "created": "2026-01-01T19:25:30.000Z"}),
+        );
+        write_metadata(
+            root.path(),
+            IMPORTED_ID,
+            json!({"id": IMPORTED_ID, "name": "B paper", "created": "2026-04-08T08:25:30.000Z"}),
+        );
+        let projects = list_projects(root.path()).unwrap();
+        assert_eq!(projects[0].id, IMPORTED_ID);
+        assert_eq!(projects[1].id, LEGACY_ID);
     }
 
     #[test]

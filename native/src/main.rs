@@ -1,10 +1,10 @@
 use gpui::{
-    App, Application, Bounds, Context, FocusHandle, FontWeight, KeyBinding,
+    App, Application, Bounds, Context, FocusHandle, FontWeight, Image, ImageFormat, KeyBinding,
     ListHorizontalSizingBehavior, SharedString, Task, Window, WindowAppearance, WindowBounds,
-    WindowOptions, actions, div, prelude::*, px, rgb, size, uniform_list,
+    WindowOptions, actions, div, img, prelude::*, px, rgb, size, uniform_list,
 };
 use refract_native::{Project, list_projects, read_source};
-use std::{env, io, path::PathBuf, rc::Rc};
+use std::{collections::HashMap, env, io, path::PathBuf, rc::Rc, sync::Arc};
 
 actions!(library, [NextProject, PreviousProject]);
 
@@ -14,6 +14,10 @@ struct Library {
     selection: Option<Selection>,
     preview_task: Option<Task<()>>,
     focus_handle: FocusHandle,
+    project_focus: HashMap<String, FocusHandle>,
+    home_focus: FocusHandle,
+    logo: Arc<Image>,
+    grid_view: bool,
 }
 
 struct Selection {
@@ -50,6 +54,14 @@ impl Library {
         cx.spawn(async move |library, cx| {
             let projects = load.await;
             let _ = library.update(cx, |library, cx| {
+                if let Ok(projects) = &projects {
+                    library.project_focus.extend(projects.iter().map(|project| {
+                        (
+                            project.id.clone(),
+                            cx.focus_handle().tab_stop(true).tab_index(2),
+                        )
+                    }));
+                }
                 library.projects = Some(projects);
                 cx.notify();
             });
@@ -64,10 +76,17 @@ impl Library {
             selection: None,
             preview_task: None,
             focus_handle,
+            project_focus: HashMap::new(),
+            home_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+            logo: Arc::new(Image::from_bytes(
+                ImageFormat::Png,
+                include_bytes!("../../resources/logo.png").to_vec(),
+            )),
+            grid_view: false,
         }
     }
 
-    fn open_project(&mut self, project: Project, cx: &mut Context<Self>) {
+    fn open_project(&mut self, project: Project, window: &mut Window, cx: &mut Context<Self>) {
         self.selection = Some(Selection {
             project: project.clone(),
             preview: None,
@@ -86,6 +105,17 @@ impl Library {
                 }
             });
         }));
+        window.focus(&self.home_focus);
+        cx.notify();
+    }
+
+    fn return_to_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview_task = None;
+        if let Some(previous) = self.selection.take()
+            && let Some(focus) = self.project_focus.get(&previous.project.id)
+        {
+            window.focus(focus);
+        }
         cx.notify();
     }
 }
@@ -94,9 +124,11 @@ impl Library {
 struct Palette {
     canvas: u32,
     sidebar: u32,
+    surface: u32,
     text: u32,
     muted: u32,
     border: u32,
+    input_border: u32,
     selection: u32,
     focus: u32,
 }
@@ -108,18 +140,22 @@ impl Palette {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self {
                 canvas: 0x0a0a0a,
                 sidebar: 0x000000,
+                surface: 0x111111,
                 text: 0xf5f5f5,
                 muted: 0xa3a3a3,
                 border: 0x191919,
+                input_border: 0x1e1e1e,
                 selection: 0x1a1b1b,
                 focus: 0x79a8ff,
             },
             _ => Self {
                 canvas: 0xfcfcfc,
                 sidebar: 0xfafafa,
+                surface: 0xffffff,
                 text: 0x27272a,
                 muted: 0x71717b,
                 border: 0xe4e4e7,
+                input_border: 0xd4d4d8,
                 selection: 0xf0f0f2,
                 focus: 0x1b4ed8,
             },
@@ -130,55 +166,10 @@ impl Palette {
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::for_window(window);
-        let mut projects = div()
-            .id("projects")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll();
-        match &self.projects {
-            Some(Ok(library)) if !library.is_empty() => {
-                projects = projects.children(library.iter().map(|project| {
-                    let selected = self
-                        .selection
-                        .as_ref()
-                        .is_some_and(|item| item.project.id == project.id);
-                    let keyboard_project = project.clone();
-                    let click_project = project.clone();
-                    div()
-                        .id(SharedString::from(project.id.clone()))
-                        .tab_index(0)
-                        .cursor_pointer()
-                        .border_1()
-                        .border_color(rgb(palette.sidebar))
-                        .focus(move |style| style.border_color(rgb(palette.focus)))
-                        .hover(move |style| style.bg(rgb(palette.selection)))
-                        .when(selected, |row| row.bg(rgb(palette.selection)))
-                        .rounded_md()
-                        .px_2()
-                        .py_1()
-                        .child(div().truncate().child(project.name.clone()))
-                        .on_click(cx.listener(move |library, _, _, cx| {
-                            library.open_project(click_project.clone(), cx);
-                        }))
-                        .on_key_down(cx.listener(
-                            move |library, event: &gpui::KeyDownEvent, _, cx| {
-                                if event.keystroke.key == "enter" {
-                                    library.open_project(keyboard_project.clone(), cx);
-                                }
-                            },
-                        ))
-                }));
-            }
-            state => {
-                let message = match state {
-                    None => "Loading projects…".into(),
-                    Some(Ok(_)) => "No projects found".into(),
-                    Some(Err(error)) => format!("Couldn’t read projects: {error}"),
-                };
-                projects = projects.child(div().text_color(rgb(palette.muted)).child(message));
-            }
-        }
-
+        let view = match &self.selection {
+            Some(selection) => self.workspace(selection, palette, cx).into_any_element(),
+            None => self.projects(window, palette, cx).into_any_element(),
+        };
         div()
             .id("library")
             .track_focus(&self.focus_handle)
@@ -189,6 +180,302 @@ impl Render for Library {
             .bg(rgb(palette.canvas))
             .text_color(rgb(palette.text))
             .text_sm()
+            .child(view)
+    }
+}
+
+impl Library {
+    fn projects(
+        &self,
+        window: &Window,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let width = f32::from(window.viewport_size().width);
+        let padding = (width * 0.05).clamp(24., 80.);
+        let columns = (((width - padding * 2.).min(1120.) + 16.) / 256.)
+            .floor()
+            .max(1.) as u16;
+        let page = div()
+            .size_full()
+            .id("projects")
+            .overflow_y_scroll()
+            .px(px(padding))
+            .py(px(44.));
+        let content = div()
+            .w_full()
+            .max_w(px(1120.))
+            .mx_auto()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(24.))
+                    .mb(px(20.))
+                    .child(img(self.logo.clone()).size(px(50.)).rounded(px(14.)))
+                    .child(
+                        div()
+                            .text_size(px(32.))
+                            .font_weight(FontWeight::BOLD)
+                            .child("Refract"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(28.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .mb(px(40.))
+                    .child("Your projects"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .border_y_1()
+                    .border_color(rgb(palette.border))
+                    .py(px(16.))
+                    .child(
+                        div()
+                            .flex()
+                            .p(px(2.))
+                            .border_1()
+                            .border_color(rgb(palette.border))
+                            .rounded_md()
+                            .child(self.view_toggle(false, "List", palette, cx))
+                            .child(self.view_toggle(true, "Grid", palette, cx)),
+                    ),
+            )
+            .child(match &self.projects {
+                Some(Ok(projects)) if !projects.is_empty() => {
+                    let count = if projects.len() == 1 {
+                        "1 project".to_owned()
+                    } else {
+                        format!("{} projects", projects.len())
+                    };
+                    div()
+                        .child(
+                            div()
+                                .pt(px(20.))
+                                .pb(px(8.))
+                                .text_size(px(12.))
+                                .text_color(rgb(palette.muted))
+                                .child(count),
+                        )
+                        .when(!self.grid_view, |content| {
+                            content.child(
+                                div()
+                                    .px(px(14.))
+                                    .py(px(10.))
+                                    .flex()
+                                    .border_b_1()
+                                    .border_color(rgb(palette.border))
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(palette.muted))
+                                    .child(div().flex_1().child("NAME"))
+                                    .child(div().w(px(210.)).child("CREATED")),
+                            )
+                        })
+                        .child(
+                            div()
+                                .when(self.grid_view, |list| {
+                                    list.grid().grid_cols(columns).gap(px(16.)).pt(px(16.))
+                                })
+                                .children(
+                                    projects
+                                        .iter()
+                                        .map(|project| self.project_row(project, palette, cx)),
+                                ),
+                        )
+                }
+                state => {
+                    let message = match state {
+                        None => "Loading projects…".into(),
+                        Some(Ok(_)) => "No projects found".into(),
+                        Some(Err(error)) => format!("Couldn’t read projects: {error}"),
+                    };
+                    div().py_6().text_color(rgb(palette.muted)).child(message)
+                }
+            });
+        page.child(content)
+    }
+
+    fn view_toggle(
+        &self,
+        grid: bool,
+        label: &'static str,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(label)
+            .tab_index(1)
+            .cursor_pointer()
+            .rounded_md()
+            .px_3()
+            .py(px(6.))
+            .focus(move |style| style.bg(rgb(palette.selection)))
+            .hover(move |style| style.bg(rgb(palette.selection)))
+            .when(self.grid_view == grid, |button| {
+                button.bg(rgb(palette.surface)).shadow_sm()
+            })
+            .child(label)
+            .on_click(cx.listener(move |library, _, _, cx| {
+                library.grid_view = grid;
+                cx.notify();
+            }))
+            .on_key_down(
+                cx.listener(move |library, event: &gpui::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                        library.grid_view = grid;
+                        cx.notify();
+                    }
+                }),
+            )
+    }
+
+    fn project_row(
+        &self,
+        project: &Project,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let keyboard_project = project.clone();
+        let click_project = project.clone();
+        let grid = self.grid_view;
+        let date = project
+            .created
+            .as_deref()
+            .and_then(|created| chrono::DateTime::parse_from_rfc3339(created).ok())
+            .map(|created| {
+                created
+                    .with_timezone(&chrono::Local)
+                    .format("%-m/%-d/%Y")
+                    .to_string()
+            });
+
+        div()
+            .id(SharedString::from(project.id.clone()))
+            .track_focus(&self.project_focus[&project.id])
+            .cursor_pointer()
+            .flex()
+            .rounded_lg()
+            .border_b_1()
+            .border_color(rgb(palette.border))
+            .focus(move |style| style.border_color(rgb(palette.focus)))
+            .hover(move |style| style.bg(rgb(palette.selection)))
+            .when(!grid, |row| {
+                row.min_h(px(85.))
+                    .items_center()
+                    .gap(px(16.))
+                    .px(px(14.))
+                    .py(px(12.))
+            })
+            .when(grid, |row| {
+                row.min_h(px(170.))
+                    .flex_col()
+                    .justify_between()
+                    .gap(px(20.))
+                    .p(px(20.))
+                    .border_1()
+                    .bg(rgb(palette.surface))
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .items_center()
+                    .gap(px(14.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .justify_center()
+                            .items_center()
+                            .w(px(40.))
+                            .h(px(50.))
+                            .rounded(px(4.))
+                            .border_1()
+                            .border_color(rgb(palette.input_border))
+                            .bg(rgb(palette.surface))
+                            .text_color(rgb(palette.muted))
+                            .font_family(monospace_font())
+                            .text_size(px(9.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("TEX"),
+                    )
+                    .child(
+                        div()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .when(!grid, |name| name.truncate())
+                                    .font_weight(FontWeight(550.))
+                                    .child(project.name.clone()),
+                            )
+                            .when(grid, |name| {
+                                name.child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(rgb(palette.muted))
+                                        .child("Open project →"),
+                                )
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .when(!grid, |date| date.w(px(188.)).flex_none())
+                    .text_size(px(12.))
+                    .text_color(rgb(palette.muted))
+                    .children(date),
+            )
+            .on_click(cx.listener(move |library, _, window, cx| {
+                library.open_project(click_project.clone(), window, cx);
+            }))
+            .on_key_down(
+                cx.listener(move |library, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                        library.open_project(keyboard_project.clone(), window, cx);
+                    }
+                }),
+            )
+    }
+
+    fn workspace(
+        &self,
+        selection: &Selection,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let home = div()
+            .id("home")
+            .track_focus(&self.home_focus)
+            .cursor_pointer()
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded_md()
+            .px_2()
+            .py_1()
+            .focus(move |style| style.bg(rgb(palette.selection)))
+            .hover(move |style| style.bg(rgb(palette.selection)))
+            .child(img(self.logo.clone()).size(px(24.)))
+            .child("Refract")
+            .on_click(cx.listener(|library, _, window, cx| library.return_to_projects(window, cx)))
+            .on_key_down(
+                cx.listener(|library, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                        library.return_to_projects(window, cx);
+                    }
+                }),
+            );
+        div()
+            .flex()
+            .size_full()
             .child(
                 div()
                     .w(px(250.))
@@ -200,23 +487,20 @@ impl Render for Library {
                     .bg(rgb(palette.sidebar))
                     .border_r_1()
                     .border_color(rgb(palette.border))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Projects"))
-                    .child(projects),
+                    .child(home)
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Files"))
+                    .child(
+                        div()
+                            .truncate()
+                            .text_color(rgb(palette.muted))
+                            .child(selection.project.root_file().to_owned()),
+                    ),
             )
-            .child(self.source_pane(palette))
+            .child(self.source_pane(selection, palette))
     }
-}
 
-impl Library {
-    fn source_pane(&self, palette: Palette) -> impl IntoElement {
+    fn source_pane(&self, selection: &Selection, palette: Palette) -> impl IntoElement {
         let pane = div().flex_1().min_w(px(0.)).flex().flex_col().p_4().gap_2();
-        let Some(selection) = &self.selection else {
-            return pane.child(
-                div()
-                    .text_color(rgb(palette.muted))
-                    .child("Open a project to view its LaTeX source."),
-            );
-        };
         let title = div()
             .truncate()
             .font_weight(FontWeight::SEMIBOLD)
@@ -348,7 +632,7 @@ mod tests {
     use std::fs;
 
     #[gpui::test]
-    fn opens_the_existing_project_with_the_keyboard(cx: &mut TestAppContext) {
+    fn opens_an_existing_project_and_restores_library_focus(cx: &mut TestAppContext) {
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
         let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
@@ -365,12 +649,21 @@ mod tests {
         cx.update(bind_library_keys);
         let (library, cx) = cx.add_window_view(|window, cx| Library::new(projects, window, cx));
         cx.refresh().unwrap();
+        cx.simulate_keystrokes("tab tab enter");
+        cx.update(|_, app| assert!(library.read(app).grid_view));
         cx.simulate_keystrokes("tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().expect("open project");
             assert_eq!(selection.project.id, id);
             let preview = selection.preview.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(preview.lines[0].as_ref(), "A line of LaTeX");
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, app| {
+            let library = library.read(app);
+            assert!(library.selection.is_none());
+            assert!(library.grid_view);
+            assert!(library.project_focus[id].is_focused(window));
         });
     }
 }
