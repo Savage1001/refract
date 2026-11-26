@@ -12,9 +12,7 @@ use refract_native::versions::{
     Version, list_versions, recover_project_restore, restore_project_version, restore_version_file,
     retry_retained_restore_stages, snapshot_project,
 };
-use refract_native::{
-    Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
-};
+use refract_native::{Project, ProjectEntry, list_projects, project_tree, save_source};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -25,6 +23,8 @@ use std::{
     time::Duration,
 };
 
+mod asset_image;
+mod asset_view;
 mod build_log_view;
 mod commands_view;
 mod comments_view;
@@ -45,6 +45,7 @@ mod source_theme;
 mod synctex_view;
 mod version_view;
 mod workspace_tools;
+use asset_view::{AssetPreview, LoadedFile, load_file};
 use build_log_view::BuildLogView;
 use commands_view::Commands;
 use comments_view::CommentDrafts;
@@ -126,6 +127,7 @@ struct Selection {
     expanded_folders: HashSet<String>,
     file_search: FileSearch,
     file: Option<String>,
+    asset_preview: Option<AssetPreview>,
     tabs: Vec<FileTab>,
     tool: Option<WorkspaceTool>,
     tools_expanded: Option<bool>,
@@ -275,6 +277,7 @@ impl Library {
             expanded_folders,
             file_search: FileSearch::new(window, cx),
             file: None,
+            asset_preview: None,
             tabs: Vec::new(),
             tool: None,
             tools_expanded: None,
@@ -327,6 +330,9 @@ impl Library {
             });
         }
         selection.file = Some(file.clone());
+        if let Some(asset) = selection.asset_preview.take() {
+            asset.release(window);
+        }
         selection.pending_comment = None;
         selection.pending_source_jump = None;
         selection.file_search.pending_hit = None;
@@ -352,7 +358,7 @@ impl Library {
         let opened_file = file.clone();
         let load = cx
             .background_executor()
-            .spawn(async move { read_source(&path, &project, &opened_file) });
+            .spawn(async move { load_file(&path, &project, &opened_file) });
         self.preview_task = Some(cx.spawn_in(window, async move |library, cx| {
             let source = load.await;
             let _ = library.update_in(cx, |library, window, cx| {
@@ -361,6 +367,21 @@ impl Library {
                 };
                 let Some(tab) = selection.tabs.iter_mut().find(|tab| tab.path == file) else {
                     return;
+                };
+                let source = match source {
+                    Ok(LoadedFile::Text(source)) => Ok(source),
+                    Err(error) => Err(error),
+                    Ok(LoadedFile::Asset(asset)) => {
+                        selection.asset_preview = Some(asset);
+                        selection.pending_comment = None;
+                        selection.pending_source_jump = None;
+                        selection.file_search.pending_hit = None;
+                        selection.focus_source_on_load = false;
+                        tab.editor = None;
+                        library.editor_find.visible = false;
+                        cx.notify();
+                        return;
+                    }
                 };
                 tab.editor = Some(source.map(|source| {
                     let state = cx.new(|cx| {
@@ -467,6 +488,9 @@ impl Library {
                 self.editor_find.visible = false;
                 self.commands.close();
                 self.outline.clear(window);
+                if let Some(asset) = selection.asset_preview.take() {
+                    asset.release(window);
+                }
                 selection.file = None;
                 selection.pending_comment = None;
                 selection.comment_status = None;
@@ -499,10 +523,13 @@ impl Library {
         self.outline.clear(window);
         self.comments_task = None;
         self.comparison_task = None;
-        if let Some(previous) = self.selection.take()
-            && let Some(focus) = self.project_focus.get(&previous.project.id)
-        {
-            window.focus(&focus.open);
+        if let Some(previous) = self.selection.take() {
+            if let Some(asset) = previous.asset_preview {
+                asset.release(window);
+            }
+            if let Some(focus) = self.project_focus.get(&previous.project.id) {
+                window.focus(&focus.open);
+            }
         }
         cx.notify();
     }
@@ -1789,12 +1816,13 @@ impl Library {
                         )),
                 );
         }
-        let preview = match editor {
-            None => div().child("Loading source…").into_any_element(),
-            Some(Err(error)) => div()
+        let preview = match (&selection.asset_preview, editor) {
+            (Some(asset), _) => self.asset_preview(asset, palette, cx).into_any_element(),
+            (_, None) => div().child("Loading source…").into_any_element(),
+            (_, Some(Err(error))) => div()
                 .child(format!("Couldn’t open source: {error}"))
                 .into_any_element(),
-            Some(Ok(editor)) => self.source_editor(editor, cx).into_any_element(),
+            (_, Some(Ok(editor))) => self.source_editor(editor, cx).into_any_element(),
         };
         pane.child(header)
             .when(

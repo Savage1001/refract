@@ -206,6 +206,9 @@ impl Library {
             } else {
                 self.outline.clear(window);
                 self.commands.close();
+                if let Some(asset) = selection.asset_preview.take() {
+                    asset.release(window);
+                }
             }
         }
         window.focus(&self.deleted_files_focus);

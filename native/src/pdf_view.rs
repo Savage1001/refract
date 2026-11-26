@@ -50,19 +50,19 @@ struct PageImage {
 
 struct PageRequest {
     index: u32,
-    width: f32,
+    width: Option<f32>,
     height: Option<f32>,
     display_scale: f32,
 }
 
-struct RasterizedPage {
-    current: u32,
-    count: u32,
+pub(super) struct RasterizedPage {
+    pub(super) current: u32,
+    pub(super) count: u32,
     width: f32,
     height: f32,
     point_width: f64,
     point_height: f64,
-    png: Vec<u8>,
+    pub(super) png: Vec<u8>,
 }
 
 impl Library {
@@ -92,7 +92,7 @@ impl Library {
         let based_width = PDF_PANE_WIDTH - PADDING * 2.;
         let request = PageRequest {
             index: preview.page,
-            width: based_width * f32::from(preview.zoom.percentage()) / 100.,
+            width: Some(based_width * f32::from(preview.zoom.percentage()) / 100.),
             height: (preview.zoom == Zoom::FitPage)
                 .then(|| (f32::from(window.viewport_size().height) - 136.).max(64.)),
             display_scale: window.scale_factor(),
@@ -435,6 +435,17 @@ fn pdf_button(
 mod windows_pdf;
 #[cfg(windows)]
 use windows_pdf::render_page;
+
+#[cfg(windows)]
+pub(super) use windows_pdf::render_asset_page;
+
+#[cfg(not(windows))]
+pub(super) fn render_asset_page(_: &[u8], _: u32) -> io::Result<RasterizedPage> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Inline project PDF preview is unavailable on this platform.",
+    ))
+}
 
 #[cfg(not(windows))]
 fn render_page(_: &Path, _: PageRequest) -> io::Result<RasterizedPage> {

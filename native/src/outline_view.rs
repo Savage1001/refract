@@ -1,8 +1,8 @@
 use super::{Library, Palette, Selection};
 use gpui::{
-    Context, DragMoveEvent, Entity, EntityId, FontWeight, KeyDownEvent, MouseButton, Pixels,
-    Render, RenderImage, ScrollHandle, SharedString, Task, Window, div, img, point, prelude::*, px,
-    rgb, svg,
+    Context, DragMoveEvent, Entity, EntityId, FontWeight, KeyDownEvent, MouseButton,
+    MouseDownEvent, Pixels, Render, RenderImage, ScrollHandle, SharedString, Task, Window, div,
+    img, point, prelude::*, px, rgb, svg,
 };
 use gpui_component::input::{InputState, RopeExt};
 use image::{Frame, RgbaImage};
@@ -330,7 +330,7 @@ impl Library {
             .focus(move |style| style.border_color(rgb(palette.focus)))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|view, event, _, _| {
+                cx.listener(|view, event: &MouseDownEvent, _, _| {
                     view.outline.resize =
                         Some((event.position.y, view.outline.scroll.bounds().size.height));
                 }),

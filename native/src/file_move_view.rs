@@ -558,7 +558,16 @@ fn remap_open_tabs(
     for tab in &mut selection.tabs {
         if let Some(path) = entry.remap_path(&tab.path) {
             tab.path = path;
-            if let Some(Ok(editor)) = &mut tab.editor {
+            if tab
+                .editor
+                .as_ref()
+                .and_then(|editor| editor.as_ref().ok())
+                .is_some_and(|editor| {
+                    !refract_native::file_preview::is_text_asset(&tab.path, editor.saved.as_bytes())
+                })
+            {
+                tab.editor = None;
+            } else if let Some(Ok(editor)) = &mut tab.editor {
                 editor._autosave = Library::watch_source(&editor.state, &tab.path, window, cx);
             }
         }

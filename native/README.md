@@ -22,6 +22,8 @@ Inline math in outline titles uses KaTeX fonts under the [SIL Open Font License]
 
 Use **Download file** to save a copy of a project file or **Export project ZIP** to save the visible project files and folders, including empty folders.
 
+Open an image from the file tree to view it in its tab. On Windows, open a project PDF in a tab and use **Previous** and **Next** to browse its pages. Oversized or unsupported files show a preview message.
+
 Use **More file options** in the New file dialog to upload files or a folder into the selected project folder. Existing files at the destination are preserved.
 
 Use **Import ZIP** in the project library to open a LaTeX project archive. Select a root document when the archive has multiple candidates. **Import all** creates a separate project for each root in its own top-level folder.

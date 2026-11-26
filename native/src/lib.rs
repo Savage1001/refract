@@ -7,6 +7,7 @@ use std::{
 
 pub mod comments;
 pub mod editor_find;
+pub mod file_preview;
 pub mod latex_commands;
 #[cfg(feature = "latex-syntax")]
 pub mod latex_syntax;
@@ -141,21 +142,16 @@ fn read_project_entries(root: &Path, parent: &str) -> io::Result<Vec<ProjectEntr
 }
 
 pub fn read_source(projects_dir: &Path, project: &Project, file: &str) -> io::Result<String> {
-    let project_dir = project_directory(projects_dir, project)?;
-    let target = source_path(&project_dir, file)?;
-    let source = read_local_file(&project_dir, &target, SOURCE_LIMIT)?;
-    if !is_source_text(&source) {
-        return Err(io::Error::new(
+    match file_preview::inspect_file(projects_dir, project, file)? {
+        file_preview::Preview::Text(source) => Ok(source),
+        file_preview::Preview::Unsupported(reason) => {
+            Err(io::Error::new(io::ErrorKind::InvalidData, reason))
+        }
+        _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "This file cannot be previewed as text.",
-        ));
+            file_preview::NOT_TEXT,
+        )),
     }
-    String::from_utf8(source).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "This file cannot be previewed as text.",
-        )
-    })
 }
 
 fn source_path(project_dir: &Path, file: &str) -> io::Result<PathBuf> {
@@ -167,9 +163,15 @@ fn source_path(project_dir: &Path, file: &str) -> io::Result<PathBuf> {
         ));
     }
     let mut target = project_dir.to_owned();
+    if project_management::is_link(&fs::symlink_metadata(&target)?) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Linked projects cannot be previewed",
+        ));
+    }
     for part in parts {
         target.push(part);
-        if fs::symlink_metadata(&target)?.is_symlink() {
+        if project_management::is_link(&fs::symlink_metadata(&target)?) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Linked files cannot be opened",
@@ -177,16 +179,6 @@ fn source_path(project_dir: &Path, file: &str) -> io::Result<PathBuf> {
         }
     }
     Ok(target)
-}
-
-fn is_source_text(source: &[u8]) -> bool {
-    !(source.starts_with(b"%PDF-")
-        || source.starts_with(b"\x7fELF")
-        || source.starts_with(b"MZ")
-        || source.starts_with(b"PK\x03\x04")
-        || source
-            .iter()
-            .any(|&byte| matches!(byte, 0..=8 | 11 | 14..=31 | 127)))
 }
 
 pub fn save_source(
@@ -211,8 +203,8 @@ pub fn save_source(
         return Ok(());
     }
     if edited.len() > SOURCE_LIMIT
-        || !is_source_text(edited.as_bytes())
-        || !is_source_text(expected.as_bytes())
+        || !file_preview::is_text_asset(file, edited.as_bytes())
+        || !file_preview::is_text_asset(file, expected.as_bytes())
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

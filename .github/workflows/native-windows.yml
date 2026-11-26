@@ -1,12 +1,6 @@
 name: Native Windows preview
 
 on:
-  push:
-    branches: [feat/gpui-port]
-    paths:
-      - native/**
-      - .github/workflows/native-windows.yml
-      - scripts/capture-electron-parity.cts
   pull_request:
     paths:
       - native/**

@@ -5,7 +5,7 @@ use windows::{
     Graphics::Imaging::BitmapEncoder,
     Storage::{
         StorageFile,
-        Streams::{DataReader, InMemoryRandomAccessStream},
+        Streams::{DataReader, DataWriter, InMemoryRandomAccessStream},
     },
     Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize},
     core::HSTRING,
@@ -23,6 +23,40 @@ fn render(path: &Path, request: PageRequest) -> Result<RasterizedPage, Box<dyn s
     let path = HSTRING::from(dunce::simplified(path).as_os_str());
     let file = StorageFile::GetFileFromPathAsync(&path)?.get()?;
     let document = PdfDocument::LoadFromFileAsync(&file)?.get()?;
+    render_document(&document, request)
+}
+
+pub(crate) fn render_asset_page(bytes: &[u8], index: u32) -> io::Result<RasterizedPage> {
+    render_asset(bytes, index)
+        .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
+}
+
+fn render_asset(bytes: &[u8], index: u32) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
+    let _apartment = Apartment::initialize()?;
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::CreateDataWriter(&stream.GetOutputStreamAt(0)?)?;
+    writer.WriteBytes(bytes)?;
+    if writer.StoreAsync()?.get()? as usize != bytes.len() {
+        return Err("The input PDF stream is incomplete.".into());
+    }
+    writer.DetachStream()?;
+    stream.Seek(0)?;
+    let document = PdfDocument::LoadFromStreamAsync(&stream)?.get()?;
+    render_document(
+        &document,
+        PageRequest {
+            index,
+            width: None,
+            height: None,
+            display_scale: 1.2,
+        },
+    )
+}
+
+fn render_document(
+    document: &PdfDocument,
+    request: PageRequest,
+) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
     let count = document.PageCount()?;
     if count == 0 {
         return Err("The PDF has no pages.".into());
@@ -35,9 +69,10 @@ fn render(path: &Path, request: PageRequest) -> Result<RasterizedPage, Box<dyn s
         return Err("The PDF page dimensions are invalid.".into());
     }
     let aspect = size.Height / size.Width;
-    let width = request
-        .height
-        .map_or(request.width, |height| request.width.min(height / aspect));
+    let requested_width = request.width.unwrap_or(size.Width * 72. / 96.);
+    let width = request.height.map_or(requested_width, |height| {
+        requested_width.min(height / aspect)
+    });
     let height = width * aspect;
     if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. {
         return Err("The PDF page could not be fitted in the preview.".into());
@@ -131,12 +166,12 @@ mod tests {
             "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
         )
         .unwrap();
-        fs::write(&path, pdf).unwrap();
+        fs::write(&path, &pdf).unwrap();
         let frame = render_page(
             &path,
             PageRequest {
                 index: 5,
-                width: 320.,
+                width: Some(320.),
                 height: Some(300.),
                 display_scale: 1.,
             },
@@ -147,5 +182,9 @@ mod tests {
         assert!((frame.width - 200.).abs() < 0.01);
         assert!((frame.height - 300.).abs() < 0.01);
         assert!(frame.png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let asset = render_asset_page(&pdf, 1).unwrap();
+        assert_eq!((asset.current, asset.count), (1, 2));
+        assert!((asset.width - 200.).abs() < 0.01);
+        assert!(asset.png.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 }
