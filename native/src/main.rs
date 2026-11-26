@@ -23,7 +23,9 @@ use std::{
     time::Duration,
 };
 
+mod comments_view;
 mod version_view;
+use comments_view::CommentDrafts;
 use version_view::Comparison;
 
 actions!(editor, [SaveSource]);
@@ -35,6 +37,8 @@ struct Library {
     tree_task: Option<Task<()>>,
     preview_task: Option<Task<()>>,
     comments_task: Option<Task<()>>,
+    comment_write_task: Option<Task<()>>,
+    comment_drafts: HashMap<String, CommentDrafts>,
     save_task: Option<Task<()>>,
     save_queue: VecDeque<String>,
     snapshot_task: Option<Task<()>>,
@@ -64,6 +68,7 @@ struct Selection {
     retained_restore_stages: bool,
     comparison: Option<Comparison>,
     comments: Option<io::Result<Vec<Comment>>>,
+    comment_error: Option<String>,
     pending_comment: Option<Comment>,
     comment_status: Option<&'static str>,
 }
@@ -132,6 +137,8 @@ impl Library {
             tree_task: None,
             preview_task: None,
             comments_task: None,
+            comment_write_task: None,
+            comment_drafts: HashMap::new(),
             save_task: None,
             save_queue: VecDeque::new(),
             snapshot_task: None,
@@ -171,6 +178,7 @@ impl Library {
             retained_restore_stages: false,
             comparison: None,
             comments: None,
+            comment_error: None,
             pending_comment: None,
             comment_status: None,
         });
@@ -331,21 +339,6 @@ impl Library {
         }
     }
 
-    fn toggle_comments(&mut self, cx: &mut Context<Self>) {
-        let Some(selection) = &mut self.selection else {
-            return;
-        };
-        selection.show_comments = !selection.show_comments;
-        if selection.show_comments {
-            selection.show_versions = false;
-            selection.comparison = None;
-            self.comparison_task = None;
-            selection.comments = None;
-            self.load_comments(cx);
-        }
-        cx.notify();
-    }
-
     fn toggle_versions(&mut self, cx: &mut Context<Self>) {
         if let Some(selection) = &mut self.selection {
             selection.show_versions = !selection.show_versions;
@@ -362,14 +355,15 @@ impl Library {
     fn file_to_restore<'a>(&'a self, version: &Version, cx: &App) -> Option<&'a str> {
         let selection = self.selection.as_ref()?;
         let file = selection.file.as_deref()?;
-        (self.restore_idle()
+        (self.project_writes_idle()
             && !self.has_unsaved_changes(&Navigation::CloseFile(file.to_owned()), cx)
             && version.files.iter().any(|name| name == file))
         .then_some(file)
     }
 
-    fn restore_idle(&self) -> bool {
+    fn project_writes_idle(&self) -> bool {
         self.restore_task.is_none()
+            && self.comment_write_task.is_none()
             && self.save_task.is_none()
             && self.save_queue.is_empty()
             && self.snapshot_task.is_none()
@@ -377,7 +371,7 @@ impl Library {
     }
 
     fn can_restore_project(&self, cx: &App) -> bool {
-        self.restore_idle() && !self.has_unsaved_changes(&Navigation::Projects, cx)
+        self.project_writes_idle() && !self.has_unsaved_changes(&Navigation::Projects, cx)
     }
 
     fn request_version_restore(
@@ -551,7 +545,11 @@ impl Library {
     }
 
     fn start_next_save(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.save_task.is_some() || self.snapshot_task.is_some() || self.restore_task.is_some() {
+        if self.save_task.is_some()
+            || self.snapshot_task.is_some()
+            || self.restore_task.is_some()
+            || self.comment_write_task.is_some()
+        {
             return;
         }
         let Some(selection) = &mut self.selection else {
@@ -638,6 +636,7 @@ impl Library {
             || self.save_task.is_some()
             || self.snapshot_task.is_some()
             || self.restore_task.is_some()
+            || self.comment_write_task.is_some()
         {
             return;
         }
@@ -674,6 +673,7 @@ impl Library {
         if self.save_task.is_none()
             && self.snapshot_task.is_none()
             && self.restore_task.is_none()
+            && self.comment_write_task.is_none()
             && let Some(navigation) = self.navigation_after_save.take()
         {
             self.request_navigation(navigation, window, cx);
@@ -707,7 +707,11 @@ impl Library {
         if self.discard_prompt.is_some() {
             return;
         }
-        if self.save_task.is_some() || !self.save_queue.is_empty() || self.restore_task.is_some() {
+        if self.save_task.is_some()
+            || !self.save_queue.is_empty()
+            || self.restore_task.is_some()
+            || self.comment_write_task.is_some()
+        {
             self.navigation_after_save = Some(navigation);
             return;
         }
@@ -1238,94 +1242,6 @@ impl Library {
             })
     }
 
-    fn comments_pane(
-        &self,
-        selection: &Selection,
-        palette: Palette,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let panel = div()
-            .id("comments-pane")
-            .w(px(300.))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .border_l_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
-            .p_4()
-            .gap_2()
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("All Comments"),
-            );
-        let list = div()
-            .id("comment-list")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll();
-        panel.child(match &selection.comments {
-            None => list.child("Loading comments…"),
-            Some(Err(error)) => list.child(format!("Couldn’t load comments: {error}")),
-            Some(Ok(comments)) if comments.is_empty() => list.child("No comments yet."),
-            Some(Ok(comments)) => list.children(comments.iter().map(|comment| {
-                let open = comment.id.clone();
-                let open_by_key = open.clone();
-                let title = if comment.quote.is_empty() {
-                    comment.file.clone()
-                } else {
-                    format!("{}: {}", comment.file, comment.quote)
-                };
-                div()
-                    .id(SharedString::from(comment.id.clone()))
-                    .border_b_1()
-                    .border_color(rgb(palette.border))
-                    .py_2()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .id("reference")
-                            .tab_index(3)
-                            .cursor_pointer()
-                            .truncate()
-                            .text_color(rgb(palette.focus))
-                            .hover(move |style| style.bg(rgb(palette.selection)))
-                            .focus(move |style| style.bg(rgb(palette.selection)))
-                            .child(title)
-                            .on_click(cx.listener(move |library, _, window, cx| {
-                                library.open_comment(&open, window, cx)
-                            }))
-                            .on_key_down(cx.listener(
-                                move |library, event: &gpui::KeyDownEvent, window, cx| {
-                                    if event.keystroke.key == "enter"
-                                        || event.keystroke.key == "space"
-                                    {
-                                        library.open_comment(&open_by_key, window, cx);
-                                    }
-                                },
-                            )),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(palette.muted))
-                            .child(if comment.resolved { "Resolved" } else { "Open" }),
-                    )
-                    .child(div().child(comment.text.clone()))
-                    .children(comment.replies.iter().map(|reply| {
-                        div()
-                            .pl_2()
-                            .border_l_1()
-                            .border_color(rgb(palette.border))
-                            .child(reply.text.clone())
-                    }))
-            })),
-        })
-    }
-
     fn file_tree(
         &self,
         selection: &Selection,
@@ -1570,12 +1486,16 @@ impl Library {
                         button.bg(rgb(palette.selection))
                     })
                     .child("Comments")
-                    .on_click(cx.listener(|library, _, _, cx| library.toggle_comments(cx)))
-                    .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                            library.toggle_comments(cx);
-                        }
-                    })),
+                    .on_click(
+                        cx.listener(|library, _, window, cx| library.toggle_comments(window, cx)),
+                    )
+                    .on_key_down(
+                        cx.listener(|library, event: &gpui::KeyDownEvent, window, cx| {
+                            if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                                library.toggle_comments(window, cx);
+                            }
+                        }),
+                    ),
             );
         let Some(path) = &selection.file else {
             return pane.child(
@@ -1706,6 +1626,7 @@ fn projects_dir() -> Option<PathBuf> {
 
 fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
+    comments_view::init(cx);
     cx.bind_keys([KeyBinding::new("secondary-s", SaveSource, None)]);
 }
 
@@ -2013,7 +1934,7 @@ mod tests {
             assert_eq!(comments[0].replies[0].text, "Checked");
             assert!(comments[0].resolved);
         });
-        cx.simulate_keystrokes("tab enter");
+        cx.simulate_keystrokes("tab tab tab enter");
         cx.update(|_, app| {
             let library = library.read(app);
             let selection = library.selection.as_ref().unwrap();

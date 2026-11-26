@@ -10,6 +10,9 @@ use std::{
     path::Path,
 };
 
+mod update;
+pub use update::{CommentSelection, CommentUpdate, update_comments};
+
 const COMMENTS_LIMIT: usize = 4 * 1024 * 1024;
 const MAX_MATCHES: usize = 10_000;
 
@@ -20,6 +23,7 @@ pub struct Comment {
     #[serde(default)]
     pub quote: String,
     pub text: String,
+    pub created: Option<String>,
     #[serde(default)]
     pub resolved: bool,
     #[serde(default)]
@@ -70,6 +74,12 @@ pub(crate) fn read_comments_file(folder: &Path) -> io::Result<Option<Vec<u8>>> {
 }
 
 impl Comment {
+    pub fn selection_unavailable(&self) -> bool {
+        self.anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.status == "orphaned")
+    }
+
     pub fn source_position(&self, source: &str) -> Option<(u32, u32)> {
         let text = source.replace("\r\n", "\n").replace('\r', "\n");
         let units: Vec<u16> = text.encode_utf16().collect();
@@ -224,21 +234,7 @@ pub(crate) fn plan_edit(
                 Some((range, quote))
             });
         updated
-            .map(|(range, quote)| {
-                let anchor = SavedAnchor {
-                    start: range.start,
-                    end: range.end,
-                    prefix: encode_context(
-                        &after_units[range.start.saturating_sub(48)..range.start],
-                    )?,
-                    suffix: encode_context(
-                        &after_units[range.end..(range.end + 48).min(after_units.len())],
-                    )?,
-                    source_hash: &hash,
-                    status: "attached",
-                };
-                Ok((to_raw_value(&anchor)?, quote))
-            })
+            .map(|(range, quote)| Ok((make_anchor(&after_units, range, &hash)?, quote)))
             .transpose()
     })
 }
@@ -352,6 +348,21 @@ struct SavedAnchor<'a> {
     suffix: Box<RawValue>,
     source_hash: &'a str,
     status: &'static str,
+}
+
+fn make_anchor(
+    units: &[u16],
+    range: Range<usize>,
+    hash: &str,
+) -> serde_json::Result<Box<RawValue>> {
+    to_raw_value(&SavedAnchor {
+        start: range.start,
+        end: range.end,
+        prefix: encode_context(&units[range.start.saturating_sub(48)..range.start])?,
+        suffix: encode_context(&units[range.end..(range.end + 48).min(units.len())])?,
+        source_hash: hash,
+        status: "attached",
+    })
 }
 
 fn encode_context(units: &[u16]) -> serde_json::Result<Box<RawValue>> {
