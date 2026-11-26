@@ -88,7 +88,7 @@ impl Library {
             let Some(edit) = preview
                 .page_edit
                 .as_mut()
-                .filter(|edit| edit.input == input)
+                .filter(|edit| &edit.input == input)
             else {
                 return;
             };
