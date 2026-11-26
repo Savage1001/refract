@@ -29,7 +29,9 @@ cargo run --locked --manifest-path native/Cargo.toml
 
 The preview looks in the platform's application configuration directory for the `Refract/projects` folder. For a custom profile or a source checkout using a different profile directory, set `REFRACT_DATA_DIR` to the folder containing `projects`.
 
-Use the Electron app for editing, PDF preview, TeX and SyncTeX, assistants, and updates.
+The workspace builds LaTeX from saved project files using the installed TeX toolchain. Use **Compile** to rebuild, **Build output** to read compiler messages, and **Download PDF** to save the result.
+
+Use the Electron app for inline PDF rendering, SyncTeX navigation, assistants, and updates.
 
 ## Parity before replacing Electron
 

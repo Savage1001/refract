@@ -1,6 +1,6 @@
 use crate::{
     Project,
-    project_entries::checked_project_directory,
+    project_entries::{checked_project_directory, write_transfer},
     project_management::{has_one_link, is_link, read_project_metadata},
     valid_project_component,
 };
@@ -9,7 +9,7 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Component, Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicBool, Ordering},
@@ -73,6 +73,19 @@ pub fn compile_project(
     let dir = checked_project_directory(projects_dir, project)?;
     let settings = read_build_settings(&dir, project)?;
     build(&dir, &settings, toolchain, cancel, run_process)
+}
+
+pub fn save_compiled_pdf(source: &Path, destination: &Path) -> io::Result<()> {
+    let mut pdf = build_file(source)?;
+    let mut header = [0; 5];
+    if pdf.read_exact(&mut header).is_err() || &header != b"%PDF-" {
+        return Err(invalid("Invalid PDF data"));
+    }
+    write_transfer(destination, |file| {
+        file.write_all(&header)?;
+        io::copy(&mut pdf, file)?;
+        Ok(())
+    })
 }
 
 fn read_build_settings(dir: &Path, project: &Project) -> io::Result<BuildSettings> {

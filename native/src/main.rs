@@ -26,6 +26,7 @@ use std::{
 };
 
 mod comments_view;
+mod compile_view;
 mod deleted_projects_view;
 mod file_creation_view;
 mod file_move_view;
@@ -35,6 +36,7 @@ mod project_import_view;
 mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
+use compile_view::{RunningBuild, WorkspaceBuild};
 use deleted_projects_view::DeletedProjectsDialog;
 use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
@@ -76,6 +78,9 @@ struct Library {
     comment_drafts: HashMap<String, CommentDrafts>,
     save_task: Option<Task<()>>,
     save_queue: VecDeque<String>,
+    build_task: Option<RunningBuild>,
+    #[cfg(all(test, feature = "ui-tests"))]
+    test_compiler: Option<compile_view::Compiler>,
     snapshot_task: Option<Task<()>>,
     snapshot_timer: Option<Task<()>>,
     snapshot_needed: bool,
@@ -107,6 +112,7 @@ struct Selection {
     comment_error: Option<String>,
     pending_comment: Option<Comment>,
     comment_status: Option<&'static str>,
+    build: WorkspaceBuild,
 }
 
 struct FileTab {
@@ -189,6 +195,9 @@ impl Library {
             comment_drafts: HashMap::new(),
             save_task: None,
             save_queue: VecDeque::new(),
+            build_task: None,
+            #[cfg(all(test, feature = "ui-tests"))]
+            test_compiler: None,
             snapshot_task: None,
             snapshot_timer: None,
             snapshot_needed: false,
@@ -239,6 +248,7 @@ impl Library {
             comment_error: None,
             pending_comment: None,
             comment_status: None,
+            build: WorkspaceBuild::new(),
         });
         let path = self.projects_dir.clone();
         let load = cx.background_executor().spawn(async move {
@@ -440,6 +450,7 @@ impl Library {
 
     fn project_writes_ready(&self) -> bool {
         self.restore_task.is_none()
+            && self.build_task.is_none()
             && self.comment_write_task.is_none()
             && self.project_rename_task.is_none()
             && self.entry_write_task.is_none()
@@ -539,6 +550,7 @@ impl Library {
                     let mut reload_source = None;
                     match result {
                         Ok(Some(restored)) => {
+                            selection.build.invalidate();
                             selection.restore_error = restored.comment_warning.map(|error| format!("Project restored. Comment anchors could not be updated. {error}"));
                             selection.retained_restore_stages |= restored.cleanup_pending != 0;
                             selection.project = restored.project;
@@ -555,7 +567,7 @@ impl Library {
                                 selection.expanded_folders.extend(path.match_indices('/').map(|(index, _)| path[..index].to_owned()));
                             }
                         }
-                        Ok(None) => {}
+                        Ok(None) => selection.build.invalidate(),
                         Err(error) => selection.restore_error = Some(format!("{action} failed. {error}")),
                     }
                     if let Some(file) = file {
@@ -616,6 +628,20 @@ impl Library {
     }
 
     fn queue_save(&mut self, file: &str, window: &Window, cx: &mut Context<Self>) {
+        if let Some(selection) = &mut self.selection
+            && selection.tabs.iter().any(|tab| {
+                tab.path == file
+                    && tab
+                        .editor
+                        .as_ref()
+                        .and_then(|editor| editor.as_ref().ok())
+                        .is_some_and(|editor| {
+                            editor.saved != editor.state.read(cx).value().as_ref()
+                        })
+            })
+        {
+            selection.build.invalidate();
+        }
         // Queue the path so later edits can share one write of the latest document.
         if !self.save_queue.iter().any(|queued| queued == file) {
             self.save_queue.push_back(file.to_owned());
@@ -625,6 +651,7 @@ impl Library {
 
     fn start_next_save(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.save_task.is_some()
+            || self.build_task.is_some()
             || self.snapshot_task.is_some()
             || self.restore_task.is_some()
             || self.comment_write_task.is_some()
@@ -713,6 +740,7 @@ impl Library {
 
     fn start_snapshot(&mut self, window: &Window, cx: &mut Context<Self>) {
         if !self.snapshot_needed
+            || self.build_task.is_some()
             || self.save_task.is_some()
             || self.snapshot_task.is_some()
             || self.restore_task.is_some()
@@ -752,6 +780,7 @@ impl Library {
 
     fn resume_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save_task.is_none()
+            && self.build_task.is_none()
             && self.snapshot_task.is_none()
             && self.restore_task.is_none()
             && self.comment_write_task.is_none()
@@ -759,7 +788,14 @@ impl Library {
             && self.entry_write_task.is_none()
             && let Some(navigation) = self.navigation_after_save.take()
         {
+            let closing_window = matches!(navigation, Navigation::CloseWindow);
             self.request_navigation(navigation, window, cx);
+            if closing_window {
+                return;
+            }
+        }
+        if self.navigation_after_save.is_none() {
+            self.start_queued_build(window, cx);
         }
     }
 
@@ -797,6 +833,11 @@ impl Library {
                 || self.deleted_files_dialog.is_some())
                 && !matches!(navigation, Navigation::CloseWindow)
         {
+            return;
+        }
+        if self.build_task.is_some() && !matches!(navigation, Navigation::CloseFile(_)) {
+            self.stop_build();
+            self.navigation_after_save = Some(navigation);
             return;
         }
         if self.save_task.is_some()
@@ -1327,6 +1368,10 @@ impl Library {
                     .child(self.deleted_files_button(palette, cx)),
             )
             .child(self.source_pane(selection, palette, cx))
+            .when(
+                !selection.show_comments && !selection.show_versions,
+                |workspace| workspace.child(self.compile_pane(&selection.build, palette, cx)),
+            )
             .when(selection.show_comments, |workspace| {
                 workspace.child(self.comments_pane(selection, palette, cx))
             })
@@ -1810,6 +1855,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             && library.save_queue.is_empty()
                             && library.snapshot_task.is_none()
                             && library.entry_write_task.is_none()
+                            && library.build_task.is_none()
                             && library.project_library_task.is_none()
                             && !library.snapshot_needed
                             && !library.has_unsaved_changes(&close, cx)

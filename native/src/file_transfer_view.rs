@@ -1,7 +1,7 @@
 use super::{Library, Navigation, Palette};
 use gpui::{Context, KeyDownEvent, Window, div, prelude::*, rgb};
 use gpui_component::WindowExt;
-use refract_native::{Project, download_project_file, export_project_zip};
+use refract_native::{Project, download_project_file, export_project_zip, tex::save_compiled_pdf};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -10,6 +10,7 @@ use std::{
 enum Transfer {
     File(String),
     Zip,
+    Pdf(PathBuf),
 }
 
 impl Transfer {
@@ -17,6 +18,7 @@ impl Transfer {
         match self {
             Self::File(path) => path.rsplit('/').next().unwrap_or(path),
             Self::Zip => "project.zip",
+            Self::Pdf(_) => "main.pdf",
         }
     }
 
@@ -24,6 +26,7 @@ impl Transfer {
         match self {
             Self::File(_) => "download file",
             Self::Zip => "export project",
+            Self::Pdf(_) => "download PDF",
         }
     }
 
@@ -31,6 +34,7 @@ impl Transfer {
         match self {
             Self::File(path) => download_project_file(projects, project, &path, destination),
             Self::Zip => export_project_zip(projects, project, destination),
+            Self::Pdf(path) => save_compiled_pdf(&path, destination),
         }
     }
 }
@@ -71,6 +75,17 @@ impl Library {
         self.start_file_transfer(Transfer::File(path), window, cx);
     }
 
+    pub(super) fn download_built_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.build.pdf())
+            .map(Path::to_path_buf)
+        {
+            self.start_file_transfer(Transfer::Pdf(path), window, cx);
+        }
+    }
+
     fn start_file_transfer(
         &mut self,
         transfer: Transfer,
@@ -83,7 +98,7 @@ impl Library {
         let ready = self.project_writes_idle();
         let scope = match &transfer {
             Transfer::File(path) => Navigation::CloseFile(path.clone()),
-            Transfer::Zip => Navigation::Projects,
+            Transfer::Zip | Transfer::Pdf(_) => Navigation::Projects,
         };
         let has_edits = self.has_unsaved_changes(&scope, cx);
         let Some(selection) = &mut self.selection else {

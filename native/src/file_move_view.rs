@@ -514,6 +514,7 @@ impl Library {
         }
         selection.project = moved.project;
         selection.tree = Some(moved.tree);
+        selection.build.invalidate();
         selection.versions = Some(moved.versions);
         selection.comparison = None;
         self.comparison_task = None;

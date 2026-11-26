@@ -263,6 +263,7 @@ impl Library {
                     selection.tree = Some(tree);
                     match result {
                         Ok(path) => {
+                            selection.build.invalidate();
                             selection.expanded_folders.extend(
                                 path.match_indices('/')
                                     .map(|(index, _)| path[..index].to_owned()),
@@ -343,6 +344,7 @@ impl Library {
                         library.tree_task = None;
                         selection.tree = Some(tree);
                         selection.file_action_error = None;
+                        selection.build.invalidate();
                     }
                     if let Some(error) = error {
                         let action = if select_files {

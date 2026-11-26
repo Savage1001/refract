@@ -192,6 +192,7 @@ impl Library {
         let removed = |path: &str| entry_contains(&entry.path, entry.kind(), path);
         self.tree_task = None;
         selection.tree = Some(tree);
+        selection.build.invalidate();
         selection.expanded_folders.retain(|path| !removed(path));
         selection.tabs.retain(|tab| !removed(&tab.path));
         if selection.file.as_deref().is_some_and(removed) {
@@ -390,6 +391,7 @@ impl Library {
         };
         self.tree_task = None;
         selection.tree = Some(tree);
+        selection.build.invalidate();
         let root = selection.project.root_file().replace('\\', "/");
         let open = match entry.kind() {
             ProjectEntryKind::File => Some(entry.path),

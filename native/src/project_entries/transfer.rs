@@ -73,7 +73,7 @@ fn zip_entries(
     Ok(())
 }
 
-fn write_transfer(
+pub(crate) fn write_transfer(
     destination: &Path,
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<()> {
