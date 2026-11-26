@@ -2,7 +2,13 @@ use crate::{Project, project_directory, read_local_file};
 use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use serde_json::value::{RawValue, to_raw_value};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fmt::Write, io, ops::Range, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write,
+    io,
+    ops::Range,
+    path::Path,
+};
 
 const COMMENTS_LIMIT: usize = 4 * 1024 * 1024;
 const MAX_MATCHES: usize = 10_000;
@@ -238,14 +244,21 @@ pub(crate) fn plan_edit(
 }
 
 pub(crate) fn has_attached_anchors(metadata: &[u8], file: &str) -> io::Result<bool> {
+    Ok(attached_files(metadata)?.contains(file))
+}
+
+pub(crate) fn attached_files(metadata: &[u8]) -> io::Result<BTreeSet<String>> {
     let comments: Vec<Comment> = serde_json::from_slice(metadata)?;
-    Ok(comments.iter().any(|comment| {
-        comment.file == file
-            && comment
+    Ok(comments
+        .into_iter()
+        .filter(|comment| {
+            comment
                 .anchor
                 .as_ref()
                 .is_some_and(|anchor| anchor.status != "orphaned")
-    }))
+        })
+        .map(|comment| comment.file)
+        .collect())
 }
 
 fn update_anchors(

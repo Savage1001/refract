@@ -14,7 +14,9 @@ use std::{
 use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
+mod project_restore;
 mod restore_stage;
+pub use project_restore::{ProjectRestore, recover_project_restore, restore_project_version};
 pub use restore_stage::retry_retained_restore_stages;
 
 const MANIFEST_LIMIT: usize = 4 * 1024 * 1024;

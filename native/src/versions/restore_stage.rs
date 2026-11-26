@@ -2,34 +2,142 @@ use super::{
     MANIFEST_LIMIT, Project, copy_and_hash, is_project_id, open_local_file, open_version,
     project_directory, read_local_file, valid_project_component, valid_version_path, version_file,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, Metadata},
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     thread,
     time::Duration,
 };
+use uuid::Uuid;
 use zip::ZipArchive;
 
 const STAGE_PREFIX: &str = ".refract-restore-";
 const CLEANUP_PREFIX: &str = ".refract-cleanup-";
 const OWNER_FILE: &str = ".refract-stage-owner";
+const JOURNAL_FILE: &str = ".refract-restore-journal.json";
 
 #[derive(Deserialize)]
 struct CleanupRecord {
-    stages: Vec<RestoreStage>,
+    stages: Vec<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RestoreStage {
+pub(super) struct RestoreStage {
     id: String,
     owner: String,
     target_id: String,
     before_id: String,
     files: Vec<String>,
     blockers: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreRecord {
+    recovery_id: String,
+    stages: Option<Vec<serde_json::Value>>,
+}
+
+pub(super) struct RestoreJournal {
+    path: PathBuf,
+    record: RestoreRecord,
+}
+
+impl RestoreJournal {
+    pub(super) fn create(folder: &Path, recovery_id: String) -> io::Result<Self> {
+        let journal = Self {
+            path: folder.join(JOURNAL_FILE),
+            record: RestoreRecord {
+                recovery_id,
+                stages: Some(Vec::new()),
+            },
+        };
+        journal.write(folder, true)?;
+        Ok(journal)
+    }
+
+    pub(super) fn read(folder: &Path) -> io::Result<Option<Self>> {
+        let path = folder.join(JOURNAL_FILE);
+        match checked_info(&path) {
+            Ok(info) if info.is_file() => {}
+            Ok(_) => return Err(invalid_stage()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let record: RestoreRecord =
+            serde_json::from_slice(&read_local_file(folder, &path, MANIFEST_LIMIT)?)?;
+        if !is_project_id(&record.recovery_id) {
+            return Err(invalid_stage());
+        }
+        Ok(Some(Self { path, record }))
+    }
+
+    pub(super) fn recovery_id(&self) -> &str {
+        &self.record.recovery_id
+    }
+
+    pub(super) fn stage(
+        &mut self,
+        folder: &Path,
+        target_id: String,
+        before_id: String,
+        files: Vec<String>,
+        blockers: Vec<String>,
+    ) -> io::Result<PathBuf> {
+        let stage = RestoreStage {
+            id: Uuid::new_v4().to_string(),
+            owner: Uuid::new_v4().to_string(),
+            target_id,
+            before_id,
+            files,
+            blockers,
+        };
+        self.record
+            .stages
+            .get_or_insert_with(Vec::new)
+            .push(serde_json::to_value(&stage)?);
+        self.write(folder, false)?;
+        let path = folder.join(format!("{STAGE_PREFIX}{}", stage.id));
+        fs::create_dir(&path)?;
+        let mut marker = File::create_new(path.join(OWNER_FILE))?;
+        marker.write_all(stage.owner.as_bytes())?;
+        marker.sync_all()?;
+        Ok(path)
+    }
+
+    pub(super) fn finish(self, folder: &Path) -> io::Result<usize> {
+        let pending = clean_stages(folder, self.record.stages.unwrap_or_default());
+        if pending == 0 {
+            fs::remove_file(self.path)?;
+        } else {
+            fs::rename(
+                self.path,
+                folder.join(format!("{CLEANUP_PREFIX}{}.json", Uuid::new_v4())),
+            )?;
+        }
+        Ok(pending)
+    }
+
+    fn write(&self, folder: &Path, create: bool) -> io::Result<()> {
+        let bytes = serde_json::to_vec(&self.record)?;
+        if bytes.len() > MANIFEST_LIMIT {
+            return Err(invalid_stage());
+        }
+        let mut stage = tempfile::Builder::new()
+            .prefix(".refract-journal-")
+            .tempfile_in(folder)?;
+        stage.write_all(&bytes)?;
+        stage.as_file().sync_all()?;
+        let saved = if create {
+            stage.persist_noclobber(&self.path)
+        } else {
+            stage.persist(&self.path)
+        };
+        saved.map(|_| ()).map_err(|error| error.error)
+    }
 }
 
 pub fn retry_retained_restore_stages(projects_dir: &Path, project: &Project) -> io::Result<usize> {
@@ -69,17 +177,24 @@ fn retry_cleanup_record(folder: &Path, path: &Path) -> io::Result<()> {
     }
     let bytes = read_local_file(folder, path, MANIFEST_LIMIT)?;
     let record: CleanupRecord = serde_json::from_slice(&bytes)?;
-    let mut retained = false;
-    for stage in record.stages {
-        retained |= retry_stage(folder, &stage).is_err();
-    }
-    if retained
+    if clean_stages(folder, record.stages) != 0
         || !same_entry(&checked_info(path)?, &original)
         || read_local_file(folder, path, MANIFEST_LIMIT)? != bytes
     {
         return Err(invalid_stage());
     }
     fs::remove_file(path)
+}
+
+fn clean_stages(folder: &Path, stages: Vec<serde_json::Value>) -> usize {
+    stages
+        .into_iter()
+        .map(|stage| {
+            serde_json::from_value::<RestoreStage>(stage)
+                .map_or(true, |stage| retry_stage(folder, &stage).is_err())
+        })
+        .filter(|pending| *pending)
+        .count()
 }
 
 fn retry_stage(folder: &Path, record: &RestoreStage) -> io::Result<()> {
@@ -242,7 +357,7 @@ fn inspect_entry(
     Ok(())
 }
 
-fn checked_info(path: &Path) -> io::Result<Metadata> {
+pub(super) fn checked_info(path: &Path) -> io::Result<Metadata> {
     let info = path.symlink_metadata()?;
     #[cfg(windows)]
     {

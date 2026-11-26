@@ -9,7 +9,8 @@ use gpui_component::{
 };
 use refract_native::comments::{Comment, read_comments};
 use refract_native::versions::{
-    Version, list_versions, restore_version_file, retry_retained_restore_stages, snapshot_project,
+    Version, list_versions, recover_project_restore, restore_project_version, restore_version_file,
+    retry_retained_restore_stages, snapshot_project,
 };
 use refract_native::{
     Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
@@ -87,12 +88,24 @@ enum Navigation {
     CloseWindow,
 }
 
+#[derive(Clone, Copy)]
+enum RestoreKind {
+    File,
+    Project,
+}
+
 impl Library {
     fn new(projects_dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let path = projects_dir.clone();
-        let load = cx
-            .background_executor()
-            .spawn(async move { list_projects(&path) });
+        let load = cx.background_executor().spawn(async move {
+            let mut projects = list_projects(&path)?;
+            for project in &mut projects {
+                if let Some(recovered) = recover_project_restore(&path, project)? {
+                    *project = recovered.project;
+                }
+            }
+            Ok(projects)
+        });
         cx.spawn(async move |library, cx| {
             let projects = load.await;
             let _ = library.update(cx, |library, cx| {
@@ -349,30 +362,48 @@ impl Library {
     fn file_to_restore<'a>(&'a self, version: &Version, cx: &App) -> Option<&'a str> {
         let selection = self.selection.as_ref()?;
         let file = selection.file.as_deref()?;
-        (self.restore_task.is_none()
-            && self.save_task.is_none()
-            && self.save_queue.is_empty()
-            && self.snapshot_task.is_none()
+        (self.restore_idle()
             && !self.has_unsaved_changes(&Navigation::CloseFile(file.to_owned()), cx)
             && version.files.iter().any(|name| name == file))
         .then_some(file)
     }
 
-    fn request_version_file_restore(
+    fn restore_idle(&self) -> bool {
+        self.restore_task.is_none()
+            && self.save_task.is_none()
+            && self.save_queue.is_empty()
+            && self.snapshot_task.is_none()
+            && self.discard_prompt.is_none()
+    }
+
+    fn can_restore_project(&self, cx: &App) -> bool {
+        self.restore_idle() && !self.has_unsaved_changes(&Navigation::Projects, cx)
+    }
+
+    fn request_version_restore(
         &mut self,
         version_id: &str,
+        kind: RestoreKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(file) = self
+        let Some(version) = self
             .selection
             .as_ref()
             .and_then(|selection| selection.versions.as_ref()?.as_ref().ok())
             .and_then(|versions| versions.iter().find(|version| version.id == version_id))
-            .and_then(|version| self.file_to_restore(version, cx))
-            .map(str::to_owned)
         else {
             return;
+        };
+        let file = match kind {
+            RestoreKind::File => {
+                let Some(file) = self.file_to_restore(version, cx) else {
+                    return;
+                };
+                Some(file.to_owned())
+            }
+            RestoreKind::Project if self.can_restore_project(cx) => None,
+            RestoreKind::Project => return,
         };
         let Some(selection) = &mut self.selection else {
             return;
@@ -380,11 +411,23 @@ impl Library {
         selection.restore_error = None;
         let project = selection.project.clone();
         let version_id = version_id.to_owned();
+        let (message, detail, action) = match &file {
+            Some(file) => (
+                format!("Restore {file} from this version?"),
+                None,
+                "Restore file",
+            ),
+            None => (
+                "Restore all project files from this version?".into(),
+                Some("The current project will be saved as a version first."),
+                "Restore project",
+            ),
+        };
         let answer = window.prompt(
             PromptLevel::Warning,
-            &format!("Restore {file} from this version?"),
-            None,
-            &["Cancel", "Restore file"],
+            &message,
+            detail,
+            &["Cancel", action],
             cx,
         );
         let executor = cx.background_executor().clone();
@@ -395,8 +438,10 @@ impl Library {
                 Some(
                     executor
                         .spawn(async move {
-                            let result =
-                                restore_version_file(&path, &project, &version_id, &restored_file);
+                            let result = match restored_file {
+                                Some(file) => restore_version_file(&path, &project, &version_id, &file).map(|()| None),
+                                None => restore_project_version(&path, &project, &version_id).map(Some),
+                            };
                             (
                                 result,
                                 project_tree(&path, &project),
@@ -418,13 +463,38 @@ impl Library {
                     selection.comparison = None;
                     selection.tree = Some(tree);
                     selection.versions = Some(versions);
-                    selection.restore_error = result.err().map(|error| error.to_string());
-                    if let Some(tab) = selection.tabs.iter_mut().find(|tab| tab.path == file) {
-                        tab.editor = None;
+                    let mut reload_source = None;
+                    match result {
+                        Ok(Some(restored)) => {
+                            selection.restore_error = restored.comment_warning.map(|error| format!("Project restored. Comment anchors could not be updated. {error}"));
+                            selection.retained_restore_stages |= restored.cleanup_pending != 0;
+                            selection.project = restored.project;
+                            selection.file = None;
+                            selection.tabs.clear();
+                            selection.pending_comment = None;
+                            selection.comment_status = None;
+                            library.preview_task = None;
+                            if let Some(Ok(entries)) = &selection.tree {
+                                let root = selection.project.root_file().replace('\\', "/");
+                                reload_source = preferred_source(entries, &root).map(str::to_owned);
+                            }
+                            if let Some(path) = &reload_source {
+                                selection.expanded_folders.extend(path.match_indices('/').map(|(index, _)| path[..index].to_owned()));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => selection.restore_error = Some(format!("{action} failed. {error}")),
                     }
-                    let reload_source = selection.file.as_deref() == Some(file.as_str());
+                    if let Some(file) = file {
+                        if let Some(tab) = selection.tabs.iter_mut().find(|tab| tab.path == file) {
+                            tab.editor = None;
+                        }
+                        if selection.file.as_deref() == Some(file.as_str()) {
+                            reload_source = Some(file);
+                        }
+                    }
                     let reload_comments = selection.show_comments;
-                    if reload_source {
+                    if let Some(file) = reload_source {
                         library.open_file(file, window, cx);
                     }
                     if reload_comments {
@@ -1149,28 +1219,23 @@ impl Library {
             .flex_1()
             .min_h(px(0.))
             .overflow_y_scroll();
-        pane.children(
-            selection
-                .restore_error
-                .as_ref()
-                .map(|error| format!("Couldn’t restore file: {error}")),
-        )
-        .child(match &selection.versions {
-            None => list.child("Loading versions…"),
-            Some(Err(error)) => list.child(format!("Couldn’t load version history: {error}")),
-            Some(Ok(versions)) if versions.is_empty() => list.child("No saved versions."),
-            Some(Ok(versions)) => {
-                list.children(versions.iter().enumerate().map(|(index, version)| {
-                    self.version_row(
-                        version,
-                        versions.len() - index,
-                        selection.comparison.as_ref(),
-                        palette,
-                        cx,
-                    )
-                }))
-            }
-        })
+        pane.children(selection.restore_error.clone())
+            .child(match &selection.versions {
+                None => list.child("Loading versions…"),
+                Some(Err(error)) => list.child(format!("Couldn’t load version history: {error}")),
+                Some(Ok(versions)) if versions.is_empty() => list.child("No saved versions."),
+                Some(Ok(versions)) => {
+                    list.children(versions.iter().enumerate().map(|(index, version)| {
+                        self.version_row(
+                            version,
+                            versions.len() - index,
+                            selection.comparison.as_ref(),
+                            palette,
+                            cx,
+                        )
+                    }))
+                }
+            })
     }
 
     fn comments_pane(
@@ -1607,6 +1672,22 @@ fn monospace_font() -> &'static str {
     }
 }
 
+fn preferred_source<'a>(entries: &'a [ProjectEntry], preferred: &str) -> Option<&'a str> {
+    let mut first = None;
+    for entry in entries {
+        let file = if let Some(children) = &entry.children {
+            preferred_source(children, preferred)
+        } else {
+            Some(entry.path.as_str())
+        };
+        if file == Some(preferred) {
+            return file;
+        }
+        first = first.or(file);
+    }
+    first
+}
+
 fn projects_dir() -> Option<PathBuf> {
     if let Some(profile) = env::var_os("REFRACT_DATA_DIR").filter(|path| !path.is_empty()) {
         return Some(PathBuf::from(profile).join("projects"));
@@ -1692,7 +1773,7 @@ mod tests {
     use std::fs;
 
     #[gpui::test]
-    fn confirms_file_restore_and_reloads_the_active_editor(cx: &mut TestAppContext) {
+    fn confirms_version_restores_and_reloads_the_editor(cx: &mut TestAppContext) {
         let projects = tempfile::tempdir().unwrap();
         let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
         let folder = projects.path().join(id);
@@ -1707,6 +1788,8 @@ mod tests {
         let project = list_projects(projects.path()).unwrap().pop().unwrap();
         let version = snapshot_project(projects.path(), &project).unwrap();
         fs::write(&source, "Current\n").unwrap();
+        let notes = folder.join("notes.tex");
+        fs::write(&notes, "Later notes").unwrap();
 
         cx.update(initialize_app);
         let mut library = None;
@@ -1725,7 +1808,7 @@ mod tests {
         cx.run_until_parked();
         let request = |window: &mut Window, app: &mut App| {
             library.update(app, |library, cx| {
-                library.request_version_file_restore(&version.id, window, cx)
+                library.request_version_restore(&version.id, RestoreKind::File, window, cx)
             });
         };
         cx.update(request);
@@ -1748,6 +1831,29 @@ mod tests {
                 selection.versions.as_ref().unwrap().as_ref().unwrap().len(),
                 3
             );
+            assert!(selection.restore_error.is_none());
+        });
+        cx.update(|window, app| {
+            library.update(app, |library, cx| {
+                library.open_file("notes.tex".into(), window, cx)
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            library.update(app, |library, cx| {
+                library.request_version_restore(&version.id, RestoreKind::Project, window, cx)
+            });
+        });
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Restore project");
+        cx.run_until_parked();
+        assert!(!notes.exists());
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert_eq!(selection.file.as_deref(), Some("main.tex"));
+            assert_eq!(selection.tabs.len(), 1);
+            let document = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(document.state.read(app).value().as_ref(), "Original\n");
             assert!(selection.restore_error.is_none());
         });
     }
@@ -1880,7 +1986,7 @@ mod tests {
             assert!(selection.show_versions);
             window.focused(app).unwrap()
         });
-        cx.simulate_keystrokes("tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             let comparison = selection.comparison.as_ref().unwrap();

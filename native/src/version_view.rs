@@ -1,4 +1,4 @@
-use super::{Library, Palette, monospace_font};
+use super::{Library, Palette, RestoreKind, monospace_font};
 use gpui::{
     AnyElement, Context, ElementId, FontWeight, KeyDownEvent, ListAlignment, ListState,
     SharedString, Window, div, list, prelude::*, px, rgb,
@@ -197,26 +197,21 @@ impl Library {
         let unit = if files == 1 { "file" } else { "files" };
         let version_id = version.id.clone();
         let comparison = comparison.filter(|active| active.version_id == version_id);
-        let restore = if self.file_to_restore(version, cx).is_some() {
-            let restore_id = version.id.clone();
-            comparison_button(
-                "restore-file",
-                "Restore file",
-                false,
-                palette,
-                cx,
-                move |library, window, cx| {
-                    library.request_version_file_restore(&restore_id, window, cx)
-                },
-            )
-            .into_any_element()
-        } else {
-            div()
-                .px_2()
-                .py_1()
-                .text_color(rgb(palette.muted))
-                .child("Restore file")
+        let restore_button = |id: &'static str, label: &'static str, enabled, kind| {
+            if enabled {
+                let restore_id = version.id.clone();
+                comparison_button(id, label, false, palette, cx, move |library, window, cx| {
+                    library.request_version_restore(&restore_id, kind, window, cx)
+                })
                 .into_any_element()
+            } else {
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_color(rgb(palette.muted))
+                    .child(label)
+                    .into_any_element()
+            }
         };
         div()
             .id(SharedString::from(format!("version/{}", version.id)))
@@ -228,7 +223,18 @@ impl Library {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("v{number} · {timestamp} · {files} {unit}")),
             )
-            .child(restore)
+            .child(restore_button(
+                "restore-file",
+                "Restore file",
+                self.file_to_restore(version, cx).is_some(),
+                RestoreKind::File,
+            ))
+            .child(restore_button(
+                "restore-project",
+                "Restore project",
+                self.can_restore_project(cx),
+                RestoreKind::Project,
+            ))
             .child(comparison_button(
                 "compare",
                 "Compare with current",
