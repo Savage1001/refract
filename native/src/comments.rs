@@ -243,6 +243,27 @@ pub(crate) fn has_attached_anchors(metadata: &[u8], file: &str) -> io::Result<bo
     Ok(attached_files(metadata)?.contains(file))
 }
 
+pub(crate) fn remap_files(
+    metadata: &[u8],
+    mut remap: impl FnMut(&str) -> Option<String>,
+) -> io::Result<Option<Vec<u8>>> {
+    let mut records: Vec<Box<RawValue>> = serde_json::from_slice(metadata)?;
+    let mut changed = false;
+    for record in &mut records {
+        let mut fields: BTreeMap<String, Box<RawValue>> = serde_json::from_str(record.get())?;
+        let next = fields
+            .get("file")
+            .and_then(|value| serde_json::from_str::<String>(value.get()).ok())
+            .and_then(|file| remap(&file));
+        if let Some(file) = next {
+            fields.insert("file".into(), to_raw_value(&file)?);
+            *record = to_raw_value(&fields)?;
+            changed = true;
+        }
+    }
+    encode_changed_comments(&records, changed)
+}
+
 pub(crate) fn attached_files(metadata: &[u8]) -> io::Result<BTreeSet<String>> {
     let comments: Vec<Comment> = serde_json::from_slice(metadata)?;
     Ok(comments
@@ -286,8 +307,15 @@ fn update_anchors(
         changed = true;
     }
 
+    encode_changed_comments(&records, changed)
+}
+
+fn encode_changed_comments(
+    records: &[Box<RawValue>],
+    changed: bool,
+) -> io::Result<Option<Vec<u8>>> {
     if changed {
-        let bytes = serde_json::to_vec(&records)?;
+        let bytes = serde_json::to_vec(records)?;
         if bytes.len() > COMMENTS_LIMIT {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

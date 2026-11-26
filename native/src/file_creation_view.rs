@@ -7,7 +7,6 @@ use gpui_component::{
     WindowExt,
     dialog::DialogButtonProps,
     input::{Input, InputEvent, InputState},
-    menu::{ContextMenuExt, PopupMenuItem},
     select::{Select, SelectItem, SelectState},
 };
 use refract_native::{ProjectEntry, ProjectEntryKind, create_project_entry, project_tree};
@@ -85,25 +84,7 @@ impl Library {
             }))
     }
 
-    pub(super) fn folder_add_menu<E>(row: E, path: String, cx: &Context<Self>) -> impl IntoElement
-    where
-        E: ParentElement + Styled + IntoElement + 'static,
-    {
-        let library = cx.weak_entity();
-        row.context_menu(move |menu, _, _| {
-            let path = path.clone();
-            let library = library.clone();
-            menu.item(
-                PopupMenuItem::new("Add items").on_click(move |_, window, app| {
-                    let _ = library.update(app, |library, cx| {
-                        library.open_create_entry_dialog(&path, window, cx)
-                    });
-                }),
-            )
-        })
-    }
-
-    fn open_create_entry_dialog(
+    pub(super) fn open_create_entry_dialog(
         &mut self,
         folder: &str,
         window: &mut Window,

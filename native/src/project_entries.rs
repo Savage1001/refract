@@ -5,6 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod relocate;
+pub use relocate::{ProjectEntryMove, move_project_entry};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProjectEntryKind {
     File,

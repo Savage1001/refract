@@ -28,11 +28,13 @@ use std::{
 mod comments_view;
 mod deleted_projects_view;
 mod file_creation_view;
+mod file_move_view;
 mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
 use deleted_projects_view::DeletedProjectsDialog;
 use file_creation_view::EntryDraft;
+use file_move_view::EntryMoveDraft;
 use project_management_view::{ProjectFocus, RenameDraft};
 use version_view::Comparison;
 
@@ -56,6 +58,7 @@ struct Library {
     tree_task: Option<Task<()>>,
     entry_write_task: Option<Task<()>>,
     entry_draft: Option<EntryDraft>,
+    move_draft: Option<EntryMoveDraft>,
     preview_task: Option<Task<()>>,
     comments_task: Option<Task<()>>,
     comment_write_task: Option<Task<()>>,
@@ -162,6 +165,7 @@ impl Library {
             tree_task: None,
             entry_write_task: None,
             entry_draft: None,
+            move_draft: None,
             preview_task: None,
             comments_task: None,
             comment_write_task: None,
@@ -286,16 +290,7 @@ impl Library {
                             .soft_wrap(false)
                             .default_value(source.clone())
                     });
-                    let autosave_file = file.clone();
-                    let autosave = cx.subscribe_in(
-                        &state,
-                        window,
-                        move |library, _, event: &InputEvent, window, cx| {
-                            if matches!(event, InputEvent::Change) {
-                                library.queue_save(&autosave_file, window, cx);
-                            }
-                        },
-                    );
+                    let autosave = Self::watch_source(&state, &file, window, cx);
                     EditorDocument {
                         state,
                         saved: source,
@@ -313,6 +308,24 @@ impl Library {
             });
         }));
         cx.notify();
+    }
+
+    fn watch_source(
+        state: &Entity<InputState>,
+        file: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        let file = file.to_owned();
+        cx.subscribe_in(
+            state,
+            window,
+            move |library, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    library.queue_save(&file, window, cx);
+                }
+            },
+        )
     }
 
     fn close_file(&mut self, file: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -398,7 +411,10 @@ impl Library {
     }
 
     fn project_writes_idle(&self) -> bool {
-        self.project_writes_ready() && self.rename_draft.is_none() && self.entry_draft.is_none()
+        self.project_writes_ready()
+            && self.rename_draft.is_none()
+            && self.entry_draft.is_none()
+            && self.move_draft.is_none()
     }
 
     fn project_writes_ready(&self) -> bool {
@@ -754,7 +770,8 @@ impl Library {
             || self.project_action_prompt.is_some()
             || (self.rename_draft.is_some()
                 || self.deleted_projects_dialog.is_some()
-                || self.entry_draft.is_some())
+                || self.entry_draft.is_some()
+                || self.move_draft.is_some())
                 && !matches!(navigation, Navigation::CloseWindow)
         {
             return;
@@ -1419,11 +1436,7 @@ impl Library {
                     }
                 }),
             );
-        let row = if is_folder {
-            Self::folder_add_menu(row, entry.path.clone(), cx).into_any_element()
-        } else {
-            row.into_any_element()
-        };
+        let row = Self::entry_menu(row, entry.path.clone(), is_folder, cx);
         let mut node = div()
             .id(SharedString::from(format!("entry/{}", entry.path)))
             .child(row);
@@ -1666,7 +1679,7 @@ impl Library {
                 .min_h(px(0.))
                 .child(
                     Input::new(&editor.state)
-                        .disabled(self.restore_task.is_some())
+                        .disabled(self.restore_task.is_some() || self.entry_write_task.is_some())
                         .h_full()
                         .appearance(false)
                         .font_family(monospace_font())

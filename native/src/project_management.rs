@@ -256,7 +256,7 @@ pub fn rename_project(projects_dir: &Path, project: &Project, name: &str) -> io:
     Ok(renamed)
 }
 
-fn read_project_metadata(folder: &Path, path: &Path) -> io::Result<Vec<u8>> {
+pub(super) fn read_project_metadata(folder: &Path, path: &Path) -> io::Result<Vec<u8>> {
     if !path.symlink_metadata()?.is_file() {
         return Err(invalid_metadata());
     }
