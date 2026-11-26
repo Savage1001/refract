@@ -35,6 +35,7 @@ mod file_move_view;
 mod file_search_view;
 mod file_transfer_view;
 mod file_trash_view;
+mod outline_view;
 mod pdf_view;
 mod project_import_view;
 mod project_info_view;
@@ -51,6 +52,7 @@ use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
 use file_search_view::{FileSearch, RefractAssets};
 use file_trash_view::DeletedFilesDialog;
+use outline_view::OutlinePane;
 use project_import_view::ImportDraft;
 use project_info_view::ProjectInfoState;
 use project_management_view::{ProjectFocus, RenameDraft};
@@ -87,6 +89,7 @@ struct Library {
     move_draft: Option<EntryMoveDraft>,
     preview_task: Option<Task<()>>,
     editor_find: EditorFind,
+    outline: OutlinePane,
     comments_task: Option<Task<()>>,
     comment_write_task: Option<Task<()>>,
     comment_drafts: HashMap<String, CommentDrafts>,
@@ -187,6 +190,7 @@ impl Library {
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle);
+        let outline = OutlinePane::new(&projects_dir);
         Self {
             projects_dir,
             projects: None,
@@ -214,6 +218,7 @@ impl Library {
             move_draft: None,
             preview_task: None,
             editor_find: EditorFind::new(window, cx),
+            outline,
             comments_task: None,
             comment_write_task: None,
             comment_drafts: HashMap::new(),
@@ -328,10 +333,14 @@ impl Library {
             .iter()
             .any(|tab| tab.path == file && tab.editor.as_ref().is_some_and(Result::is_ok))
         {
+            if let Some(editor) = self.active_editor() {
+                self.refresh_outline(&editor, window, cx);
+            }
             self.refresh_find_for_file(window, cx);
             cx.notify();
             return;
         }
+        self.outline.clear(window);
         let project = selection.project.clone();
         let path = self.projects_dir.clone();
         let opened_file = file.clone();
@@ -401,6 +410,9 @@ impl Library {
                         .update(cx, |editor, cx| editor.focus(window, cx));
                 }
                 cx.notify();
+                if let Some(editor) = library.active_editor() {
+                    library.refresh_outline(&editor, window, cx);
+                }
                 if !has_source_destination {
                     library.refresh_find_for_file(window, cx);
                 }
@@ -423,6 +435,7 @@ impl Library {
                 if matches!(event, InputEvent::Change) {
                     library.queue_save(&file, window, cx);
                     library.sync_find_selection(&editor, true, window, cx);
+                    library.refresh_outline(&editor, window, cx);
                 }
             },
         )
@@ -444,6 +457,7 @@ impl Library {
             } else {
                 self.preview_task = None;
                 self.editor_find.visible = false;
+                self.outline.clear(window);
                 selection.file = None;
                 selection.pending_comment = None;
                 selection.comment_status = None;
@@ -472,6 +486,7 @@ impl Library {
         self.entry_menu = None;
         self.preview_task = None;
         self.editor_find.visible = false;
+        self.outline.clear(window);
         self.comments_task = None;
         self.comparison_task = None;
         if let Some(previous) = self.selection.take()
@@ -1435,6 +1450,7 @@ impl Library {
                     .children(selection.file_action_error.clone())
                     .child(self.file_search_panel(selection, palette, cx))
                     .child(self.file_tree(selection, palette, cx))
+                    .child(self.outline_pane(selection, palette, cx))
                     .child(self.deleted_files_button(palette, cx)),
             )
             .child(self.source_pane(selection, palette, cx))
@@ -1498,8 +1514,9 @@ impl Library {
     ) -> impl IntoElement {
         let tree = div()
             .id("file-tree")
+            .track_scroll(&self.outline.file_scroll)
             .flex_1()
-            .min_h(px(0.))
+            .min_h(px(48.))
             .overflow_y_scroll();
         match &selection.tree {
             None => tree.child(div().text_color(rgb(palette.muted)).child("Loading files…")),
@@ -2099,7 +2116,7 @@ mod tests {
             assert_eq!(versions[0].sequence, 2);
         });
         cx.update(|window, _| window.focus(&tree_focus));
-        cx.simulate_keystrokes("tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.file.as_deref(), Some("main.tex"));
@@ -2125,7 +2142,7 @@ mod tests {
             assert!(selection.tabs.is_empty());
             assert!(library.home_focus.is_focused(window));
         });
-        cx.simulate_keystrokes("tab tab tab tab tab tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.tool, Some(WorkspaceTool::Logs));

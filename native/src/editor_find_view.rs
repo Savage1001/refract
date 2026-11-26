@@ -3,10 +3,7 @@ use gpui::{
     App, Context, Div, Entity, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
     KeyDownEvent, Subscription, Window, actions, div, prelude::*, px, rgb,
 };
-use gpui_component::{
-    actions::SelectRight,
-    input::{Escape, Input, InputEvent, InputState, RopeExt, Search, SelectAll},
-};
+use gpui_component::input::{Escape, Input, InputEvent, InputState, RopeExt, Search, SelectAll};
 use refract_native::editor_find::{FindDirection, FindQuery, FindResults};
 use std::ops::Range;
 
@@ -66,7 +63,7 @@ impl EditorFind {
 }
 
 impl Library {
-    fn find_editor(&self) -> Option<Entity<InputState>> {
+    pub(super) fn active_editor(&self) -> Option<Entity<InputState>> {
         let selection = self.selection.as_ref()?;
         let file = selection.file.as_ref()?;
         let tab = selection.tabs.iter().find(|tab| tab.path == *file)?;
@@ -74,7 +71,7 @@ impl Library {
     }
 
     fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editor) = self.find_editor() else {
+        let Some(editor) = self.active_editor() else {
             return;
         };
         let range = selected_bytes(&editor, window, cx);
@@ -102,7 +99,7 @@ impl Library {
     fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editor_find.visible {
             self.editor_find.visible = false;
-            if let Some(editor) = self.find_editor() {
+            if let Some(editor) = self.active_editor() {
                 editor.update(cx, |editor, cx| editor.focus(window, cx));
             }
             cx.notify();
@@ -119,7 +116,7 @@ impl Library {
 
     pub(super) fn refresh_find_for_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editor_find.visible
-            && let Some(editor) = self.find_editor()
+            && let Some(editor) = self.active_editor()
         {
             self.editor_find.anchor = selected_bytes(&editor, window, cx).start;
             self.seek_find(
@@ -137,7 +134,7 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.editor_find.visible || self.find_editor().as_ref() != Some(editor) {
+        if !self.editor_find.visible || self.active_editor().as_ref() != Some(editor) {
             return;
         }
         let selection = selected_bytes(editor, window, cx);
@@ -161,7 +158,7 @@ impl Library {
     }
 
     fn navigate_find(&mut self, backward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.find_editor() {
+        if let Some(editor) = self.active_editor() {
             let range = selected_bytes(&editor, window, cx);
             let direction = if backward {
                 FindDirection::Before(range.start)
@@ -176,7 +173,7 @@ impl Library {
         if !self.editor_find.visible {
             return;
         }
-        let Some(editor) = self.find_editor() else {
+        let Some(editor) = self.active_editor() else {
             return;
         };
         let edge = if matches!(direction, FindDirection::Before(_)) {
@@ -225,7 +222,7 @@ impl Library {
         if self.restore_task.is_some() || self.entry_write_task.is_some() {
             return;
         }
-        let Some(editor) = self.find_editor() else {
+        let Some(editor) = self.active_editor() else {
             return;
         };
         let Some(query) = self.editor_find.pattern.as_ref() else {
@@ -544,10 +541,23 @@ fn select_editor_bytes(
         if !root.contains(&editor_focus, window) {
             window.draw(app).clear();
         }
-        for _ in 0..characters {
-            editor_focus.dispatch_action(&SelectRight, window, app);
-        }
+        extend_editor_selection(&editor_focus, characters, window, app);
     });
+}
+
+pub(super) fn extend_editor_selection(
+    focus: &FocusHandle,
+    characters: usize,
+    window: &mut Window,
+    app: &mut App,
+) {
+    // GPUI Component registers the selection action but keeps its Rust type private.
+    let action = app
+        .build_action("ui::SelectRight", None)
+        .expect("GPUI select-right action");
+    for _ in 0..characters {
+        focus.dispatch_action(action.as_ref(), window, app);
+    }
 }
 
 #[cfg(all(test, feature = "ui-tests"))]
@@ -581,7 +591,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, app| {
-            let state = library.read(app).find_editor().unwrap();
+            let state = library.read(app).active_editor().unwrap();
             state.update(app, |editor, cx| editor.focus(window, cx));
         });
         cx.simulate_keystrokes(if cfg!(target_os = "macos") {
@@ -620,7 +630,7 @@ mod tests {
         cx.update(|window, app| {
             let view = library.read(app);
             assert_eq!(
-                view.find_editor().unwrap().read(app).value().as_ref(),
+                view.active_editor().unwrap().read(app).value().as_ref(),
                 "needle one\n🙂 $1 two\n"
             );
             assert!(
@@ -641,7 +651,7 @@ mod tests {
             let view = library.read(app);
             assert!(!view.editor_find.visible);
             assert_eq!(
-                view.find_editor().unwrap().read(app).value().as_ref(),
+                view.active_editor().unwrap().read(app).value().as_ref(),
                 "needle one\n🙂 needle two\n"
             );
         });

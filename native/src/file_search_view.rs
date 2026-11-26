@@ -1,12 +1,9 @@
-use super::{Library, Palette, Selection};
+use super::{Library, Palette, Selection, editor_find_view::extend_editor_selection};
 use gpui::{
     AssetSource, Context, Entity, Focusable, FontWeight, HighlightStyle, KeyDownEvent,
     SharedString, StyledText, Subscription, Task, Window, div, prelude::*, px, rgb, svg,
 };
-use gpui_component::{
-    actions::SelectRight,
-    input::{Input, InputEvent, InputState, Position},
-};
+use gpui_component::input::{Input, InputEvent, InputState, Position};
 use refract_native::project_search::{SearchHit, search_project};
 use std::{
     borrow::Cow,
@@ -27,6 +24,8 @@ impl AssetSource for RefractAssets {
         let bytes: &[u8] = match path {
             "refract/search.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0"/></svg>"#,
             "refract/close.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>"#,
+            "refract/chevron-right.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>"#,
+            "refract/chevron-down.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#,
             _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))
@@ -34,7 +33,12 @@ impl AssetSource for RefractAssets {
 
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         Ok(if path.trim_end_matches('/') == "refract" {
-            vec!["refract/search.svg".into(), "refract/close.svg".into()]
+            vec![
+                "refract/search.svg".into(),
+                "refract/close.svg".into(),
+                "refract/chevron-right.svg".into(),
+                "refract/chevron-down.svg".into(),
+            ]
         } else {
             Vec::new()
         })
@@ -176,9 +180,7 @@ impl Library {
             }
             // A tab opened by this result needs its input handler installed before dispatch.
             window.draw(app).clear();
-            for _ in start..end {
-                focus.dispatch_action(&SelectRight, window, app);
-            }
+            extend_editor_selection(&focus, (end - start) as usize, window, app);
         });
     }
 

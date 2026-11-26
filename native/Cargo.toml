@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:gpui", "dep:gpui-component", "dep:windows"]
+desktop = ["dep:gpui", "dep:gpui-component", "dep:image", "dep:katex-native", "dep:windows"]
 ui-tests = ["desktop", "gpui/test-support"]
 
 [[bin]]
@@ -20,6 +20,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = { version = "=1.1.11", default-features = false, features = ["zlib-rs"] }
 gpui = { version = "=0.2.2", optional = true }
 gpui-component = { version = "=0.5.1", default-features = false, optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+katex-native = { version = "=0.1.1", features = ["raster"], optional = true }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }

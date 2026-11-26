@@ -203,6 +203,8 @@ impl Library {
             if let Some(tab) = selection.tabs.last() {
                 let path = tab.path.clone();
                 self.open_file(path, window, cx);
+            } else {
+                self.outline.clear(window);
             }
         }
         window.focus(&self.deleted_files_focus);

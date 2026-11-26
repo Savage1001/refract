@@ -56,7 +56,7 @@ impl Library {
             })
     }
 
-    fn show_source_in_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_source_in_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selection) = &self.selection else {
             return;
         };

@@ -76,7 +76,7 @@ jobs:
           npm run build
       - name: Verify reference interactions and packaging
         run: |
-          node --test --test-concurrency=1 build/test/workflow-navigation-headless.test.cjs build/test/pane-layout-headless.test.cjs build/test/ui-polish-headless.test.cjs build/test/pdf-memory-headless.test.cjs build/test/distribution-boundary.test.cjs
+          node --test --test-concurrency=1 build/test/workflow-navigation-headless.test.cjs build/test/pane-layout-headless.test.cjs build/test/outline-layout.test.cjs build/test/ui-polish-headless.test.cjs build/test/pdf-memory-headless.test.cjs build/test/distribution-boundary.test.cjs
       - name: Capture screenshots of the reference UI
         run: node build/scripts/capture-electron-parity.cjs "$env:RUNNER_TEMP/refract-electron-reference"
       - name: Upload reference screenshots
