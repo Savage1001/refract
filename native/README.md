@@ -2,6 +2,8 @@
 
 This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. It opens the root LaTeX document first and lets you browse nested folders and edit drafts of UTF-8 text files up to 128 KiB in separate tabs. Each open tab keeps its draft in memory. Use the Electron app to save changes to the project. Returning from the workspace restores focus to its project.
 
+Open Comments to read existing project comments and replies. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
+
 From the repository root, use stable Rust and the Windows MSVC toolchain to build the preview. Running the binary opens a desktop window.
 
 ```sh

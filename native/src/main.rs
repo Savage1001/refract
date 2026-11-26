@@ -7,6 +7,7 @@ use gpui_component::{
     Root,
     input::{Input, InputState},
 };
+use refract_native::comments::{Comment, read_comments};
 use refract_native::{Project, ProjectEntry, list_projects, project_tree, read_source};
 use std::{
     collections::{HashMap, HashSet},
@@ -21,6 +22,7 @@ struct Library {
     selection: Option<Selection>,
     tree_task: Option<Task<()>>,
     preview_task: Option<Task<()>>,
+    comments_task: Option<Task<()>>,
     focus_handle: FocusHandle,
     project_focus: HashMap<String, FocusHandle>,
     home_focus: FocusHandle,
@@ -34,6 +36,10 @@ struct Selection {
     expanded_folders: HashSet<String>,
     file: Option<String>,
     tabs: Vec<FileTab>,
+    show_comments: bool,
+    comments: Option<io::Result<Vec<Comment>>>,
+    pending_comment: Option<Comment>,
+    comment_status: Option<&'static str>,
 }
 
 struct FileTab {
@@ -74,6 +80,7 @@ impl Library {
             selection: None,
             tree_task: None,
             preview_task: None,
+            comments_task: None,
             focus_handle,
             project_focus: HashMap::new(),
             home_focus: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -97,6 +104,10 @@ impl Library {
             expanded_folders,
             file: None,
             tabs: Vec::new(),
+            show_comments: false,
+            comments: None,
+            pending_comment: None,
+            comment_status: None,
         });
         let path = self.projects_dir.clone();
         let load = cx
@@ -128,6 +139,8 @@ impl Library {
             });
         }
         selection.file = Some(file.clone());
+        selection.pending_comment = None;
+        selection.comment_status = None;
         self.preview_task = None;
         if selection
             .tabs
@@ -160,6 +173,11 @@ impl Library {
                             .default_value(source)
                     })
                 }));
+                if let Some(comment) = selection.pending_comment.take()
+                    && let Some(Ok(editor)) = tab.editor.as_ref()
+                {
+                    selection.comment_status = Self::jump_to_comment(editor, &comment, window, cx);
+                }
                 cx.notify();
             });
         }));
@@ -182,6 +200,8 @@ impl Library {
             } else {
                 self.preview_task = None;
                 selection.file = None;
+                selection.pending_comment = None;
+                selection.comment_status = None;
             }
         }
         if had_focus {
@@ -205,6 +225,7 @@ impl Library {
     fn return_to_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tree_task = None;
         self.preview_task = None;
+        self.comments_task = None;
         if let Some(previous) = self.selection.take()
             && let Some(focus) = self.project_focus.get(&previous.project.id)
         {
@@ -220,6 +241,77 @@ impl Library {
             }
             cx.notify();
         }
+    }
+
+    fn toggle_comments(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        selection.show_comments = !selection.show_comments;
+        if selection.show_comments {
+            selection.comments = None;
+            let project = selection.project.clone();
+            let path = self.projects_dir.clone();
+            let load = cx
+                .background_executor()
+                .spawn(async move { read_comments(&path, &project) });
+            self.comments_task = Some(cx.spawn(async move |library, cx| {
+                let comments = load.await;
+                let _ = library.update(cx, |library, cx| {
+                    if let Some(selection) = &mut library.selection {
+                        selection.comments = Some(comments);
+                        cx.notify();
+                    }
+                });
+            }));
+        }
+        cx.notify();
+    }
+
+    fn open_comment(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(comment) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.comments.as_ref()?.as_ref().ok())
+            .and_then(|comments| comments.iter().find(|comment| comment.id == id))
+            .cloned()
+        else {
+            return;
+        };
+        let file = comment.file.replace('\\', "/");
+        self.open_file(file.clone(), window, cx);
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        let tab = selection.tabs.iter().find(|tab| tab.path == file);
+        if let Some(Ok(editor)) = tab.and_then(|tab| tab.editor.as_ref()) {
+            selection.comment_status = Self::jump_to_comment(editor, &comment, window, cx);
+        } else {
+            selection.pending_comment = Some(comment);
+        }
+        cx.notify();
+    }
+
+    fn jump_to_comment(
+        editor: &Entity<InputState>,
+        comment: &Comment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<&'static str> {
+        let position = comment.source_position(editor.read(cx).value().as_ref());
+        editor.update(cx, |editor, cx| {
+            if let Some((line, column)) = position {
+                editor.set_cursor_position(
+                    gpui_component::input::Position::new(line, column),
+                    window,
+                    cx,
+                );
+            } else {
+                editor.focus(window, cx);
+            }
+        });
+        (position.is_none() && !comment.quote.is_empty())
+            .then_some("The comment’s original selection is unavailable in this file.")
     }
 }
 
@@ -593,6 +685,97 @@ impl Library {
                     .child(self.file_tree(selection, palette, cx)),
             )
             .child(self.source_pane(selection, palette, cx))
+            .when(selection.show_comments, |workspace| {
+                workspace.child(self.comments_pane(selection, palette, cx))
+            })
+    }
+
+    fn comments_pane(
+        &self,
+        selection: &Selection,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let panel = div()
+            .id("comments-pane")
+            .w(px(300.))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(rgb(palette.border))
+            .bg(rgb(palette.surface))
+            .p_4()
+            .gap_2()
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("All Comments"),
+            );
+        let list = div()
+            .id("comment-list")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll();
+        panel.child(match &selection.comments {
+            None => list.child("Loading comments…"),
+            Some(Err(error)) => list.child(format!("Couldn’t load comments: {error}")),
+            Some(Ok(comments)) if comments.is_empty() => list.child("No comments yet."),
+            Some(Ok(comments)) => list.children(comments.iter().map(|comment| {
+                let open = comment.id.clone();
+                let open_by_key = open.clone();
+                let title = if comment.quote.is_empty() {
+                    comment.file.clone()
+                } else {
+                    format!("{}: {}", comment.file, comment.quote)
+                };
+                div()
+                    .id(SharedString::from(comment.id.clone()))
+                    .border_b_1()
+                    .border_color(rgb(palette.border))
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id("reference")
+                            .tab_index(3)
+                            .cursor_pointer()
+                            .truncate()
+                            .text_color(rgb(palette.focus))
+                            .hover(move |style| style.bg(rgb(palette.selection)))
+                            .focus(move |style| style.bg(rgb(palette.selection)))
+                            .child(title)
+                            .on_click(cx.listener(move |library, _, window, cx| {
+                                library.open_comment(&open, window, cx)
+                            }))
+                            .on_key_down(cx.listener(
+                                move |library, event: &gpui::KeyDownEvent, window, cx| {
+                                    if event.keystroke.key == "enter"
+                                        || event.keystroke.key == "space"
+                                    {
+                                        library.open_comment(&open_by_key, window, cx);
+                                    }
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(palette.muted))
+                            .child(if comment.resolved { "Resolved" } else { "Open" }),
+                    )
+                    .child(div().child(comment.text.clone()))
+                    .children(comment.replies.iter().map(|reply| {
+                        div()
+                            .pl_2()
+                            .border_l_1()
+                            .border_color(rgb(palette.border))
+                            .child(reply.text.clone())
+                    }))
+            })),
+        })
     }
 
     fn file_tree(
@@ -788,6 +971,27 @@ impl Library {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(selection.project.name.clone()),
             );
+        let pane = pane.child(
+            div()
+                .id("toggle-comments")
+                .tab_index(3)
+                .cursor_pointer()
+                .rounded_md()
+                .px_2()
+                .py_1()
+                .hover(move |style| style.bg(rgb(palette.selection)))
+                .focus(move |style| style.bg(rgb(palette.selection)))
+                .when(selection.show_comments, |button| {
+                    button.bg(rgb(palette.selection))
+                })
+                .child("Comments")
+                .on_click(cx.listener(|library, _, _, cx| library.toggle_comments(cx)))
+                .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                        library.toggle_comments(cx);
+                    }
+                })),
+        );
         let Some(path) = &selection.file else {
             return pane.child(
                 div()
@@ -813,7 +1017,7 @@ impl Library {
             Some(Ok(editor)) => div()
                 // The input retains its own focus handle, so order it through its parent group.
                 .id("document-editor")
-                .tab_index(3)
+                .tab_index(4)
                 .tab_stop(false)
                 .tab_group()
                 .flex_1()
@@ -827,7 +1031,9 @@ impl Library {
                 )
                 .into_any_element(),
         };
-        pane.child(file).child(preview)
+        pane.child(file)
+            .children(selection.comment_status)
+            .child(preview)
     }
 }
 
@@ -917,6 +1123,19 @@ mod tests {
         fs::write(project.join("main.tex"), "A line of LaTeX\n").unwrap();
         fs::create_dir(project.join("sections")).unwrap();
         fs::write(project.join("sections/abstract.tex"), "An abstract\n").unwrap();
+        fs::write(
+            project.join(".refract-comments.json"),
+            serde_json::json!([{
+                "id": "fixture-comment",
+                "file": "sections/abstract.tex",
+                "quote": "abstract",
+                "text": "Check this statement",
+                "resolved": true,
+                "replies": [{"text": "Checked"}]
+            }])
+            .to_string(),
+        )
+        .unwrap();
 
         cx.update(gpui_component::init);
         let mut library = None;
@@ -985,6 +1204,27 @@ mod tests {
             assert!(selection.file.is_none());
             assert!(selection.tabs.is_empty());
             assert!(library.home_focus.is_focused(window));
+        });
+        cx.simulate_keystrokes("tab tab tab tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert!(selection.show_comments);
+            let comments = selection.comments.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(comments[0].replies[0].text, "Checked");
+            assert!(comments[0].resolved);
+        });
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|window, app| {
+            let library = library.read(app);
+            let selection = library.selection.as_ref().unwrap();
+            assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));
+            let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(
+                editor.read(app).cursor_position(),
+                gpui_component::input::Position::new(0, 3)
+            );
+            assert!(selection.comment_status.is_none());
+            window.focus(&library.home_focus);
         });
         cx.simulate_keystrokes("enter");
         cx.update(|window, app| {

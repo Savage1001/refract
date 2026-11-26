@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod comments;
+
 const METADATA_LIMIT: usize = 64 * 1024;
 const SOURCE_LIMIT: usize = 128 * 1024;
 
