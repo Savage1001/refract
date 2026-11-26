@@ -15,6 +15,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+pub mod diagnostics;
 mod process;
 pub mod synctex;
 #[cfg(test)]

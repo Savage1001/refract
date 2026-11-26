@@ -29,9 +29,11 @@ cargo run --locked --manifest-path native/Cargo.toml
 
 The preview looks in the platform's application configuration directory for the `Refract/projects` folder. For a custom profile or a source checkout using a different profile directory, set `REFRACT_DATA_DIR` to the folder containing `projects`.
 
-The workspace builds LaTeX from saved project files using the installed TeX toolchain. Use **Compile** to rebuild, **Build output** to read compiler messages, and **Download PDF** to save the result. On Windows, the preview includes page navigation, zoom, Fit width, and Fit page. Use **Show in PDF** to jump from the current source line. Double-click a PDF page or focus it and press Enter to jump back to the source.
+The workspace builds LaTeX from saved project files using the installed TeX toolchain. Use **Compile** to rebuild and **Download PDF** to save the result. On Windows, the preview includes page navigation, zoom, Fit width, and Fit page. Use **Show in PDF** to jump from the current source line. Double-click a PDF page or focus it and press Enter to jump back to the source.
 
-Open **Tools** for Project Info. Select the root file to open it, choose the LaTeX engine, or turn on draft mode to compile with image placeholders.
+Open **Tools** for **Project Info**, **Versions**, **Comments**, and **Logs**. Use **Expand panel** for more room or **Tools** to return to the PDF. In Project Info, select the root file to open it, choose the LaTeX engine, or turn on draft mode to compile with image placeholders.
+
+Logs shows build errors and warnings and links file diagnostics to the reported source line. Open **Full build output** to filter the compiler messages or change line wrapping.
 
 Use the Electron app for inline PDF rendering and SyncTeX navigation on macOS and Linux, assistants, and updates.
 

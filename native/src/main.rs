@@ -25,6 +25,7 @@ use std::{
     time::Duration,
 };
 
+mod build_log_view;
 mod comments_view;
 mod compile_view;
 mod deleted_projects_view;
@@ -38,6 +39,8 @@ mod project_info_view;
 mod project_management_view;
 mod synctex_view;
 mod version_view;
+mod workspace_tools;
+use build_log_view::BuildLogView;
 use comments_view::CommentDrafts;
 use compile_view::{RunningBuild, WorkspaceBuild};
 use deleted_projects_view::DeletedProjectsDialog;
@@ -49,6 +52,7 @@ use project_info_view::ProjectInfoState;
 use project_management_view::{ProjectFocus, RenameDraft};
 use synctex_view::RunningSync;
 use version_view::Comparison;
+use workspace_tools::WorkspaceTool;
 
 actions!(editor, [SaveSource]);
 
@@ -100,6 +104,7 @@ struct Library {
     home_focus: FocusHandle,
     logo: Arc<Image>,
     grid_view: bool,
+    last_tool: WorkspaceTool,
 }
 
 struct Selection {
@@ -109,10 +114,10 @@ struct Selection {
     expanded_folders: HashSet<String>,
     file: Option<String>,
     tabs: Vec<FileTab>,
-    show_comments: bool,
-    show_versions: bool,
-    show_project_info: bool,
+    tool: Option<WorkspaceTool>,
+    tools_expanded: Option<bool>,
     project_info: Option<ProjectInfoState>,
+    build_logs: Option<BuildLogView>,
     focus_source_on_load: bool,
     versions: Option<io::Result<Vec<Version>>>,
     restore_error: Option<String>,
@@ -226,6 +231,7 @@ impl Library {
                 include_bytes!("../../resources/logo.png").to_vec(),
             )),
             grid_view: false,
+            last_tool: WorkspaceTool::Logs,
         }
     }
 
@@ -251,10 +257,10 @@ impl Library {
             expanded_folders,
             file: None,
             tabs: Vec::new(),
-            show_comments: false,
-            show_versions: false,
-            show_project_info: false,
+            tool: None,
+            tools_expanded: None,
             project_info: None,
+            build_logs: None,
             focus_source_on_load: false,
             versions: None,
             restore_error: None,
@@ -450,20 +456,6 @@ impl Library {
         }
     }
 
-    fn toggle_versions(&mut self, cx: &mut Context<Self>) {
-        if let Some(selection) = &mut self.selection {
-            selection.show_versions = !selection.show_versions;
-            if selection.show_versions {
-                selection.show_comments = false;
-                selection.show_project_info = false;
-            } else {
-                selection.comparison = None;
-                self.comparison_task = None;
-            }
-            cx.notify();
-        }
-    }
-
     fn file_to_restore<'a>(&'a self, version: &Version, cx: &App) -> Option<&'a str> {
         let selection = self.selection.as_ref()?;
         let file = selection.file.as_deref()?;
@@ -613,7 +605,7 @@ impl Library {
                             reload_source = Some(file);
                         }
                     }
-                    let reload_comments = selection.show_comments;
+                    let reload_comments = selection.tool == Some(WorkspaceTool::Comments);
                     if let Some(file) = reload_source {
                         library.open_file(file, window, cx);
                     }
@@ -743,7 +735,10 @@ impl Library {
                             Err(error) => document.save_error = Some(error.to_string()),
                         }
                     }
-                    if reload_comments && selection.show_comments && library.save_queue.is_empty() {
+                    if reload_comments
+                        && selection.tool == Some(WorkspaceTool::Comments)
+                        && library.save_queue.is_empty()
+                    {
                         library.load_comments(cx);
                     }
                 }
@@ -1407,20 +1402,13 @@ impl Library {
                     .child(self.deleted_files_button(palette, cx)),
             )
             .child(self.source_pane(selection, palette, cx))
-            .when(
-                !selection.show_comments
-                    && !selection.show_versions
-                    && !selection.show_project_info,
-                |workspace| workspace.child(self.compile_pane(&selection.build, palette, cx)),
-            )
-            .when(selection.show_comments, |workspace| {
-                workspace.child(self.comments_pane(selection, palette, cx))
-            })
-            .when(selection.show_versions, |workspace| {
-                workspace.child(self.versions_pane(selection, palette, cx))
-            })
-            .when(selection.show_project_info, |workspace| {
-                workspace.child(self.project_info_pane(selection, palette, cx))
+            .child(match selection.tool {
+                Some(tool) => self
+                    .workspace_tools_pane(selection, tool, palette, cx)
+                    .into_any_element(),
+                None => self
+                    .compile_pane(&selection.build, palette, cx)
+                    .into_any_element(),
             })
     }
 
@@ -1432,17 +1420,9 @@ impl Library {
     ) -> impl IntoElement {
         let pane = div()
             .id("versions-pane")
-            .w(px(if selection.comparison.is_some() {
-                560.
-            } else {
-                300.
-            }))
-            .flex_none()
+            .size_full()
             .flex()
             .flex_col()
-            .border_l_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
             .p_4()
             .gap_2()
             .child(
@@ -1680,55 +1660,15 @@ impl Library {
                     ),
                 )
             });
-        let pane = pane
-            .child(
-                div()
-                    .id("toggle-versions")
-                    .tab_index(3)
-                    .cursor_pointer()
-                    .rounded_md()
-                    .px_2()
-                    .py_1()
-                    .hover(move |style| style.bg(rgb(palette.selection)))
-                    .focus(move |style| style.bg(rgb(palette.selection)))
-                    .when(selection.show_versions, |button| {
-                        button.bg(rgb(palette.selection))
-                    })
-                    .child("Versions")
-                    .on_click(cx.listener(|library, _, _, cx| library.toggle_versions(cx)))
-                    .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                            library.toggle_versions(cx);
-                        }
-                    })),
-            )
-            .child(
-                div()
-                    .id("toggle-comments")
-                    .tab_index(3)
-                    .cursor_pointer()
-                    .rounded_md()
-                    .px_2()
-                    .py_1()
-                    .hover(move |style| style.bg(rgb(palette.selection)))
-                    .focus(move |style| style.bg(rgb(palette.selection)))
-                    .when(selection.show_comments, |button| {
-                        button.bg(rgb(palette.selection))
-                    })
-                    .child("Comments")
-                    .on_click(
-                        cx.listener(|library, _, window, cx| library.toggle_comments(window, cx)),
-                    )
-                    .on_key_down(
-                        cx.listener(|library, event: &gpui::KeyDownEvent, window, cx| {
-                            if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                                library.toggle_comments(window, cx);
-                            }
-                        }),
-                    ),
-            )
-            .child(self.project_info_button(selection, palette, cx))
-            .child(self.export_project_button(palette, cx));
+        let pane = pane.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap_1()
+                .child(self.workspace_tools_button(selection, palette, cx))
+                .child(self.export_project_button(palette, cx)),
+        );
         let Some(path) = &selection.file else {
             return pane.child(
                 div()
@@ -1963,7 +1903,7 @@ mod tests {
         cx.update(|window, app| {
             library.update(app, |library, cx| {
                 library.open_project(project, window, cx);
-                library.toggle_versions(cx);
+                library.select_workspace_tool(WorkspaceTool::Versions, window, cx);
             })
         });
         cx.run_until_parked();
@@ -2142,12 +2082,17 @@ mod tests {
             assert!(library.home_focus.is_focused(window));
         });
         cx.simulate_keystrokes("tab tab tab tab tab tab tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert_eq!(selection.tool, Some(WorkspaceTool::Logs));
+        });
+        cx.simulate_keystrokes("tab tab enter");
         let versions_focus = cx.update(|window, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
-            assert!(selection.show_versions);
+            assert_eq!(selection.tool, Some(WorkspaceTool::Versions));
             window.focused(app).unwrap()
         });
-        cx.simulate_keystrokes("tab tab tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             let comparison = selection.comparison.as_ref().unwrap();
@@ -2168,13 +2113,12 @@ mod tests {
         cx.simulate_keystrokes("tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
-            assert!(selection.show_comments);
-            assert!(!selection.show_versions);
+            assert_eq!(selection.tool, Some(WorkspaceTool::Comments));
             let comments = selection.comments.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(comments[0].replies[0].text, "Checked");
             assert!(comments[0].resolved);
         });
-        cx.simulate_keystrokes("tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab enter");
         cx.update(|_, app| {
             let library = library.read(app);
             let selection = library.selection.as_ref().unwrap();

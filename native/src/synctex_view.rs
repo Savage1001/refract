@@ -143,15 +143,12 @@ impl Library {
                 {
                     match result {
                         Ok(SyncResult::Pdf(position)) => {
-                            selection.show_comments = false;
-                            selection.show_versions = false;
-                            selection.show_project_info = false;
-                            selection.build.show_log = false;
                             selection.build.preview.jump_to(position);
+                            library.close_workspace_tools(cx);
                             library.request_pdf_frame(window, cx);
                         }
                         Ok(SyncResult::Source(position)) => {
-                            library.jump_from_pdf(position, window, cx)
+                            library.jump_to_source_position(position, window, cx)
                         }
                         Err(error) if error.kind() != std::io::ErrorKind::Interrupted => {
                             let action = if expected_source.is_some() {
@@ -176,7 +173,7 @@ impl Library {
         cx.notify();
     }
 
-    fn jump_from_pdf(
+    pub(super) fn jump_to_source_position(
         &mut self,
         position: SourcePosition,
         window: &mut Window,

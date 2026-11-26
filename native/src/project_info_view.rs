@@ -1,4 +1,4 @@
-use super::{Library, Palette, Selection, pdf_view::PDF_PANE_WIDTH};
+use super::{Library, Palette, Selection};
 use chrono::{DateTime, Local};
 use gpui::{
     Context, Entity, FontWeight, KeyDownEvent, SharedString, Subscription, Window, div, prelude::*,
@@ -55,47 +55,10 @@ impl ProjectInfoState {
 }
 
 impl Library {
-    pub(super) fn project_info_button(
-        &self,
-        selection: &Selection,
-        palette: Palette,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .id("tools")
-            .debug_selector(|| "project-tools".to_owned())
-            .tab_index(5)
-            .cursor_pointer()
-            .rounded_md()
-            .px_2()
-            .py_1()
-            .child("Tools")
-            .when(selection.show_project_info, |button| {
-                button.bg(rgb(palette.selection))
-            })
-            .hover(move |style| style.bg(rgb(palette.selection)))
-            .focus(move |style| style.bg(rgb(palette.selection)))
-            .on_click(cx.listener(|library, _, window, cx| library.toggle_project_info(window, cx)))
-            .on_key_down(cx.listener(|library, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                    library.toggle_project_info(window, cx);
-                }
-            }))
-    }
-
-    fn toggle_project_info(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn load_project_info(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selection) = &mut self.selection else {
             return;
         };
-        selection.show_project_info = !selection.show_project_info;
-        if !selection.show_project_info {
-            cx.notify();
-            return;
-        }
-        selection.show_versions = false;
-        selection.show_comments = false;
-        selection.comparison = None;
-        self.comparison_task = None;
         if selection.project_info.is_none() {
             let current = selection.project.latex_engine().ok();
             let choices = [
@@ -271,15 +234,11 @@ impl Library {
         let project = &selection.project;
         div()
             .id("project-info")
-            .w(px(PDF_PANE_WIDTH))
-            .flex_none()
+            .size_full()
             .flex()
             .flex_col()
             .gap_3()
             .p_4()
-            .bg(rgb(palette.surface))
-            .border_l_1()
-            .border_color(rgb(palette.border))
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
@@ -414,10 +373,12 @@ mod tests {
         cx.run_until_parked();
         let tools = cx.debug_bounds("project-tools").unwrap();
         cx.simulate_click(tools.center(), Modifiers::none());
+        let info = cx.debug_bounds("tool-info").unwrap();
+        cx.simulate_click(info.center(), Modifiers::none());
         cx.update(|window, app| {
             let view = library.read(app);
             let selection = view.selection.as_ref().unwrap();
-            assert!(selection.show_project_info);
+            assert_eq!(selection.tool, Some(crate::WorkspaceTool::ProjectInfo));
             let engine = selection.project_info.as_ref().unwrap().engine.clone();
             engine.update(app, |state, cx| {
                 state.set_selected_value(&LatexEngine::XeLatex, window, cx);

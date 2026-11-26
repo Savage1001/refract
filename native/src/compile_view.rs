@@ -1,5 +1,5 @@
 use super::pdf_view::{PDF_PANE_WIDTH, PdfViewport};
-use super::{Library, Navigation, Palette, monospace_font};
+use super::{Library, Navigation, Palette};
 use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb};
 use gpui_component::WindowExt;
 #[cfg(not(all(test, feature = "ui-tests")))]
@@ -22,9 +22,8 @@ pub(super) struct RunningBuild {
 }
 
 pub(super) struct WorkspaceBuild {
-    queued: bool,
+    pub(super) queued: bool,
     outcome: Option<Result<BuildResult, String>>,
-    pub(super) show_log: bool,
     pub(super) sync_error: Option<String>,
     pub(super) preview: PdfViewport,
 }
@@ -34,7 +33,6 @@ impl WorkspaceBuild {
         Self {
             queued: true,
             outcome: None,
-            show_log: false,
             sync_error: None,
             preview: PdfViewport::default(),
         }
@@ -51,7 +49,7 @@ impl WorkspaceBuild {
         self.outcome.as_ref()?.as_ref().ok()?.pdf.as_deref()
     }
 
-    fn log(&self) -> Option<&str> {
+    pub(super) fn log(&self) -> Option<&str> {
         match self.outcome.as_ref()? {
             Ok(result) => Some(result.log.trim()),
             Err(error) => Some(error),
@@ -147,13 +145,6 @@ impl Library {
         }
     }
 
-    fn toggle_build_log(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(selection) = &mut self.selection {
-            selection.build.show_log = !selection.build.show_log;
-            cx.notify();
-        }
-    }
-
     pub(super) fn compile_pane(
         &self,
         build: &WorkspaceBuild,
@@ -173,9 +164,7 @@ impl Library {
         } else {
             "PDF preview"
         };
-        let body = if build.show_log {
-            build_log(build, status, palette).into_any_element()
-        } else if build.preview.has_content() {
+        let body = if build.preview.has_content() {
             let status = if compiling || build.queued {
                 Some("Showing the last successful build while changes compile.")
             } else if build.pdf().is_none() {
@@ -202,7 +191,7 @@ impl Library {
                 .gap_2()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child(status))
                 .when(build.pdf().is_none() && build.outcome.is_some(), |pane| {
-                    pane.child("Open Build output for details.")
+                    pane.child("Open Logs in Tools for details.")
                 })
                 .into_any_element()
         };
@@ -238,19 +227,9 @@ impl Library {
                         palette,
                         cx,
                         Self::download_built_pdf,
-                    ))
-                    .child(preview_button(
-                        "build-output",
-                        "Build output",
-                        true,
-                        palette,
-                        cx,
-                        Self::toggle_build_log,
                     )),
             )
-            .when(!build.show_log, |pane| {
-                pane.child(self.pdf_controls(&build.preview, build.pdf().is_some(), palette, cx))
-            })
+            .child(self.pdf_controls(&build.preview, build.pdf().is_some(), palette, cx))
             .children(build.sync_error.clone().map(|error| {
                 div()
                     .px_3()
@@ -260,24 +239,6 @@ impl Library {
             }))
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
-}
-
-fn build_log(build: &WorkspaceBuild, status: &'static str, palette: Palette) -> impl IntoElement {
-    div()
-        .id("compile-log")
-        .h_full()
-        .overflow_y_scroll()
-        .p_3()
-        .font_family(monospace_font())
-        .text_size(px(12.))
-        .text_color(rgb(palette.text))
-        .child(
-            build
-                .log()
-                .filter(|text| !text.is_empty())
-                .unwrap_or(status)
-                .to_owned(),
-        )
 }
 
 fn preview_button(

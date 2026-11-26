@@ -56,21 +56,14 @@ impl CommentDrafts {
 }
 
 impl Library {
-    pub(super) fn toggle_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selection) = &mut self.selection else {
+    pub(super) fn load_workspace_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = &self.selection else {
             return;
         };
-        selection.show_comments = !selection.show_comments;
-        if selection.show_comments {
-            self.comment_drafts
-                .entry(selection.project.id.clone())
-                .or_insert_with(|| CommentDrafts::new(window, cx));
-            selection.show_versions = false;
-            selection.show_project_info = false;
-            selection.comparison = None;
-            self.comparison_task = None;
-            self.load_comments(cx);
-        }
+        self.comment_drafts
+            .entry(selection.project.id.clone())
+            .or_insert_with(|| CommentDrafts::new(window, cx));
+        self.load_comments(cx);
         cx.notify();
     }
 
@@ -196,7 +189,8 @@ impl Library {
                             if let Some((input, submitted)) = draft
                                 && input.read(cx).value() == submitted
                             {
-                                let restore_focus = selection.show_comments
+                                let restore_focus = selection.tool
+                                    == Some(crate::WorkspaceTool::Comments)
                                     && submit_focus
                                         .as_ref()
                                         .is_some_and(|focus| focus.is_focused(window));
@@ -233,13 +227,9 @@ impl Library {
             .tab_index(3)
             .tab_stop(false)
             .tab_group()
-            .w(px(300.))
-            .flex_none()
+            .size_full()
             .flex()
             .flex_col()
-            .border_l_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
             .p_4()
             .gap_2()
             .child(
@@ -529,7 +519,7 @@ mod tests {
 
         cx.update(|window, app| {
             library.update(app, |view, cx| {
-                view.toggle_comments(window, cx);
+                view.select_workspace_tool(crate::WorkspaceTool::Comments, window, cx);
                 view.comment_drafts[id].new_comment.update(cx, |input, cx| {
                     input.set_value("Clarify this result.", window, cx);
                     input.focus(window, cx);

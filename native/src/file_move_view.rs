@@ -535,7 +535,7 @@ impl Library {
                 .match_indices('/')
                 .map(|(index, _)| target[..index].to_owned()),
         );
-        let comments = selection.show_comments;
+        let comments = selection.tool == Some(crate::WorkspaceTool::Comments);
         if let Some(path) = source {
             self.open_file(path, window, cx);
         }
