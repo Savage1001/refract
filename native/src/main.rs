@@ -16,17 +16,21 @@ use refract_native::{
     Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
 };
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     env, io,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
 
 mod comments_view;
+mod deleted_projects_view;
 mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
+use deleted_projects_view::DeletedProjectsDialog;
 use project_management_view::{ProjectFocus, RenameDraft};
 use version_view::Comparison;
 
@@ -36,10 +40,12 @@ struct Library {
     projects_dir: PathBuf,
     projects: Option<io::Result<Vec<Project>>>,
     project_open_sequence: u64,
-    project_create_task: Option<Task<()>>,
+    project_library_task: Option<Task<()>>,
     project_action_prompt: Option<Task<()>>,
     project_menu: Option<String>,
-    duplicating_project: Option<String>,
+    project_action_source: Option<String>,
+    deleted_projects_focus: FocusHandle,
+    deleted_projects_dialog: Option<Rc<RefCell<DeletedProjectsDialog>>>,
     project_rename_task: Option<Task<()>>,
     project_action_error: Option<String>,
     project_name_focus: FocusHandle,
@@ -137,10 +143,12 @@ impl Library {
             projects_dir,
             projects: None,
             project_open_sequence: 0,
-            project_create_task: None,
+            project_library_task: None,
             project_action_prompt: None,
             project_menu: None,
-            duplicating_project: None,
+            project_action_source: None,
+            deleted_projects_focus: cx.focus_handle().tab_stop(true).tab_index(1),
+            deleted_projects_dialog: None,
             project_rename_task: None,
             project_action_error: None,
             project_name_focus: cx.focus_handle().tab_stop(true).tab_index(1),
@@ -173,7 +181,8 @@ impl Library {
 
     fn open_project(&mut self, project: Project, window: &mut Window, cx: &mut Context<Self>) {
         if self.project_action_prompt.is_some()
-            || self.duplicating_project.as_deref() == Some(project.id.as_str())
+            || self.deleted_projects_dialog.is_some()
+            || self.project_action_source.as_deref() == Some(project.id.as_str())
         {
             return;
         }
@@ -728,7 +737,8 @@ impl Library {
     ) {
         if self.discard_prompt.is_some()
             || self.project_action_prompt.is_some()
-            || self.rename_draft.is_some() && !matches!(navigation, Navigation::CloseWindow)
+            || (self.rename_draft.is_some() || self.deleted_projects_dialog.is_some())
+                && !matches!(navigation, Navigation::CloseWindow)
         {
             return;
         }
@@ -737,7 +747,7 @@ impl Library {
             || self.restore_task.is_some()
             || self.comment_write_task.is_some()
             || self.project_rename_task.is_some()
-            || self.project_create_task.is_some() && matches!(navigation, Navigation::CloseWindow)
+            || self.project_library_task.is_some() && matches!(navigation, Navigation::CloseWindow)
         {
             self.navigation_after_save = Some(navigation);
             return;
@@ -970,7 +980,8 @@ impl Library {
                             .rounded_md()
                             .child(self.view_toggle(false, "List", palette, cx))
                             .child(self.view_toggle(true, "Grid", palette, cx)),
-                    ),
+                    )
+                    .child(self.deleted_projects_button(palette, cx)),
             )
             .children(self.project_action_error.clone())
             .child(match &self.projects {
@@ -1686,6 +1697,7 @@ fn projects_dir() -> Option<PathBuf> {
 fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
     comments_view::init(cx);
+    deleted_projects_view::init(cx);
     cx.bind_keys([KeyBinding::new("secondary-s", SaveSource, None)]);
 }
 
@@ -1880,7 +1892,7 @@ mod tests {
         cx.refresh().unwrap();
         cx.simulate_keystrokes("tab tab tab enter");
         cx.update(|_, app| assert!(library.read(app).grid_view));
-        cx.simulate_keystrokes("tab enter");
+        cx.simulate_keystrokes("tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().expect("open project");
             assert_eq!(selection.project.id, id);
