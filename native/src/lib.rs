@@ -8,6 +8,7 @@ use std::{
 pub mod comments;
 mod project_entries;
 mod project_management;
+pub mod project_search;
 pub mod tex;
 pub mod versions;
 pub use project_entries::{
@@ -22,7 +23,7 @@ pub use project_management::{
 };
 
 const METADATA_LIMIT: usize = 64 * 1024;
-const SOURCE_LIMIT: usize = 128 * 1024;
+const SOURCE_LIMIT: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -327,15 +328,20 @@ fn valid_project_component(name: &str) -> bool {
 }
 
 fn read_local_file(folder: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    open_local_file(folder, path)?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > limit {
-        return Err(io::Error::new(
+    let too_large = || {
+        io::Error::new(
             io::ErrorKind::InvalidData,
             format!("File exceeds the {} KiB preview limit", limit / 1024),
-        ));
+        )
+    };
+    let file = open_local_file(folder, path)?;
+    if file.metadata()?.len() > limit as u64 {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(too_large());
     }
     Ok(bytes)
 }
@@ -494,7 +500,10 @@ mod tests {
                 "{path}"
             );
         }
-        fs::write(folder.join("main.tex"), vec![b'x'; SOURCE_LIMIT + 1]).unwrap();
+        File::create(folder.join("main.tex"))
+            .unwrap()
+            .set_len(SOURCE_LIMIT as u64 + 1)
+            .unwrap();
         assert_eq!(
             read_source(root.path(), &project, "main.tex")
                 .unwrap_err()

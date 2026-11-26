@@ -31,6 +31,7 @@ mod compile_view;
 mod deleted_projects_view;
 mod file_creation_view;
 mod file_move_view;
+mod file_search_view;
 mod file_transfer_view;
 mod file_trash_view;
 mod pdf_view;
@@ -46,6 +47,7 @@ use compile_view::{RunningBuild, WorkspaceBuild};
 use deleted_projects_view::DeletedProjectsDialog;
 use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
+use file_search_view::{FileSearch, RefractAssets};
 use file_trash_view::DeletedFilesDialog;
 use project_import_view::ImportDraft;
 use project_info_view::ProjectInfoState;
@@ -112,6 +114,7 @@ struct Selection {
     tree: Option<io::Result<Vec<ProjectEntry>>>,
     file_action_error: Option<String>,
     expanded_folders: HashSet<String>,
+    file_search: FileSearch,
     file: Option<String>,
     tabs: Vec<FileTab>,
     tool: Option<WorkspaceTool>,
@@ -255,6 +258,7 @@ impl Library {
             tree: None,
             file_action_error: None,
             expanded_folders,
+            file_search: FileSearch::new(window, cx),
             file: None,
             tabs: Vec::new(),
             tool: None,
@@ -310,6 +314,7 @@ impl Library {
         selection.file = Some(file.clone());
         selection.pending_comment = None;
         selection.pending_source_jump = None;
+        selection.file_search.pending_hit = None;
         selection.focus_source_on_load = false;
         selection.comment_status = None;
         self.preview_task = None;
@@ -362,6 +367,12 @@ impl Library {
                     && let Some(Ok(editor)) = tab.editor.as_ref()
                 {
                     Self::select_source_line(&editor.state, target.line, window, cx);
+                }
+                if let Some(hit) = selection.file_search.pending_hit.take()
+                    && hit.file == file
+                    && let Some(Ok(editor)) = tab.editor.as_ref()
+                {
+                    Self::select_search_hit(&editor.state, &hit, window, cx);
                 }
                 if std::mem::take(&mut selection.focus_source_on_load)
                     && selection.file.as_deref() == Some(file.as_str())
@@ -1398,6 +1409,7 @@ impl Library {
                             .child(self.add_items_button(palette, cx)),
                     )
                     .children(selection.file_action_error.clone())
+                    .child(self.file_search_panel(selection, palette, cx))
                     .child(self.file_tree(selection, palette, cx))
                     .child(self.deleted_files_button(palette, cx)),
             )
@@ -1813,7 +1825,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Couldn’t locate the Refract profile. Set REFRACT_DATA_DIR to its folder.",
         )
     })?;
-    Application::new().run(move |cx: &mut App| {
+    let app = Application::new().with_assets(RefractAssets);
+    app.run(move |cx: &mut App| {
         initialize_app(cx);
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -2008,7 +2021,7 @@ mod tests {
             let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(editor.state.read(app).value().as_ref(), "A line of LaTeX\n");
         });
-        cx.simulate_keystrokes("tab tab enter");
+        cx.simulate_keystrokes("tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.expanded_folders.contains("sections"));
@@ -2081,7 +2094,7 @@ mod tests {
             assert!(selection.tabs.is_empty());
             assert!(library.home_focus.is_focused(window));
         });
-        cx.simulate_keystrokes("tab tab tab tab tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.tool, Some(WorkspaceTool::Logs));

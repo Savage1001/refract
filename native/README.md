@@ -1,12 +1,14 @@
 # Refract native preview
 
-This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. Create a project with **New project**, or select its name in the workspace to rename it. The workspace opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 128 KiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
+This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. Create a project with **New project**, or select its name in the workspace to rename it. The workspace opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 32 MiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
 
 Use **Duplicate** in a project’s library menu to open a copy with its files, comments, version history, and LaTeX settings. **Delete** moves the project to **Deleted projects**, where it can be restored for up to 30 days.
 
 Use **+** in Files to create a file at the project root or in a selected folder. Open **More file options** to create a folder. A folder’s **Add items** menu preselects that destination.
 
 Right-click a file or folder or focus its row and press `Shift+F10` to open its actions. Open tabs, the root document, and comment references follow a renamed or moved path. Use **Deleted files** in the sidebar to restore files and folders to their original paths.
+
+Use **Search files** above the project tree to search saved files. Select a result to open the file and select the matching text. Press Escape in the search field to clear it.
 
 Use **Download file** to save a copy of a project file or **Export project ZIP** to save the visible project files and folders, including empty folders.
 
