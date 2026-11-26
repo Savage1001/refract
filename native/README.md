@@ -12,6 +12,8 @@ Use **Search files** above the project tree to search saved files. Select a resu
 
 Use **Find** or Ctrl+F (Cmd+F on macOS) to find and replace text in the active file. Enter and Shift+Enter move between matches. Match case, Whole word, and Wrap control which matches are selected. Escape closes the bar and returns focus to the source.
 
+Use **Commands** or Ctrl+Space (Cmd+Space on macOS) for LaTeX command suggestions. Use the arrow keys to choose a command and Enter or Tab to insert it.
+
 **Outline** follows the active file as you edit LaTeX section headings. Select a heading to jump to the source. Drag the divider above Outline or focus it and use the arrow keys to resize the list.
 
 Inline math in outline titles uses KaTeX fonts under the [SIL Open Font License](licenses/KaTeX-OFL.txt).

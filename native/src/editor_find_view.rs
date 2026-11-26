@@ -429,7 +429,10 @@ impl Library {
         cx: &Context<Self>,
     ) -> impl Fn(&Escape, &mut Window, &mut App) + 'static {
         cx.listener(|view, _, window, cx| {
-            if view.editor_find.visible {
+            if view.commands.close() {
+                cx.notify();
+                cx.stop_propagation();
+            } else if view.editor_find.visible {
                 view.close_find(window, cx);
                 cx.stop_propagation();
             }
@@ -485,7 +488,11 @@ where
         }))
 }
 
-fn selected_bytes(editor: &Entity<InputState>, window: &mut Window, app: &mut App) -> Range<usize> {
+pub(super) fn selected_bytes(
+    editor: &Entity<InputState>,
+    window: &mut Window,
+    app: &mut App,
+) -> Range<usize> {
     editor.update(app, |editor, cx| {
         let range = editor
             .selected_text_range(false, window, cx)
@@ -496,7 +503,7 @@ fn selected_bytes(editor: &Entity<InputState>, window: &mut Window, app: &mut Ap
     })
 }
 
-fn replace_editor_bytes(
+pub(super) fn replace_editor_bytes(
     editor: &Entity<InputState>,
     bytes: Range<usize>,
     replacement: &str,

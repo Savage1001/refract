@@ -5,7 +5,7 @@ use gpui::{
 };
 use gpui_component::{
     Root,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
 use refract_native::versions::{
@@ -26,6 +26,7 @@ use std::{
 };
 
 mod build_log_view;
+mod commands_view;
 mod comments_view;
 mod compile_view;
 mod deleted_projects_view;
@@ -44,6 +45,7 @@ mod synctex_view;
 mod version_view;
 mod workspace_tools;
 use build_log_view::BuildLogView;
+use commands_view::Commands;
 use comments_view::CommentDrafts;
 use compile_view::{RunningBuild, WorkspaceBuild};
 use deleted_projects_view::DeletedProjectsDialog;
@@ -89,6 +91,7 @@ struct Library {
     move_draft: Option<EntryMoveDraft>,
     preview_task: Option<Task<()>>,
     editor_find: EditorFind,
+    commands: Commands,
     outline: OutlinePane,
     comments_task: Option<Task<()>>,
     comment_write_task: Option<Task<()>>,
@@ -152,7 +155,7 @@ struct EditorDocument {
     saved: String,
     save_error: Option<String>,
     _autosave: Subscription,
-    _find_selection: Subscription,
+    _editor_selection: Subscription,
 }
 
 enum Navigation {
@@ -218,6 +221,7 @@ impl Library {
             move_draft: None,
             preview_task: None,
             editor_find: EditorFind::new(window, cx),
+            commands: Commands::default(),
             outline,
             comments_task: None,
             comment_write_task: None,
@@ -328,6 +332,7 @@ impl Library {
         selection.focus_source_on_load = false;
         selection.comment_status = None;
         self.preview_task = None;
+        self.commands.close();
         if selection
             .tabs
             .iter()
@@ -365,16 +370,17 @@ impl Library {
                             .default_value(source.clone())
                     });
                     let autosave = Self::watch_source(&state, &file, window, cx);
-                    let find_selection =
+                    let editor_selection =
                         cx.observe_in(&state, window, |library, editor, window, cx| {
                             library.sync_find_selection(&editor, false, window, cx);
+                            library.sync_commands_selection(&editor, window, cx);
                         });
                     EditorDocument {
                         state,
                         saved: source,
                         save_error: None,
                         _autosave: autosave,
-                        _find_selection: find_selection,
+                        _editor_selection: editor_selection,
                     }
                 }));
                 if tab.editor.as_ref().is_some_and(Result::is_err) {
@@ -432,6 +438,7 @@ impl Library {
             state,
             window,
             move |library, editor, event: &InputEvent, window, cx| {
+                library.update_commands_for_input(&editor, event, window, cx);
                 if matches!(event, InputEvent::Change) {
                     library.queue_save(&file, window, cx);
                     library.sync_find_selection(&editor, true, window, cx);
@@ -457,6 +464,7 @@ impl Library {
             } else {
                 self.preview_task = None;
                 self.editor_find.visible = false;
+                self.commands.close();
                 self.outline.clear(window);
                 selection.file = None;
                 selection.pending_comment = None;
@@ -486,6 +494,7 @@ impl Library {
         self.entry_menu = None;
         self.preview_task = None;
         self.editor_find.visible = false;
+        self.commands.close();
         self.outline.clear(window);
         self.comments_task = None;
         self.comparison_task = None;
@@ -1700,6 +1709,7 @@ impl Library {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let pane = div()
+            .relative()
             .flex_1()
             .min_w(px(0.))
             .flex()
@@ -1748,56 +1758,42 @@ impl Library {
             .child(self.show_in_pdf_button(selection, palette, cx));
         if editor.is_some_and(Result::is_ok) {
             let saving = self.save_task.is_some();
-            header = header.child(self.source_find_button(palette, cx)).child(
-                div()
-                    .id("save-file")
-                    .tab_index(3)
-                    .rounded_md()
-                    .px_2()
-                    .py_1()
-                    .focus(move |style| style.bg(rgb(palette.selection)))
-                    .when(!saving, |button| {
-                        button
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(rgb(palette.selection)))
-                    })
-                    .child(if saving { "Saving…" } else { "Save" })
-                    .on_click(
-                        cx.listener(|library, _, window, cx| library.save_active_file(window, cx)),
-                    )
-                    .on_key_down(
-                        cx.listener(|library, event: &gpui::KeyDownEvent, window, cx| {
-                            if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                                library.save_active_file(window, cx);
-                            }
-                        }),
-                    ),
-            );
+            header = header
+                .child(self.commands_button(palette, cx))
+                .child(self.source_find_button(palette, cx))
+                .child(
+                    div()
+                        .id("save-file")
+                        .tab_index(3)
+                        .rounded_md()
+                        .px_2()
+                        .py_1()
+                        .focus(move |style| style.bg(rgb(palette.selection)))
+                        .when(!saving, |button| {
+                            button
+                                .cursor_pointer()
+                                .hover(move |style| style.bg(rgb(palette.selection)))
+                        })
+                        .child(if saving { "Saving…" } else { "Save" })
+                        .on_click(cx.listener(|library, _, window, cx| {
+                            library.save_active_file(window, cx)
+                        }))
+                        .on_key_down(cx.listener(
+                            |library, event: &gpui::KeyDownEvent, window, cx| {
+                                if event.keystroke.key == "enter" || event.keystroke.key == "space"
+                                {
+                                    library.save_active_file(window, cx);
+                                }
+                            },
+                        )),
+                );
         }
         let preview = match editor {
             None => div().child("Loading source…").into_any_element(),
             Some(Err(error)) => div()
                 .child(format!("Couldn’t open source: {error}"))
                 .into_any_element(),
-            Some(Ok(editor)) => div()
-                // The input retains its own focus handle, so order it through its parent group.
-                .id("document-editor")
-                .capture_action(Self::capture_editor_find(cx))
-                .capture_action(Self::capture_editor_find_escape(cx))
-                .tab_index(4)
-                .tab_stop(false)
-                .tab_group()
-                .flex_1()
-                .min_h(px(0.))
-                .child(
-                    Input::new(&editor.state)
-                        .disabled(self.restore_task.is_some() || self.entry_write_task.is_some())
-                        .h_full()
-                        .appearance(false)
-                        .font_family(monospace_font())
-                        .text_size(px(14.)),
-                )
-                .into_any_element(),
+            Some(Ok(editor)) => self.source_editor(editor, cx).into_any_element(),
         };
         pane.child(header)
             .when(
@@ -1810,6 +1806,7 @@ impl Library {
                     .map(|error| format!("Couldn’t save source: {error}")),
             )
             .children(selection.comment_status)
+            .children(self.commands_popup(palette, cx))
             .child(preview)
     }
 }
@@ -1858,6 +1855,7 @@ fn projects_dir() -> Option<PathBuf> {
 
 fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
+    commands_view::init(cx);
     editor_find_view::init(cx);
     file_trash_view::init(cx);
     comments_view::init(cx);

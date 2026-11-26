@@ -205,6 +205,7 @@ impl Library {
                 self.open_file(path, window, cx);
             } else {
                 self.outline.clear(window);
+                self.commands.close();
             }
         }
         window.focus(&self.deleted_files_focus);
