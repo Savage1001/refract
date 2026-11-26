@@ -57,6 +57,20 @@ pub struct BuildResult {
     pub pdf: Option<PathBuf>,
 }
 
+impl Project {
+    pub fn latex_engine(&self) -> io::Result<LatexEngine> {
+        match &self.engine {
+            Value::String(engine) => LatexEngine::parse(engine),
+            Value::Null | Value::Bool(false) => Ok(LatexEngine::PdfLatex),
+            _ => Err(invalid("Unsupported LaTeX engine in project settings")),
+        }
+    }
+
+    pub fn draft_mode(&self) -> bool {
+        self.draft_mode == Value::Bool(true)
+    }
+}
+
 pub fn build_settings(projects_dir: &Path, project: &Project) -> io::Result<BuildSettings> {
     let dir = checked_project_directory(projects_dir, project)?;
     read_build_settings(&dir, project)
@@ -95,16 +109,10 @@ fn read_build_settings(dir: &Path, project: &Project) -> io::Result<BuildSetting
     if current.id != project.id {
         return Err(invalid("Project metadata changed"));
     }
-    let properties: Value = serde_json::from_slice(&metadata)?;
-    let engine = match &properties["engine"] {
-        Value::String(engine) => LatexEngine::parse(engine)?,
-        Value::Null | Value::Bool(false) => LatexEngine::PdfLatex,
-        _ => return Err(invalid("Unsupported LaTeX engine in project settings")),
-    };
     Ok(BuildSettings {
         root_file: current.root_file().replace('\\', "/"),
-        engine,
-        draft_mode: properties["draftMode"] == Value::Bool(true),
+        engine: current.latex_engine()?,
+        draft_mode: current.draft_mode(),
     })
 }
 

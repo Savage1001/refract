@@ -31,6 +31,8 @@ The preview looks in the platform's application configuration directory for the 
 
 The workspace builds LaTeX from saved project files using the installed TeX toolchain. Use **Compile** to rebuild, **Build output** to read compiler messages, and **Download PDF** to save the result. On Windows, the preview includes page navigation, zoom, Fit width, and Fit page. Use **Show in PDF** to jump from the current source line. Double-click a PDF page or focus it and press Enter to jump back to the source.
 
+Open **Tools** for Project Info. Select the root file to open it, choose the LaTeX engine, or turn on draft mode to compile with image placeholders.
+
 Use the Electron app for inline PDF rendering and SyncTeX navigation on macOS and Linux, assistants, and updates.
 
 ## Parity before replacing Electron

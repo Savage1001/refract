@@ -16,8 +16,9 @@ pub use project_entries::{
     trash_project_entry, upload_project_files, upload_project_folder,
 };
 pub use project_management::{
-    DeletedProject, ProjectArchive, create_project, duplicate_project, list_deleted_projects,
-    rename_project, restore_deleted_project, trash_project,
+    DeletedProject, ProjectArchive, ProjectSetting, create_project, duplicate_project,
+    list_deleted_projects, rename_project, restore_deleted_project, trash_project,
+    update_project_setting,
 };
 
 const METADATA_LIMIT: usize = 64 * 1024;
@@ -30,6 +31,10 @@ pub struct Project {
     pub name: String,
     pub created: Option<String>,
     root_file: Option<String>,
+    #[serde(default)]
+    engine: serde_json::Value,
+    #[serde(default)]
+    draft_mode: serde_json::Value,
 }
 
 impl Project {

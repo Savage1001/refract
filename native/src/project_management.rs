@@ -1,6 +1,6 @@
 use crate::{
-    METADATA_LIMIT, Project, is_project_id, open_local_file, project_directory, read_local_file,
-    stage_file,
+    METADATA_LIMIT, Project, is_project_id, open_local_file, project_directory,
+    project_entries::checked_project_directory, read_local_file, stage_file, tex::LatexEngine,
 };
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value};
@@ -238,28 +238,59 @@ pub fn rename_project(projects_dir: &Path, project: &Project, name: &str) -> io:
             "Project name is required",
         ));
     }
-    let folder = project_directory(projects_dir, project)?;
+    update_project_metadata(projects_dir, project, |fields| {
+        fields.insert("name".into(), Value::String(name.into()));
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectSetting {
+    Engine(LatexEngine),
+    DraftMode(bool),
+}
+
+pub fn update_project_setting(
+    projects_dir: &Path,
+    project: &Project,
+    setting: ProjectSetting,
+) -> io::Result<Project> {
+    update_project_metadata(projects_dir, project, |fields| {
+        let (key, value) = match setting {
+            ProjectSetting::Engine(engine) => ("engine", Value::String(engine.name().into())),
+            ProjectSetting::DraftMode(enabled) => ("draftMode", Value::Bool(enabled)),
+        };
+        fields.insert(key.into(), value);
+    })
+}
+
+fn update_project_metadata(
+    projects_dir: &Path,
+    project: &Project,
+    update: impl FnOnce(&mut Map<String, Value>),
+) -> io::Result<Project> {
+    let folder = checked_project_directory(projects_dir, project)?;
     let path = folder.join(".refract.json");
     let original = read_project_metadata(&folder, &path)?;
     let mut fields: Map<String, Value> = serde_json::from_slice(&original)?;
     if fields.get("id").and_then(Value::as_str) != Some(project.id.as_str()) {
         return Err(invalid_metadata());
     }
-    fields.insert("name".into(), Value::String(name.into()));
-    let (renamed, metadata) = encode_metadata(&fields)?;
+    update(&mut fields);
+    let (project, metadata) = encode_metadata(&fields)?;
     let staged = stage_file(&path, &metadata)?;
     if read_project_metadata(&folder, &path)? != original {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
-            "Project metadata changed during rename",
+            "Project metadata changed during the update",
         ));
     }
     staged.persist(path).map_err(|error| error.error)?;
-    Ok(renamed)
+    Ok(project)
 }
 
 pub(super) fn read_project_metadata(folder: &Path, path: &Path) -> io::Result<Vec<u8>> {
-    if !path.symlink_metadata()?.is_file() {
+    let info = path.symlink_metadata()?;
+    if !info.is_file() || is_link(&info) {
         return Err(invalid_metadata());
     }
     read_local_file(folder, path, METADATA_LIMIT)
@@ -286,6 +317,34 @@ mod tests {
         versions::{list_versions, snapshot_project},
     };
     use serde_json::json;
+
+    #[test]
+    fn engine_and_draft_updates_preserve_other_metadata_and_feed_the_compiler() {
+        let profile = tempfile::tempdir().unwrap();
+        let project = create_project(profile.path(), "Paper").unwrap();
+        let metadata = profile.path().join(&project.id).join(".refract.json");
+        let mut properties: Value = serde_json::from_slice(&fs::read(&metadata).unwrap()).unwrap();
+        properties["plugin"] = json!({"keep": [1, 2]});
+        properties["rootFile"] = json!("sections/main.tex");
+        fs::write(&metadata, properties.to_string()).unwrap();
+        let changed = update_project_setting(
+            profile.path(),
+            &project,
+            ProjectSetting::Engine(LatexEngine::LuaLatex),
+        )
+        .unwrap();
+        assert_eq!(changed.latex_engine().unwrap(), LatexEngine::LuaLatex);
+        let changed =
+            update_project_setting(profile.path(), &project, ProjectSetting::DraftMode(true))
+                .unwrap();
+        let config = crate::tex::build_settings(profile.path(), &changed).unwrap();
+        assert_eq!(config.engine, LatexEngine::LuaLatex);
+        assert_eq!(config.root_file, "sections/main.tex");
+        assert!(config.draft_mode);
+        let current: Value = serde_json::from_slice(&fs::read(metadata).unwrap()).unwrap();
+        assert_eq!(current["plugin"], properties["plugin"]);
+        assert_eq!(current["name"], properties["name"]);
+    }
 
     #[test]
     fn creates_the_default_electron_project_in_a_new_profile() {

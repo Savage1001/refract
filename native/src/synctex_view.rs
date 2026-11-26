@@ -145,6 +145,7 @@ impl Library {
                         Ok(SyncResult::Pdf(position)) => {
                             selection.show_comments = false;
                             selection.show_versions = false;
+                            selection.show_project_info = false;
                             selection.build.show_log = false;
                             selection.build.preview.jump_to(position);
                             library.request_pdf_frame(window, cx);

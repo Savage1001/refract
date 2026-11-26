@@ -34,6 +34,7 @@ mod file_transfer_view;
 mod file_trash_view;
 mod pdf_view;
 mod project_import_view;
+mod project_info_view;
 mod project_management_view;
 mod synctex_view;
 mod version_view;
@@ -44,6 +45,7 @@ use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
 use file_trash_view::DeletedFilesDialog;
 use project_import_view::ImportDraft;
+use project_info_view::ProjectInfoState;
 use project_management_view::{ProjectFocus, RenameDraft};
 use synctex_view::RunningSync;
 use version_view::Comparison;
@@ -109,6 +111,9 @@ struct Selection {
     tabs: Vec<FileTab>,
     show_comments: bool,
     show_versions: bool,
+    show_project_info: bool,
+    project_info: Option<ProjectInfoState>,
+    focus_source_on_load: bool,
     versions: Option<io::Result<Vec<Version>>>,
     restore_error: Option<String>,
     retained_restore_stages: bool,
@@ -248,6 +253,9 @@ impl Library {
             tabs: Vec::new(),
             show_comments: false,
             show_versions: false,
+            show_project_info: false,
+            project_info: None,
+            focus_source_on_load: false,
             versions: None,
             restore_error: None,
             retained_restore_stages: false,
@@ -296,6 +304,7 @@ impl Library {
         selection.file = Some(file.clone());
         selection.pending_comment = None;
         selection.pending_source_jump = None;
+        selection.focus_source_on_load = false;
         selection.comment_status = None;
         self.preview_task = None;
         if selection
@@ -347,6 +356,14 @@ impl Library {
                     && let Some(Ok(editor)) = tab.editor.as_ref()
                 {
                     Self::select_source_line(&editor.state, target.line, window, cx);
+                }
+                if std::mem::take(&mut selection.focus_source_on_load)
+                    && selection.file.as_deref() == Some(file.as_str())
+                    && let Some(Ok(editor)) = tab.editor.as_ref()
+                {
+                    editor
+                        .state
+                        .update(cx, |editor, cx| editor.focus(window, cx));
                 }
                 cx.notify();
             });
@@ -438,6 +455,7 @@ impl Library {
             selection.show_versions = !selection.show_versions;
             if selection.show_versions {
                 selection.show_comments = false;
+                selection.show_project_info = false;
             } else {
                 selection.comparison = None;
                 self.comparison_task = None;
@@ -796,6 +814,7 @@ impl Library {
     }
 
     fn resume_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_pending_project_setting(window, cx);
         if self.save_task.is_none()
             && self.build_task.is_none()
             && self.sync_task.is_none()
@@ -1389,7 +1408,9 @@ impl Library {
             )
             .child(self.source_pane(selection, palette, cx))
             .when(
-                !selection.show_comments && !selection.show_versions,
+                !selection.show_comments
+                    && !selection.show_versions
+                    && !selection.show_project_info,
                 |workspace| workspace.child(self.compile_pane(&selection.build, palette, cx)),
             )
             .when(selection.show_comments, |workspace| {
@@ -1397,6 +1418,9 @@ impl Library {
             })
             .when(selection.show_versions, |workspace| {
                 workspace.child(self.versions_pane(selection, palette, cx))
+            })
+            .when(selection.show_project_info, |workspace| {
+                workspace.child(self.project_info_pane(selection, palette, cx))
             })
     }
 
@@ -1703,6 +1727,7 @@ impl Library {
                         }),
                     ),
             )
+            .child(self.project_info_button(selection, palette, cx))
             .child(self.export_project_button(palette, cx));
         let Some(path) = &selection.file else {
             return pane.child(

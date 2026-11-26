@@ -66,6 +66,7 @@ impl Library {
                 .entry(selection.project.id.clone())
                 .or_insert_with(|| CommentDrafts::new(window, cx));
             selection.show_versions = false;
+            selection.show_project_info = false;
             selection.comparison = None;
             self.comparison_task = None;
             self.load_comments(cx);
