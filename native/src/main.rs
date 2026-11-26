@@ -2,10 +2,11 @@ use gpui::{
     AnyElement, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight, Image,
     ImageFormat, KeyBinding, PromptLevel, SharedString, Subscription, Task, Window,
     WindowAppearance, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, rgb, size,
+    svg,
 };
 use gpui_component::{
     Root,
-    input::{InputEvent, InputState},
+    input::{Input, InputEvent, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
 use refract_native::versions::{
@@ -69,6 +70,8 @@ actions!(editor, [SaveSource]);
 struct Library {
     projects_dir: PathBuf,
     projects: Option<io::Result<Vec<Project>>>,
+    project_query: Entity<InputState>,
+    _project_query_events: Subscription,
     project_open_sequence: u64,
     project_library_task: Option<Task<()>>,
     import_draft: Option<ImportDraft>,
@@ -197,9 +200,21 @@ impl Library {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle);
         let outline = OutlinePane::new(&projects_dir);
+        let project_query = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search")
+                .clean_on_escape()
+        });
+        let project_query_events = cx.subscribe(&project_query, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
         Self {
             projects_dir,
             projects: None,
+            project_query,
+            _project_query_events: project_query_events,
             project_open_sequence: 0,
             project_library_task: None,
             import_draft: None,
@@ -528,8 +543,16 @@ impl Library {
             if let Some(asset) = previous.asset_preview {
                 asset.release(window);
             }
-            if let Some(focus) = self.project_focus.get(&previous.project.id) {
+            let query = self.project_query.read(cx).value().to_lowercase();
+            if let Some(focus) = self
+                .project_focus
+                .get(&previous.project.id)
+                .filter(|_| previous.project.name.to_lowercase().contains(&query))
+            {
                 window.focus(&focus.open);
+            } else {
+                self.project_query
+                    .update(cx, |input, cx| input.focus(window, cx));
             }
         }
         cx.notify();
@@ -1147,6 +1170,7 @@ impl Library {
         let columns = (((width - padding * 2.).min(1120.) + 16.) / 256.)
             .floor()
             .max(1.) as u16;
+        let query = self.project_query.read(cx).value().to_lowercase();
         let page = div()
             .size_full()
             .id("projects")
@@ -1154,103 +1178,119 @@ impl Library {
             .px(px(padding))
             .py(px(44.))
             .on_click(cx.listener(|library, _, _, cx| library.dismiss_project_menu(cx)));
-        let content =
-            div()
-                .w_full()
-                .max_w(px(1120.))
-                .mx_auto()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(24.))
-                        .mb(px(20.))
-                        .child(img(self.logo.clone()).size(px(50.)).rounded(px(14.)))
-                        .child(
-                            div()
-                                .text_size(px(32.))
-                                .font_weight(FontWeight::BOLD)
-                                .child("Refract"),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .mb(px(40.))
-                        .child(
-                            div()
-                                .text_size(px(28.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Your projects"),
-                        )
-                        .child(self.project_library_actions(palette, cx)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .border_y_1()
-                        .border_color(rgb(palette.border))
-                        .py(px(16.))
-                        .child(
-                            div()
-                                .flex()
-                                .p(px(2.))
-                                .border_1()
-                                .border_color(rgb(palette.border))
-                                .rounded_md()
-                                .child(self.view_toggle(false, "List", palette, cx))
-                                .child(self.view_toggle(true, "Grid", palette, cx)),
-                        )
-                        .child(self.deleted_projects_button(palette, cx)),
-                )
-                .children(self.project_action_error.clone())
-                .child(match &self.projects {
-                    Some(Ok(projects)) if !projects.is_empty() => {
-                        let count = if projects.len() == 1 {
-                            "1 project".to_owned()
-                        } else {
-                            format!("{} projects", projects.len())
-                        };
+        let content = div()
+            .w_full()
+            .max_w(px(1120.))
+            .mx_auto()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(24.))
+                    .mb(px(20.))
+                    .child(img(self.logo.clone()).size(px(50.)).rounded(px(14.)))
+                    .child(
                         div()
-                            .child(
-                                div()
-                                    .pt(px(20.))
-                                    .pb(px(8.))
-                                    .text_size(px(12.))
-                                    .text_color(rgb(palette.muted))
-                                    .child(count),
-                            )
-                            .when(!self.grid_view, |content| {
-                                content.child(
+                            .text_size(px(32.))
+                            .font_weight(FontWeight::BOLD)
+                            .child("Refract"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .mb(px(40.))
+                    .child(
+                        div()
+                            .text_size(px(28.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Your projects"),
+                    )
+                    .child(self.project_library_actions(palette, cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(6.))
+                    .border_y_1()
+                    .border_color(rgb(palette.border))
+                    .py(px(16.))
+                    .child(self.project_search_field(palette))
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .flex()
+                            .p(px(2.))
+                            .border_1()
+                            .border_color(rgb(palette.border))
+                            .rounded_md()
+                            .child(self.view_toggle(false, "List", palette, cx))
+                            .child(self.view_toggle(true, "Grid", palette, cx)),
+                    )
+                    .child(self.deleted_projects_button(palette, cx)),
+            )
+            .children(self.project_action_error.clone())
+            .child(match &self.projects {
+                Some(Ok(projects)) if !projects.is_empty() => {
+                    let projects = projects
+                        .iter()
+                        .filter(|project| {
+                            query.is_empty() || project.name.to_lowercase().contains(&query)
+                        })
+                        .collect::<Vec<_>>();
+                    let count = if projects.len() == 1 {
+                        "1 project".to_owned()
+                    } else {
+                        format!("{} projects", projects.len())
+                    };
+                    div()
+                        .when(projects.is_empty(), |content| {
+                            content.child(self.no_project_matches(palette, cx))
+                        })
+                        .when(!projects.is_empty(), |content| {
+                            content
+                                .child(
                                     div()
-                                        .px(px(14.))
-                                        .py(px(10.))
-                                        .flex()
-                                        .border_b_1()
-                                        .border_color(rgb(palette.border))
-                                        .text_size(px(11.))
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .pt(px(20.))
+                                        .pb(px(8.))
+                                        .text_size(px(12.))
                                         .text_color(rgb(palette.muted))
-                                        .child(div().flex_1().child("NAME"))
-                                        .child(div().w(px(210.)).child("CREATED")),
+                                        .child(count),
                                 )
-                            })
-                            .child(
-                                div()
-                                    .when(self.grid_view, |list| {
-                                        list.grid().grid_cols(columns).gap(px(16.)).pt(px(16.))
-                                    })
-                                    .children(
-                                        projects
-                                            .iter()
-                                            .map(|project| self.project_row(project, palette, cx)),
-                                    ),
-                            )
-                    }
-                    Some(Ok(_)) => div()
+                                .when(!self.grid_view, |content| {
+                                    content.child(
+                                        div()
+                                            .px(px(14.))
+                                            .py(px(10.))
+                                            .flex()
+                                            .border_b_1()
+                                            .border_color(rgb(palette.border))
+                                            .text_size(px(11.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(rgb(palette.muted))
+                                            .child(div().flex_1().child("NAME"))
+                                            .child(div().w(px(210.)).child("CREATED")),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .when(self.grid_view, |list| {
+                                            list.grid().grid_cols(columns).gap(px(16.)).pt(px(16.))
+                                        })
+                                        .children(
+                                            projects.into_iter().map(|project| {
+                                                self.project_row(project, palette, cx)
+                                            }),
+                                        ),
+                                )
+                        })
+                }
+                Some(Ok(_)) => {
+                    div()
                         .py_6()
                         .flex()
                         .flex_col()
@@ -1269,17 +1309,72 @@ impl Library {
                             "Start from Scratch",
                             palette,
                             cx,
-                        )),
-                    None => div()
-                        .py_6()
-                        .text_color(rgb(palette.muted))
-                        .child("Loading projects…"),
-                    Some(Err(error)) => div()
-                        .py_6()
-                        .text_color(rgb(palette.muted))
-                        .child(format!("Couldn’t read projects: {error}")),
-                });
+                        ))
+                }
+                None => div()
+                    .py_6()
+                    .text_color(rgb(palette.muted))
+                    .child("Loading projects…"),
+                Some(Err(error)) => div()
+                    .py_6()
+                    .text_color(rgb(palette.muted))
+                    .child(format!("Couldn’t read projects: {error}")),
+            });
         page.child(content)
+    }
+
+    fn project_search_field(&self, palette: Palette) -> impl IntoElement {
+        div()
+            .debug_selector(|| "project-search".into())
+            .w(px(280.))
+            .max_w_full()
+            .rounded_lg()
+            .hover(move |style| style.bg(rgb(palette.selection)))
+            .child(
+                Input::new(&self.project_query)
+                    .appearance(false)
+                    .tab_index(1)
+                    .text_size(px(13.))
+                    .h(px(36.))
+                    .prefix(
+                        svg()
+                            .path("refract/search.svg")
+                            .size(px(18.))
+                            .text_color(rgb(palette.muted)),
+                    ),
+            )
+    }
+
+    fn no_project_matches(&self, palette: Palette, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .py_6()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("No projects found"),
+            )
+            .child(
+                div()
+                    .text_color(rgb(palette.muted))
+                    .child("Try a different search or clear your filter."),
+            )
+            .child(workspace_tools::tool_button(
+                "clear-project-search",
+                "Clear search",
+                false,
+                palette,
+                cx,
+                |library, window, cx| {
+                    library.project_query.update(cx, |input, cx| {
+                        input.set_value("", window, cx);
+                        input.focus(window, cx);
+                    });
+                },
+            ))
     }
 
     fn view_toggle(
@@ -1291,6 +1386,7 @@ impl Library {
     ) -> impl IntoElement {
         div()
             .id(label)
+            .debug_selector(|| label.to_owned())
             .tab_index(1)
             .cursor_pointer()
             .rounded_md()
@@ -2097,7 +2193,12 @@ mod tests {
         });
         let library = library.unwrap();
         cx.refresh().unwrap();
-        cx.simulate_keystrokes("tab tab tab tab enter");
+        click(cx, "project-search");
+        cx.simulate_input("Missing project");
+        click(cx, "clear-project-search");
+        cx.update(|_, app| assert!(library.read(app).project_query.read(app).value().is_empty()));
+        cx.simulate_input("PAPER");
+        click(cx, "Grid");
         cx.update(|_, app| assert!(library.read(app).grid_view));
         cx.simulate_keystrokes("tab tab enter");
         cx.update(|_, app| {
