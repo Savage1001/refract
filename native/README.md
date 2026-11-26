@@ -43,7 +43,7 @@ cargo run --locked --manifest-path native/Cargo.toml
 
 The preview looks in the platform's application configuration directory for the `Refract/projects` folder. For a custom profile or a source checkout using a different profile directory, set `REFRACT_DATA_DIR` to the folder containing `projects`.
 
-The workspace builds LaTeX from saved project files using the installed TeX toolchain. Use **Compile** to rebuild and **Download PDF** to save the result. The preview includes page navigation, zoom, Fit width, and Fit page. Use **Show in PDF** to jump from the current source line. Double-click a PDF page or focus it and press Enter to jump back to the source.
+The workspace builds LaTeX from saved project files using the installed TeX toolchain. Use **Compile** to rebuild and **Download PDF** to save the result. Scroll through the compiled pages or use the page navigation and zoom controls. The preview renders the pages in view and releases their bitmaps as they scroll away. Use **Show in PDF** to jump from the current source line. Double-click a PDF page or focus it and press Enter to jump back to the source.
 
 Open **Tools** for **Project Info**, **Versions**, **Comments**, and **Logs**. Use **Expand panel** for more room or **Tools** to return to the PDF. In Project Info, select the root file to open it, choose the LaTeX engine, or turn on draft mode to compile with image placeholders.
 

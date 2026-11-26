@@ -1,6 +1,9 @@
 use super::{PageRequest, RasterizedPage, io};
 use crate::asset_image;
-use refract_native::{file_preview::ImageKind, pdf_raster::page_layout};
+use refract_native::{
+    file_preview::ImageKind,
+    pdf_raster::{PageSize, page_layout},
+};
 use std::{path::Path, sync::Arc};
 use windows::{
     Data::Pdf::{PdfDocument, PdfPageRenderOptions},
@@ -20,10 +23,30 @@ pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<Raste
 
 fn render(path: &Path, request: PageRequest) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
     let _apartment = Apartment::initialize()?;
+    render_document(&open_file(path)?, request)
+}
+
+fn open_file(path: &Path) -> windows::core::Result<PdfDocument> {
     let path = HSTRING::from(dunce::simplified(path).as_os_str());
     let file = StorageFile::GetFileFromPathAsync(&path)?.get()?;
-    let document = PdfDocument::LoadFromFileAsync(&file)?.get()?;
-    render_document(&document, request)
+    PdfDocument::LoadFromFileAsync(&file)?.get()
+}
+
+pub(super) fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
+    let read = || -> windows::core::Result<Vec<PageSize>> {
+        let _apartment = Apartment::initialize()?;
+        let pdf = open_file(path)?;
+        (0..pdf.PageCount()?)
+            .map(|index| {
+                let size = pdf.GetPage(index)?.Size()?;
+                Ok(PageSize {
+                    width: f64::from(size.Width) * 72. / 96.,
+                    height: f64::from(size.Height) * 72. / 96.,
+                })
+            })
+            .collect()
+    };
+    read().map_err(io::Error::other)
 }
 
 pub(crate) fn render_asset_page(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<RasterizedPage> {
@@ -88,8 +111,6 @@ fn render_document(
         count,
         width: layout.width,
         height: layout.height,
-        point_width,
-        point_height,
         image: asset_image::decode(png, ImageKind::Png)?,
     })
 }
@@ -145,6 +166,10 @@ mod tests {
         )
         .unwrap();
         fs::write(&path, &pdf).unwrap();
+        let sizes = read_page_sizes(&path).unwrap();
+        assert_eq!(sizes.len(), 2);
+        assert_eq!((sizes[0].width, sizes[0].height), (300., 200.));
+        assert_eq!((sizes[1].width, sizes[1].height), (200., 300.));
         let frame = render_page(
             &path,
             PageRequest {
@@ -152,6 +177,7 @@ mod tests {
                 width: Some(320.),
                 height: Some(300.),
                 display_scale: 1.,
+                pixel_budget: refract_native::pdf_raster::MAX_RASTER_PIXELS,
             },
         )
         .unwrap();

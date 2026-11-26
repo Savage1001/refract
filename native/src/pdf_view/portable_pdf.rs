@@ -4,6 +4,8 @@ use image::RgbaImage;
 use refract_native::pdf_raster::{PageRequest, portable};
 use std::{io, path::Path, sync::Arc};
 
+pub(super) use portable::read_page_sizes;
+
 pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<RasterizedPage> {
     build_frame(portable::render_file(path, request)?)
 }
@@ -29,8 +31,6 @@ fn build_frame(page: portable::Page) -> io::Result<RasterizedPage> {
         count: page.count,
         width: layout.width,
         height: layout.height,
-        point_width: page.point_width,
-        point_height: page.point_height,
         image: asset_image::frame_image(buffer),
     })
 }

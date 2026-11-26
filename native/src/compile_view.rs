@@ -106,7 +106,7 @@ impl Library {
                     && !selection.build.queued
                 {
                     selection.build.outcome = Some(result);
-                    library.request_pdf_frame(window, cx);
+                    library.load_built_pdf(window, cx);
                 }
                 library.start_next_save(window, cx);
                 if library.snapshot_timer.is_none() {

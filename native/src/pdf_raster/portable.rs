@@ -1,4 +1,4 @@
-use super::{PageLayout, PageRequest, page_layout};
+use super::{PageLayout, PageRequest, PageSize, page_layout};
 use hayro::{
     RenderCache, RenderSettings,
     hayro_interpret::{InterpreterSettings, util::TransformExt},
@@ -25,6 +25,21 @@ pub fn render_file(path: &Path, request: PageRequest) -> io::Result<Page> {
     render_bytes(Arc::new(fs::read(path)?), request)
 }
 
+pub fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
+    let pdf = open_pdf(Arc::new(fs::read(path)?))?;
+    Ok(pdf
+        .pages()
+        .iter()
+        .map(|page| {
+            let (width, height) = page.render_dimensions();
+            PageSize {
+                width: f64::from(width),
+                height: f64::from(height),
+            }
+        })
+        .collect())
+}
+
 pub fn render_bytes(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Page> {
     // A malformed document should fail its preview on the worker instead of interrupting the app.
     std::panic::catch_unwind(move || render(bytes, request)).unwrap_or_else(|_| {
@@ -35,13 +50,17 @@ pub fn render_bytes(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Pag
     })
 }
 
-fn render(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Page> {
-    let pdf = Pdf::new(bytes).map_err(|error| {
+fn open_pdf(bytes: Arc<Vec<u8>>) -> io::Result<Pdf> {
+    Pdf::new(bytes).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Couldn’t open PDF. {error:?}"),
         )
-    })?;
+    })
+}
+
+fn render(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Page> {
+    let pdf = open_pdf(bytes)?;
     let pages = pdf.pages();
     let count = u32::try_from(pages.len()).map_err(io::Error::other)?;
     if count == 0 {
@@ -126,6 +145,12 @@ mod tests {
     #[test]
     fn renders_the_requested_page_with_crop_and_rotation() {
         let pdf = fixture();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), pdf.as_slice()).unwrap();
+        let sizes = read_page_sizes(file.path()).unwrap();
+        assert_eq!(sizes.len(), 2);
+        assert_eq!((sizes[0].width, sizes[0].height), (400., 200.));
+        assert_eq!((sizes[1].width, sizes[1].height), (190., 100.));
         let first = render_bytes(pdf.clone(), PageRequest::project_file(0)).unwrap();
         assert_eq!((first.current, first.count), (0, 2));
         assert_eq!((first.point_width, first.point_height), (400., 200.));

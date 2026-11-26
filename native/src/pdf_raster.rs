@@ -1,7 +1,7 @@
 use std::io;
 
 const MAX_RASTER_DIMENSION: f64 = 4096.;
-const MAX_RASTER_PIXELS: f64 = 8_000_000.;
+pub const MAX_RASTER_PIXELS: u32 = 8_000_000;
 
 #[derive(Clone, Copy)]
 pub struct PageRequest {
@@ -9,6 +9,7 @@ pub struct PageRequest {
     pub width: Option<f32>,
     pub height: Option<f32>,
     pub display_scale: f32,
+    pub pixel_budget: u32,
 }
 
 impl PageRequest {
@@ -18,6 +19,7 @@ impl PageRequest {
             width: None,
             height: None,
             display_scale: 1.2,
+            pixel_budget: MAX_RASTER_PIXELS,
         }
     }
 }
@@ -27,6 +29,12 @@ pub struct PageLayout {
     pub height: f32,
     pub pixel_width: u32,
     pub pixel_height: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PageSize {
+    pub width: f64,
+    pub height: f64,
 }
 
 /// Fit the logical preview and cap the pixels allocated to a single page.
@@ -58,14 +66,21 @@ pub fn page_layout(
         ));
     }
     let quality = f64::from(request.display_scale.clamp(1., 4.)) * 1.25;
+    let budget = f64::from(request.pixel_budget.clamp(1, MAX_RASTER_PIXELS));
     let scale = quality
-        .min((MAX_RASTER_PIXELS / (width * height)).sqrt())
+        .min((budget / (width * height)).sqrt())
         .min(MAX_RASTER_DIMENSION / width.max(height));
+    let pixel_width = (width * scale).floor().max(1.) as u32;
+    let pixel_height = (height * scale).floor().max(1.) as u32;
+    // A sub-pixel side still occupies a pixel, so constrain the longer side too.
+    let budget = budget as u32;
+    let pixel_width = pixel_width.min(budget / pixel_height.min(budget));
+    let pixel_height = pixel_height.min(budget / pixel_width);
     Ok(PageLayout {
         width: width as f32,
         height: height as f32,
-        pixel_width: (width * scale).floor().max(1.) as u32,
-        pixel_height: (height * scale).floor().max(1.) as u32,
+        pixel_width,
+        pixel_height,
     })
 }
 
@@ -74,6 +89,7 @@ pub fn page_layout(
     any(target_os = "linux", target_os = "macos")
 ))]
 pub mod portable;
+pub mod stack;
 
 #[cfg(test)]
 mod tests {
@@ -86,6 +102,7 @@ mod tests {
             width: Some(320.),
             height: Some(300.),
             display_scale: 1.,
+            pixel_budget: MAX_RASTER_PIXELS,
         };
         let layout = page_layout(200., 300., request).unwrap();
         assert_eq!((layout.width, layout.height), (200., 300.));
