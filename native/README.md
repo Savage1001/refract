@@ -1,8 +1,10 @@
 # Refract native preview
 
-This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. It opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 128 KiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved. Use Electron for automatic version snapshots.
+This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. It opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 128 KiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
 
 Open Comments to read existing project comments and replies. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
+
+Versions lists existing and newly captured snapshots. Refract captures a snapshot when you open a project and after saved edits settle, using the same manifest and ZIP format as the Electron app. Use Electron to compare or restore versions.
 
 From the repository root, use stable Rust and the Windows MSVC toolchain to build the preview. Running the binary opens a desktop window.
 

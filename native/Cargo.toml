@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:chrono", "dep:gpui", "dep:gpui-component"]
+desktop = ["dep:gpui", "dep:gpui-component"]
 ui-tests = ["desktop", "gpui/test-support"]
 
 [[bin]]
@@ -16,10 +16,12 @@ path = "src/main.rs"
 required-features = ["desktop"]
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gpui = { version = "=0.2.2", optional = true }
 gpui-component = { version = "=0.5.1", default-features = false, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "=9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }

@@ -6,6 +6,7 @@ use std::{
 };
 
 pub mod comments;
+pub mod versions;
 
 const METADATA_LIMIT: usize = 64 * 1024;
 const SOURCE_LIMIT: usize = 128 * 1024;
@@ -301,16 +302,8 @@ fn valid_project_component(name: &str) -> bool {
 }
 
 fn read_local_file(folder: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
-    let folder = folder.canonicalize()?;
-    let path = path.canonicalize()?;
-    if !path.starts_with(&folder) || !fs::metadata(&path)?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "File is outside the project or is not a regular file",
-        ));
-    }
     let mut bytes = Vec::new();
-    File::open(path)?
+    open_local_file(folder, path)?
         .take(limit as u64 + 1)
         .read_to_end(&mut bytes)?;
     if bytes.len() > limit {
@@ -320,6 +313,18 @@ fn read_local_file(folder: &Path, path: &Path, limit: usize) -> io::Result<Vec<u
         ));
     }
     Ok(bytes)
+}
+
+fn open_local_file(folder: &Path, path: &Path) -> io::Result<File> {
+    let folder = folder.canonicalize()?;
+    let path = path.canonicalize()?;
+    if !path.starts_with(&folder) || !fs::metadata(&path)?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "File is outside the project or is not a regular file",
+        ));
+    }
+    File::open(path)
 }
 
 #[cfg(test)]

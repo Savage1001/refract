@@ -8,6 +8,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
+use refract_native::versions::{Version, list_versions, snapshot_project};
 use refract_native::{
     Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
 };
@@ -16,6 +17,7 @@ use std::{
     env, io,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 actions!(editor, [SaveSource]);
@@ -29,6 +31,9 @@ struct Library {
     comments_task: Option<Task<()>>,
     save_task: Option<Task<()>>,
     save_queue: VecDeque<String>,
+    snapshot_task: Option<Task<()>>,
+    snapshot_timer: Option<Task<()>>,
+    snapshot_needed: bool,
     navigation_after_save: Option<Navigation>,
     discard_prompt: Option<Task<()>>,
     focus_handle: FocusHandle,
@@ -45,6 +50,8 @@ struct Selection {
     file: Option<String>,
     tabs: Vec<FileTab>,
     show_comments: bool,
+    show_versions: bool,
+    versions: Option<io::Result<Vec<Version>>>,
     comments: Option<io::Result<Vec<Comment>>>,
     pending_comment: Option<Comment>,
     comment_status: Option<&'static str>,
@@ -104,6 +111,9 @@ impl Library {
             comments_task: None,
             save_task: None,
             save_queue: VecDeque::new(),
+            snapshot_task: None,
+            snapshot_timer: None,
+            snapshot_needed: false,
             navigation_after_save: None,
             discard_prompt: None,
             focus_handle,
@@ -130,6 +140,8 @@ impl Library {
             file: None,
             tabs: Vec::new(),
             show_comments: false,
+            show_versions: false,
+            versions: None,
             comments: None,
             pending_comment: None,
             comment_status: None,
@@ -148,6 +160,8 @@ impl Library {
             });
         }));
         self.open_file(file, window, cx);
+        self.snapshot_needed = true;
+        self.start_snapshot(window, cx);
         window.focus(&self.home_focus);
     }
 
@@ -291,10 +305,21 @@ impl Library {
         };
         selection.show_comments = !selection.show_comments;
         if selection.show_comments {
+            selection.show_versions = false;
             selection.comments = None;
             self.load_comments(cx);
         }
         cx.notify();
+    }
+
+    fn toggle_versions(&mut self, cx: &mut Context<Self>) {
+        if let Some(selection) = &mut self.selection {
+            selection.show_versions = !selection.show_versions;
+            if selection.show_versions {
+                selection.show_comments = false;
+            }
+            cx.notify();
+        }
     }
 
     fn load_comments(&mut self, cx: &mut Context<Self>) {
@@ -336,7 +361,7 @@ impl Library {
     }
 
     fn start_next_save(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.save_task.is_some() {
+        if self.save_task.is_some() || self.snapshot_task.is_some() {
             return;
         }
         let Some(selection) = &mut self.selection else {
@@ -392,16 +417,72 @@ impl Library {
                         library.load_comments(cx);
                     }
                 }
-                library.start_next_save(window, cx);
-                if library.save_task.is_none()
-                    && let Some(navigation) = library.navigation_after_save.take()
-                {
-                    library.request_navigation(navigation, window, cx);
+                if reload_comments {
+                    library.schedule_snapshot(window, cx);
                 }
+                library.start_next_save(window, cx);
+                if library.snapshot_timer.is_none() {
+                    library.start_snapshot(window, cx);
+                }
+                library.resume_navigation(window, cx);
                 cx.notify();
             });
         }));
         cx.notify();
+    }
+
+    fn schedule_snapshot(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.snapshot_needed = true;
+        let delay = cx.background_executor().timer(Duration::from_secs(3));
+        self.snapshot_timer = Some(cx.spawn_in(window, async move |library, cx| {
+            delay.await;
+            let _ = library.update_in(cx, |library, window, cx| {
+                library.snapshot_timer = None;
+                library.start_snapshot(window, cx);
+            });
+        }));
+    }
+
+    fn start_snapshot(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if !self.snapshot_needed || self.save_task.is_some() || self.snapshot_task.is_some() {
+            return;
+        }
+        let Some(selection) = &self.selection else {
+            return;
+        };
+        let project = selection.project.clone();
+        let path = self.projects_dir.clone();
+        self.snapshot_needed = false;
+        self.snapshot_timer = None;
+        let snapshot = cx.background_executor().spawn(async move {
+            snapshot_project(&path, &project)?;
+            list_versions(&path, &project)
+        });
+        self.snapshot_task = Some(cx.spawn_in(window, async move |library, cx| {
+            let result = snapshot.await;
+            let _ = library.update_in(cx, |library, window, cx| {
+                library.snapshot_task = None;
+                if let Some(selection) = &mut library.selection {
+                    selection.versions = Some(result);
+                }
+                library.start_next_save(window, cx);
+                if library.snapshot_timer.is_none() {
+                    library.start_snapshot(window, cx);
+                }
+                library.resume_navigation(window, cx);
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    fn resume_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.save_task.is_none()
+            && self.snapshot_task.is_none()
+            && let Some(navigation) = self.navigation_after_save.take()
+        {
+            self.request_navigation(navigation, window, cx);
+        }
     }
 
     fn has_unsaved_changes(&self, navigation: &Navigation, cx: &App) -> bool {
@@ -431,8 +512,15 @@ impl Library {
         if self.discard_prompt.is_some() {
             return;
         }
-        if self.save_task.is_some() {
+        if self.save_task.is_some() || !self.save_queue.is_empty() {
             self.navigation_after_save = Some(navigation);
+            return;
+        }
+        if !matches!(navigation, Navigation::CloseFile(_))
+            && (self.snapshot_needed || self.snapshot_task.is_some())
+        {
+            self.navigation_after_save = Some(navigation);
+            self.start_snapshot(window, cx);
             return;
         }
         if !self.has_unsaved_changes(&navigation, cx) {
@@ -894,6 +982,64 @@ impl Library {
             .when(selection.show_comments, |workspace| {
                 workspace.child(self.comments_pane(selection, palette, cx))
             })
+            .when(selection.show_versions, |workspace| {
+                workspace.child(self.versions_pane(selection, palette))
+            })
+    }
+
+    fn versions_pane(&self, selection: &Selection, palette: Palette) -> impl IntoElement {
+        let pane = div()
+            .id("versions-pane")
+            .w(px(300.))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(rgb(palette.border))
+            .bg(rgb(palette.surface))
+            .p_4()
+            .gap_2()
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Version history"),
+            );
+        let list = div()
+            .id("version-list")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll();
+        pane.child(match &selection.versions {
+            None => list.child("Loading versions…"),
+            Some(Err(error)) => list.child(format!("Couldn’t load version history: {error}")),
+            Some(Ok(versions)) if versions.is_empty() => list.child("No saved versions."),
+            Some(Ok(versions)) => list.children(versions.iter().map(|version| {
+                let timestamp = chrono::DateTime::parse_from_rfc3339(&version.created)
+                    .map(|date| {
+                        date.with_timezone(&chrono::Local)
+                            .format("%-m/%-d/%Y, %-I:%M %p")
+                            .to_string()
+                    })
+                    .unwrap_or_else(|_| version.created.clone());
+                let files = version.files.len();
+                let description = if files == 1 {
+                    "1 file".to_owned()
+                } else {
+                    format!("{files} files")
+                };
+                div()
+                    .border_b_1()
+                    .border_color(rgb(palette.border))
+                    .py_2()
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(timestamp))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(palette.muted))
+                            .child(description),
+                    )
+            })),
+        })
     }
 
     fn comments_pane(
@@ -1185,27 +1331,49 @@ impl Library {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(selection.project.name.clone()),
             );
-        let pane = pane.child(
-            div()
-                .id("toggle-comments")
-                .tab_index(3)
-                .cursor_pointer()
-                .rounded_md()
-                .px_2()
-                .py_1()
-                .hover(move |style| style.bg(rgb(palette.selection)))
-                .focus(move |style| style.bg(rgb(palette.selection)))
-                .when(selection.show_comments, |button| {
-                    button.bg(rgb(palette.selection))
-                })
-                .child("Comments")
-                .on_click(cx.listener(|library, _, _, cx| library.toggle_comments(cx)))
-                .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
-                    if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                        library.toggle_comments(cx);
-                    }
-                })),
-        );
+        let pane = pane
+            .child(
+                div()
+                    .id("toggle-versions")
+                    .tab_index(3)
+                    .cursor_pointer()
+                    .rounded_md()
+                    .px_2()
+                    .py_1()
+                    .hover(move |style| style.bg(rgb(palette.selection)))
+                    .focus(move |style| style.bg(rgb(palette.selection)))
+                    .when(selection.show_versions, |button| {
+                        button.bg(rgb(palette.selection))
+                    })
+                    .child("Versions")
+                    .on_click(cx.listener(|library, _, _, cx| library.toggle_versions(cx)))
+                    .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                            library.toggle_versions(cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .id("toggle-comments")
+                    .tab_index(3)
+                    .cursor_pointer()
+                    .rounded_md()
+                    .px_2()
+                    .py_1()
+                    .hover(move |style| style.bg(rgb(palette.selection)))
+                    .focus(move |style| style.bg(rgb(palette.selection)))
+                    .when(selection.show_comments, |button| {
+                        button.bg(rgb(palette.selection))
+                    })
+                    .child("Comments")
+                    .on_click(cx.listener(|library, _, _, cx| library.toggle_comments(cx)))
+                    .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                            library.toggle_comments(cx);
+                        }
+                    })),
+            );
         let Some(path) = &selection.file else {
             return pane.child(
                 div()
@@ -1352,7 +1520,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     library.update(cx, |library, cx| {
                         let close = Navigation::CloseWindow;
-                        if library.save_task.is_none() && !library.has_unsaved_changes(&close, cx) {
+                        if library.save_task.is_none()
+                            && library.save_queue.is_empty()
+                            && library.snapshot_task.is_none()
+                            && !library.snapshot_needed
+                            && !library.has_unsaved_changes(&close, cx)
+                        {
                             return true;
                         }
                         library.request_navigation(close, window, cx);
@@ -1466,6 +1639,14 @@ mod tests {
             fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),
             "An abstract\nA draft\n"
         );
+        cx.executor().advance_clock(Duration::from_secs(3));
+        cx.run_until_parked();
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            let versions = selection.versions.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(versions.len(), 2);
+            assert_eq!(versions[0].sequence, 2);
+        });
         cx.update(|window, _| window.focus(&tree_focus));
         cx.simulate_keystrokes("tab tab enter");
         cx.update(|_, app| {
@@ -1496,7 +1677,13 @@ mod tests {
         cx.simulate_keystrokes("tab tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
+            assert!(selection.show_versions);
+        });
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.show_comments);
+            assert!(!selection.show_versions);
             let comments = selection.comments.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(comments[0].replies[0].text, "Checked");
             assert!(comments[0].resolved);
