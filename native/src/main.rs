@@ -811,12 +811,16 @@ impl Library {
                 .child(format!("Couldn’t open source: {error}"))
                 .into_any_element(),
             Some(Ok(editor)) => div()
+                // The input retains its own focus handle, so order it through its parent group.
+                .id("document-editor")
+                .tab_index(3)
+                .tab_stop(false)
+                .tab_group()
                 .flex_1()
                 .min_h(px(0.))
                 .child(
                     Input::new(editor)
                         .h_full()
-                        .tab_index(3)
                         .appearance(false)
                         .font_family(monospace_font())
                         .text_size(px(14.)),
@@ -951,10 +955,12 @@ mod tests {
                 .clone();
             assert_eq!(editor.read(app).value().as_ref(), "An abstract\n");
             let tree_focus = window.focused(app).unwrap();
-            editor.update(app, |editor, cx| editor.focus(window, cx));
+            editor.update(app, |editor, cx| {
+                editor.set_cursor_position(gpui_component::input::Position::new(0, 11), window, cx);
+            });
             tree_focus
         });
-        cx.simulate_keystrokes("end enter");
+        cx.simulate_keystrokes("enter");
         cx.simulate_input("A draft");
         cx.update(|window, _| window.focus(&tree_focus));
         cx.simulate_keystrokes("tab tab enter");
