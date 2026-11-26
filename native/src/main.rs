@@ -27,7 +27,7 @@ mod comments_view;
 mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
-use project_management_view::RenameDraft;
+use project_management_view::{ProjectFocus, RenameDraft};
 use version_view::Comparison;
 
 actions!(editor, [SaveSource]);
@@ -37,6 +37,9 @@ struct Library {
     projects: Option<io::Result<Vec<Project>>>,
     project_open_sequence: u64,
     project_create_task: Option<Task<()>>,
+    project_action_prompt: Option<Task<()>>,
+    project_menu: Option<String>,
+    duplicating_project: Option<String>,
     project_rename_task: Option<Task<()>>,
     project_action_error: Option<String>,
     project_name_focus: FocusHandle,
@@ -57,7 +60,7 @@ struct Library {
     navigation_after_save: Option<Navigation>,
     discard_prompt: Option<Task<()>>,
     focus_handle: FocusHandle,
-    project_focus: HashMap<String, FocusHandle>,
+    project_focus: HashMap<String, ProjectFocus>,
     home_focus: FocusHandle,
     logo: Arc<Image>,
     grid_view: bool,
@@ -135,6 +138,9 @@ impl Library {
             projects: None,
             project_open_sequence: 0,
             project_create_task: None,
+            project_action_prompt: None,
+            project_menu: None,
+            duplicating_project: None,
             project_rename_task: None,
             project_action_error: None,
             project_name_focus: cx.focus_handle().tab_stop(true).tab_index(1),
@@ -166,6 +172,12 @@ impl Library {
     }
 
     fn open_project(&mut self, project: Project, window: &mut Window, cx: &mut Context<Self>) {
+        if self.project_action_prompt.is_some()
+            || self.duplicating_project.as_deref() == Some(project.id.as_str())
+        {
+            return;
+        }
+        self.project_menu = None;
         self.project_open_sequence = self.project_open_sequence.wrapping_add(1);
         let file = project.root_file().replace('\\', "/");
         let expanded_folders = file
@@ -332,7 +344,7 @@ impl Library {
         if let Some(previous) = self.selection.take()
             && let Some(focus) = self.project_focus.get(&previous.project.id)
         {
-            window.focus(focus);
+            window.focus(&focus.open);
         }
         cx.notify();
     }
@@ -715,6 +727,7 @@ impl Library {
         cx: &mut Context<Self>,
     ) {
         if self.discard_prompt.is_some()
+            || self.project_action_prompt.is_some()
             || self.rename_draft.is_some() && !matches!(navigation, Navigation::CloseWindow)
         {
             return;
@@ -907,7 +920,8 @@ impl Library {
             .id("projects")
             .overflow_y_scroll()
             .px(px(padding))
-            .py(px(44.));
+            .py(px(44.))
+            .on_click(cx.listener(|library, _, _, cx| library.dismiss_project_menu(cx)));
         let content = div()
             .w_full()
             .max_w(px(1120.))
@@ -1092,7 +1106,7 @@ impl Library {
 
         div()
             .id(SharedString::from(project.id.clone()))
-            .track_focus(&self.project_focus[&project.id])
+            .track_focus(&self.project_focus[&project.id].open)
             .cursor_pointer()
             .flex()
             .rounded_lg()
@@ -1109,6 +1123,7 @@ impl Library {
             })
             .when(grid, |row| {
                 row.min_h(px(170.))
+                    .relative()
                     .flex_col()
                     .justify_between()
                     .gap(px(20.))
@@ -1121,6 +1136,7 @@ impl Library {
                     .flex()
                     .flex_1()
                     .min_w(px(0.))
+                    .when(grid, |body| body.pr(px(24.)))
                     .items_center()
                     .gap(px(14.))
                     .child(
@@ -1169,6 +1185,7 @@ impl Library {
                     .text_color(rgb(palette.muted))
                     .children(date),
             )
+            .child(self.project_actions(project, palette, cx))
             .on_click(cx.listener(move |library, _, window, cx| {
                 library.open_project(click_project.clone(), window, cx);
             }))
@@ -2024,7 +2041,7 @@ mod tests {
             let library = library.read(app);
             assert!(library.selection.is_none());
             assert!(library.grid_view);
-            assert!(library.project_focus[id].is_focused(window));
+            assert!(library.project_focus[id].open.is_focused(window));
         });
         assert_eq!(
             fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),

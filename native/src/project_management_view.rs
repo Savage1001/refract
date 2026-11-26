@@ -1,18 +1,24 @@
 use super::{Library, Navigation, Palette};
 use gpui::{
-    Context, Entity, FontWeight, KeyDownEvent, Keystroke, Window, div, prelude::*, px, rgb,
+    Context, Entity, FocusHandle, FontWeight, KeyDownEvent, Keystroke, PromptLevel, Window, div,
+    prelude::*, px, rgb,
 };
 use gpui_component::{
     WindowExt,
     dialog::DialogButtonProps,
     input::{Input, InputState},
 };
-use refract_native::{Project, create_project, list_projects, rename_project};
+use refract_native::{Project, create_project, duplicate_project, list_projects, rename_project};
 use std::{cell::Cell, io, rc::Rc};
 
 pub(super) struct RenameDraft {
     input: Entity<InputState>,
     invalid: Rc<Cell<bool>>,
+}
+
+pub(super) struct ProjectFocus {
+    pub(super) open: FocusHandle,
+    actions: FocusHandle,
 }
 
 impl Library {
@@ -25,7 +31,10 @@ impl Library {
             for project in projects {
                 self.project_focus
                     .entry(project.id.clone())
-                    .or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(2));
+                    .or_insert_with(|| ProjectFocus {
+                        open: cx.focus_handle().tab_stop(true).tab_index(2),
+                        actions: cx.focus_handle().tab_stop(true).tab_index(2),
+                    });
             }
         }
         self.projects = Some(projects);
@@ -36,6 +45,7 @@ impl Library {
             && self.selection.is_none()
             && self.project_create_task.is_none()
             && self.project_rename_task.is_none()
+            && self.project_action_prompt.is_none()
     }
 
     fn can_rename_project(&self) -> bool {
@@ -49,17 +59,37 @@ impl Library {
         if !self.can_create_project() {
             return;
         }
+        self.start_project_creation(None, window, cx);
+    }
+
+    fn start_project_creation(
+        &mut self,
+        source: Option<Project>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         self.project_action_error = None;
+        self.project_menu = None;
+        self.duplicating_project = source.as_ref().map(|project| project.id.clone());
+        let action = if source.is_some() {
+            "duplicate"
+        } else {
+            "create"
+        };
         let sequence = self.project_open_sequence;
         let path = self.projects_dir.clone();
         let create = cx.background_executor().spawn(async move {
-            let project = create_project(&path, "New Project")?;
+            let project = match source {
+                Some(project) => duplicate_project(&path, &project)?,
+                None => create_project(&path, "New Project")?,
+            };
             Ok::<_, io::Error>((project, list_projects(&path)))
         });
         self.project_create_task = Some(cx.spawn_in(window, async move |library, cx| {
             let result = create.await;
             let _ = library.update_in(cx, |library, window, cx| {
                 library.project_create_task = None;
+                let source = library.duplicating_project.take();
                 match result {
                     Ok((project, projects)) => {
                         library.set_projects(projects, cx);
@@ -75,7 +105,14 @@ impl Library {
                     }
                     Err(error) => {
                         library.project_action_error =
-                            Some(format!("Couldn’t create project. {error}"))
+                            Some(format!("Couldn’t {action} project. {error}"));
+                        if library.selection.is_none()
+                            && library.project_open_sequence == sequence
+                            && let Some(focus) =
+                                source.and_then(|id| library.project_focus.get(&id))
+                        {
+                            window.focus(&focus.actions);
+                        }
                     }
                 }
                 library.resume_navigation(window, cx);
@@ -83,6 +120,160 @@ impl Library {
             });
         }));
         cx.notify();
+    }
+
+    pub(super) fn dismiss_project_menu(&mut self, cx: &mut Context<Self>) {
+        if self.project_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn toggle_project_menu(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.project_menu.as_deref() == Some(id) {
+            self.dismiss_project_menu(cx);
+        } else {
+            self.project_menu = Some(id.to_owned());
+            cx.notify();
+        }
+    }
+
+    fn confirm_duplicate_project(
+        &mut self,
+        project: Project,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_create_project() || self.project_menu.as_deref() != Some(project.id.as_str()) {
+            return;
+        }
+        let answer = window.prompt(
+            PromptLevel::Info,
+            &format!("Duplicate {}?", project.name),
+            None,
+            &["Cancel", "Duplicate"],
+            cx,
+        );
+        self.project_action_prompt = Some(cx.spawn_in(window, async move |library, cx| {
+            let confirmed = matches!(answer.await, Ok(1));
+            let _ = library.update_in(cx, |library, window, cx| {
+                library.project_action_prompt = None;
+                if confirmed
+                    && library.can_create_project()
+                    && library.project_menu.as_deref() == Some(project.id.as_str())
+                {
+                    library.start_project_creation(Some(project), window, cx);
+                }
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    pub(super) fn project_actions(
+        &self,
+        project: &Project,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let id = project.id.clone();
+        let click_id = id.clone();
+        let key_id = id.clone();
+        let open = self.project_menu.as_deref() == Some(id.as_str());
+        div()
+            .id("project-actions")
+            .relative()
+            .flex_none()
+            .when(self.grid_view, |actions| {
+                actions.absolute().right(px(12.)).top(px(12.))
+            })
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .on_key_down(
+                cx.listener(move |library, event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "escape"
+                        && library.project_menu.as_deref() == Some(id.as_str())
+                    {
+                        cx.stop_propagation();
+                        library.dismiss_project_menu(cx);
+                        if let Some(focus) = library.project_focus.get(&id) {
+                            window.focus(&focus.actions);
+                        }
+                    }
+                }),
+            )
+            .child(
+                div()
+                    .id("project-actions-toggle")
+                    .track_focus(&self.project_focus[&project.id].actions)
+                    .rounded_md()
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(rgb(palette.selection)))
+                    .focus(move |style| style.bg(rgb(palette.selection)))
+                    .child("⋯")
+                    .on_click(cx.listener(move |library, _, _, cx| {
+                        cx.stop_propagation();
+                        library.toggle_project_menu(&click_id, cx);
+                    }))
+                    .on_key_down(cx.listener(move |library, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                            cx.stop_propagation();
+                            library.toggle_project_menu(&key_id, cx);
+                        }
+                    })),
+            )
+            .when(open, |actions| {
+                let click_project = project.clone();
+                let key_project = project.clone();
+                actions.child(
+                    div()
+                        .id("project-actions-menu")
+                        .absolute()
+                        .top(px(32.))
+                        .right_0()
+                        .min_w(px(140.))
+                        .occlude()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(rgb(palette.border))
+                        .bg(rgb(palette.surface))
+                        .shadow_sm()
+                        .child(
+                            div()
+                                .id("duplicate-project")
+                                .tab_index(2)
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .when(self.can_create_project(), |button| button.cursor_pointer())
+                                .hover(move |style| style.bg(rgb(palette.selection)))
+                                .focus(move |style| style.bg(rgb(palette.selection)))
+                                .child("Duplicate")
+                                .on_click(cx.listener(move |library, _, window, cx| {
+                                    cx.stop_propagation();
+                                    library.confirm_duplicate_project(
+                                        click_project.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                }))
+                                .on_key_down(cx.listener(
+                                    move |library, event: &KeyDownEvent, window, cx| {
+                                        if event.keystroke.key == "enter"
+                                            || event.keystroke.key == "space"
+                                        {
+                                            cx.stop_propagation();
+                                            library.confirm_duplicate_project(
+                                                key_project.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    },
+                                )),
+                        ),
+                )
+            })
     }
 
     pub(super) fn create_project_button(
@@ -267,6 +458,69 @@ mod tests {
     use gpui_component::Root;
 
     #[gpui::test]
+    fn opens_the_project_copy_after_confirmation_and_keeps_the_original(cx: &mut TestAppContext) {
+        let profile = tempfile::tempdir().unwrap();
+        let projects = profile.path().join("projects");
+        let original = create_project(&projects, "Paper").unwrap();
+        create_project(&projects, "Other project").unwrap();
+        cx.update(initialize_app);
+        let mut library = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| Library::new(projects.clone(), window, cx));
+            library = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let library = library.unwrap();
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            window.focus(&library.read(app).project_focus[&original.id].actions)
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|_, app| {
+            let view = library.read(app);
+            assert_eq!(view.project_menu.as_deref(), Some(original.id.as_str()));
+            assert!(view.selection.is_none());
+        });
+        cx.simulate_keystrokes("tab enter");
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert_eq!(list_projects(&projects).unwrap().len(), 2);
+        cx.simulate_keystrokes("escape");
+        cx.update(|window, app| {
+            let view = library.read(app);
+            assert!(view.project_menu.is_none());
+            assert!(view.project_focus[&original.id].actions.is_focused(window));
+        });
+
+        cx.update(|_, app| {
+            library.update(app, |view, cx| {
+                view.grid_view = true;
+                cx.notify();
+            })
+        });
+        cx.simulate_keystrokes("enter tab enter");
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Duplicate");
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            let view = library.read(app);
+            let selection = view.selection.as_ref().unwrap();
+            assert_eq!(selection.project.name, "Paper (copy)");
+            assert_ne!(selection.project.id, original.id);
+            assert_eq!(selection.file.as_deref(), Some("main.tex"));
+            assert!(view.project_name_focus.is_focused(window));
+        });
+        let projects = list_projects(&projects).unwrap();
+        assert_eq!(projects.len(), 3);
+        assert!(
+            projects
+                .iter()
+                .any(|project| project.name == "Paper" && project.id == original.id)
+        );
+    }
+
+    #[gpui::test]
     fn creates_once_and_renames_from_the_workspace_keyboard(cx: &mut TestAppContext) {
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
@@ -329,7 +583,7 @@ mod tests {
                 view.projects.as_ref().unwrap().as_ref().unwrap()[0].name,
                 "Spectral methods"
             );
-            assert!(view.project_focus[&id].is_focused(window));
+            assert!(view.project_focus[&id].open.is_focused(window));
         });
     }
 }
