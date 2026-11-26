@@ -6,12 +6,23 @@ use std::{
 };
 
 mod relocate;
+mod trash;
 pub use relocate::{ProjectEntryMove, move_project_entry};
+pub use trash::{DeletedEntry, list_deleted_entries, restore_deleted_entry, trash_project_entry};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ProjectEntryKind {
     File,
     Folder,
+}
+
+fn checked_project_directory(projects_dir: &Path, project: &Project) -> io::Result<PathBuf> {
+    let folder = project_directory(projects_dir, project)?;
+    if is_link(&folder.symlink_metadata()?) || folder.canonicalize()? != folder {
+        return Err(invalid_destination());
+    }
+    Ok(folder)
 }
 
 pub fn create_project_entry(

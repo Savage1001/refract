@@ -42,6 +42,7 @@ enum EntryAction {
     AddItems,
     MoveFolder,
     RenameFile,
+    Delete(ProjectEntryKind),
 }
 
 impl EntryAction {
@@ -50,6 +51,8 @@ impl EntryAction {
             Self::AddItems => "Add items",
             Self::MoveFolder => "Move or rename folder",
             Self::RenameFile => "Rename file",
+            Self::Delete(ProjectEntryKind::File) => "Delete file",
+            Self::Delete(ProjectEntryKind::Folder) => "Delete folder",
         }
     }
 }
@@ -118,9 +121,16 @@ impl Library {
             return;
         }
         let items: &[EntryAction] = if is_folder {
-            &[EntryAction::AddItems, EntryAction::MoveFolder]
+            &[
+                EntryAction::AddItems,
+                EntryAction::MoveFolder,
+                EntryAction::Delete(ProjectEntryKind::Folder),
+            ]
         } else {
-            &[EntryAction::RenameFile]
+            &[
+                EntryAction::RenameFile,
+                EntryAction::Delete(ProjectEntryKind::File),
+            ]
         };
         let actions: Vec<_> = items
             .iter()
@@ -216,6 +226,7 @@ impl Library {
             EntryAction::RenameFile => {
                 self.open_entry_move_dialog(&path, ProjectEntryKind::File, window, cx)
             }
+            EntryAction::Delete(kind) => self.confirm_entry_delete(path, kind, window, cx),
         }
     }
 
@@ -586,7 +597,7 @@ mod tests {
         cx.simulate_keystrokes("up");
         cx.update(|window, app| {
             let menu = library.read(app).entry_menu.as_ref().unwrap();
-            assert!(menu.actions[1].1.is_focused(window));
+            assert!(menu.actions.last().unwrap().1.is_focused(window));
         });
         cx.simulate_keystrokes("down escape");
         cx.update(|window, app| {

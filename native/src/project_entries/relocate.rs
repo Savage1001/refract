@@ -1,6 +1,6 @@
-use super::{ProjectEntryKind, invalid_destination};
+use super::{ProjectEntryKind, checked_project_directory, invalid_destination};
 use crate::{
-    METADATA_LIMIT, Project, comments, project_directory,
+    METADATA_LIMIT, Project, comments,
     project_management::{is_link, read_project_metadata},
     read_local_file, stage_file, valid_project_component,
     versions::snapshot_project,
@@ -75,10 +75,7 @@ pub fn move_project_entry(
     project: &Project,
     entry: &ProjectEntryMove,
 ) -> io::Result<Project> {
-    let folder = project_directory(projects_dir, project)?;
-    if is_link(&folder.symlink_metadata()?) || folder.canonicalize()? != folder {
-        return Err(invalid_destination());
-    }
+    let folder = checked_project_directory(projects_dir, project)?;
     let source = checked_target(&folder, &entry.source)?;
     let destination = checked_target(&folder, &entry.destination)?;
     check_entry(&source, entry.kind)?;
@@ -208,7 +205,7 @@ impl RecordEdit {
     }
 }
 
-fn checked_target(folder: &Path, relative: &str) -> io::Result<PathBuf> {
+pub(super) fn checked_target(folder: &Path, relative: &str) -> io::Result<PathBuf> {
     let mut target = folder.to_owned();
     let mut parts = relative.split('/').peekable();
     while let Some(part) = parts.next() {
@@ -223,7 +220,7 @@ fn checked_target(folder: &Path, relative: &str) -> io::Result<PathBuf> {
     Ok(target)
 }
 
-fn check_entry(path: &Path, kind: ProjectEntryKind) -> io::Result<()> {
+pub(super) fn check_entry(path: &Path, kind: ProjectEntryKind) -> io::Result<()> {
     let info = path.symlink_metadata()?;
     let wanted = match kind {
         ProjectEntryKind::File => info.is_file(),
@@ -235,14 +232,14 @@ fn check_entry(path: &Path, kind: ProjectEntryKind) -> io::Result<()> {
     Ok(())
 }
 
-fn check_children(folder: &Path) -> io::Result<()> {
+pub(super) fn check_children(folder: &Path) -> io::Result<()> {
     for entry in fs::read_dir(folder)? {
         let entry = entry?.path();
         let info = entry.symlink_metadata()?;
         if is_link(&info) || !(info.is_dir() || info.is_file()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Folders containing links or unsupported entries cannot be moved",
+                "Folder contains a link or unsupported entry",
             ));
         }
         if info.is_dir() {
@@ -265,7 +262,7 @@ fn move_checked(
 }
 
 #[cfg(windows)]
-fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
+pub(super) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     let source: Vec<u16> = source.as_os_str().encode_wide().chain([0]).collect();
@@ -278,7 +275,7 @@ fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<(
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn rename_without_replacement(_source: &Path, _destination: &Path) -> io::Result<()> {
+pub(super) fn rename_without_replacement(_source: &Path, _destination: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Safe project entry moves are unavailable on this platform",
@@ -406,7 +403,7 @@ mod tests {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
+pub(super) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
     use rustix::fs::{CWD, RenameFlags, renameat_with};
     renameat_with(CWD, source, CWD, destination, RenameFlags::NOREPLACE).map_err(Into::into)
 }

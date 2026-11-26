@@ -29,12 +29,14 @@ mod comments_view;
 mod deleted_projects_view;
 mod file_creation_view;
 mod file_move_view;
+mod file_trash_view;
 mod project_management_view;
 mod version_view;
 use comments_view::CommentDrafts;
 use deleted_projects_view::DeletedProjectsDialog;
 use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
+use file_trash_view::DeletedFilesDialog;
 use project_management_view::{ProjectFocus, RenameDraft};
 use version_view::Comparison;
 
@@ -59,6 +61,9 @@ struct Library {
     entry_write_task: Option<Task<()>>,
     entry_draft: Option<EntryDraft>,
     entry_menu: Option<EntryMenu>,
+    entry_delete_prompt: Option<Task<()>>,
+    deleted_files_focus: FocusHandle,
+    deleted_files_dialog: Option<Rc<RefCell<DeletedFilesDialog>>>,
     move_draft: Option<EntryMoveDraft>,
     preview_task: Option<Task<()>>,
     comments_task: Option<Task<()>>,
@@ -167,6 +172,9 @@ impl Library {
             entry_write_task: None,
             entry_draft: None,
             entry_menu: None,
+            entry_delete_prompt: None,
+            deleted_files_focus: cx.focus_handle().tab_stop(true).tab_index(1),
+            deleted_files_dialog: None,
             move_draft: None,
             preview_task: None,
             comments_task: None,
@@ -419,6 +427,8 @@ impl Library {
             && self.rename_draft.is_none()
             && self.entry_draft.is_none()
             && self.move_draft.is_none()
+            && self.entry_delete_prompt.is_none()
+            && self.deleted_files_dialog.is_none()
     }
 
     fn project_writes_ready(&self) -> bool {
@@ -772,10 +782,12 @@ impl Library {
     ) {
         if self.discard_prompt.is_some()
             || self.project_action_prompt.is_some()
+            || self.entry_delete_prompt.is_some()
             || (self.rename_draft.is_some()
                 || self.deleted_projects_dialog.is_some()
                 || self.entry_draft.is_some()
-                || self.move_draft.is_some())
+                || self.move_draft.is_some()
+                || self.deleted_files_dialog.is_some())
                 && !matches!(navigation, Navigation::CloseWindow)
         {
             return;
@@ -1305,7 +1317,8 @@ impl Library {
                             .child(self.add_items_button(palette, cx)),
                     )
                     .children(selection.file_action_error.clone())
-                    .child(self.file_tree(selection, palette, cx)),
+                    .child(self.file_tree(selection, palette, cx))
+                    .child(self.deleted_files_button(palette, cx)),
             )
             .child(self.source_pane(selection, palette, cx))
             .when(selection.show_comments, |workspace| {
@@ -1748,6 +1761,7 @@ fn projects_dir() -> Option<PathBuf> {
 
 fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
+    file_trash_view::init(cx);
     comments_view::init(cx);
     deleted_projects_view::init(cx);
     file_creation_view::init(cx);
@@ -1999,7 +2013,7 @@ mod tests {
             assert_eq!(versions[0].sequence, 2);
         });
         cx.update(|window, _| window.focus(&tree_focus));
-        cx.simulate_keystrokes("tab tab enter");
+        cx.simulate_keystrokes("tab tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.file.as_deref(), Some("main.tex"));
@@ -2025,7 +2039,7 @@ mod tests {
             assert!(selection.tabs.is_empty());
             assert!(library.home_focus.is_focused(window));
         });
-        cx.simulate_keystrokes("tab tab tab tab tab tab enter");
+        cx.simulate_keystrokes("tab tab tab tab tab tab tab enter");
         let versions_focus = cx.update(|window, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.show_versions);

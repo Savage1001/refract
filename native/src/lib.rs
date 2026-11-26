@@ -10,7 +10,8 @@ mod project_entries;
 mod project_management;
 pub mod versions;
 pub use project_entries::{
-    ProjectEntryKind, ProjectEntryMove, create_project_entry, move_project_entry,
+    DeletedEntry, ProjectEntryKind, ProjectEntryMove, create_project_entry, list_deleted_entries,
+    move_project_entry, restore_deleted_entry, trash_project_entry,
 };
 pub use project_management::{
     DeletedProject, create_project, duplicate_project, list_deleted_projects, rename_project,
