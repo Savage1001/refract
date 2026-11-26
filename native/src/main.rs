@@ -8,7 +8,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
-use refract_native::versions::{Version, list_versions, snapshot_project};
+use refract_native::versions::{Version, list_versions, restore_version_file, snapshot_project};
 use refract_native::{
     Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
 };
@@ -38,6 +38,7 @@ struct Library {
     snapshot_timer: Option<Task<()>>,
     snapshot_needed: bool,
     comparison_task: Option<Task<()>>,
+    restore_task: Option<Task<()>>,
     navigation_after_save: Option<Navigation>,
     discard_prompt: Option<Task<()>>,
     focus_handle: FocusHandle,
@@ -56,6 +57,7 @@ struct Selection {
     show_comments: bool,
     show_versions: bool,
     versions: Option<io::Result<Vec<Version>>>,
+    restore_error: Option<String>,
     comparison: Option<Comparison>,
     comments: Option<io::Result<Vec<Comment>>>,
     pending_comment: Option<Comment>,
@@ -120,6 +122,7 @@ impl Library {
             snapshot_timer: None,
             snapshot_needed: false,
             comparison_task: None,
+            restore_task: None,
             navigation_after_save: None,
             discard_prompt: None,
             focus_handle,
@@ -148,6 +151,7 @@ impl Library {
             show_comments: false,
             show_versions: false,
             versions: None,
+            restore_error: None,
             comparison: None,
             comments: None,
             pending_comment: None,
@@ -335,6 +339,102 @@ impl Library {
         }
     }
 
+    fn file_to_restore<'a>(&'a self, version: &Version, cx: &App) -> Option<&'a str> {
+        let selection = self.selection.as_ref()?;
+        let file = selection.file.as_deref()?;
+        (self.restore_task.is_none()
+            && self.save_task.is_none()
+            && self.save_queue.is_empty()
+            && self.snapshot_task.is_none()
+            && !self.has_unsaved_changes(&Navigation::CloseFile(file.to_owned()), cx)
+            && version.files.iter().any(|name| name == file))
+        .then_some(file)
+    }
+
+    fn request_version_file_restore(
+        &mut self,
+        version_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(file) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.versions.as_ref()?.as_ref().ok())
+            .and_then(|versions| versions.iter().find(|version| version.id == version_id))
+            .and_then(|version| self.file_to_restore(version, cx))
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        selection.restore_error = None;
+        let project = selection.project.clone();
+        let version_id = version_id.to_owned();
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Restore {file} from this version?"),
+            None,
+            &["Cancel", "Restore file"],
+            cx,
+        );
+        let executor = cx.background_executor().clone();
+        let path = self.projects_dir.clone();
+        self.restore_task = Some(cx.spawn_in(window, async move |library, cx| {
+            let restored = if matches!(answer.await, Ok(1)) {
+                let restored_file = file.clone();
+                Some(
+                    executor
+                        .spawn(async move {
+                            let result =
+                                restore_version_file(&path, &project, &version_id, &restored_file);
+                            (
+                                result,
+                                project_tree(&path, &project),
+                                list_versions(&path, &project),
+                            )
+                        })
+                        .await,
+                )
+            } else {
+                None
+            };
+            let _ = library.update_in(cx, |library, window, cx| {
+                library.restore_task = None;
+                if let Some((result, tree, versions)) = restored
+                    && let Some(selection) = &mut library.selection
+                {
+                    library.tree_task = None;
+                    library.comparison_task = None;
+                    selection.comparison = None;
+                    selection.tree = Some(tree);
+                    selection.versions = Some(versions);
+                    selection.restore_error = result.err().map(|error| error.to_string());
+                    if let Some(tab) = selection.tabs.iter_mut().find(|tab| tab.path == file) {
+                        tab.editor = None;
+                    }
+                    let reload_source = selection.file.as_deref() == Some(file.as_str());
+                    let reload_comments = selection.show_comments;
+                    if reload_source {
+                        library.open_file(file, window, cx);
+                    }
+                    if reload_comments {
+                        library.load_comments(cx);
+                    }
+                }
+                library.start_next_save(window, cx);
+                if library.snapshot_timer.is_none() {
+                    library.start_snapshot(window, cx);
+                }
+                library.resume_navigation(window, cx);
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
     fn load_comments(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = &mut self.selection else {
             return;
@@ -374,7 +474,7 @@ impl Library {
     }
 
     fn start_next_save(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.save_task.is_some() || self.snapshot_task.is_some() {
+        if self.save_task.is_some() || self.snapshot_task.is_some() || self.restore_task.is_some() {
             return;
         }
         let Some(selection) = &mut self.selection else {
@@ -457,7 +557,11 @@ impl Library {
     }
 
     fn start_snapshot(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if !self.snapshot_needed || self.save_task.is_some() || self.snapshot_task.is_some() {
+        if !self.snapshot_needed
+            || self.save_task.is_some()
+            || self.snapshot_task.is_some()
+            || self.restore_task.is_some()
+        {
             return;
         }
         let Some(selection) = &self.selection else {
@@ -492,6 +596,7 @@ impl Library {
     fn resume_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save_task.is_none()
             && self.snapshot_task.is_none()
+            && self.restore_task.is_none()
             && let Some(navigation) = self.navigation_after_save.take()
         {
             self.request_navigation(navigation, window, cx);
@@ -525,7 +630,7 @@ impl Library {
         if self.discard_prompt.is_some() {
             return;
         }
-        if self.save_task.is_some() || !self.save_queue.is_empty() {
+        if self.save_task.is_some() || !self.save_queue.is_empty() || self.restore_task.is_some() {
             self.navigation_after_save = Some(navigation);
             return;
         }
@@ -1037,7 +1142,13 @@ impl Library {
             .flex_1()
             .min_h(px(0.))
             .overflow_y_scroll();
-        pane.child(match &selection.versions {
+        pane.children(
+            selection
+                .restore_error
+                .as_ref()
+                .map(|error| format!("Couldn’t restore file: {error}")),
+        )
+        .child(match &selection.versions {
             None => list.child("Loading versions…"),
             Some(Err(error)) => list.child(format!("Couldn’t load version history: {error}")),
             Some(Ok(versions)) if versions.is_empty() => list.child("No saved versions."),
@@ -1453,6 +1564,7 @@ impl Library {
                 .min_h(px(0.))
                 .child(
                     Input::new(&editor.state)
+                        .disabled(self.restore_task.is_some())
                         .h_full()
                         .appearance(false)
                         .font_family(monospace_font())
@@ -1564,6 +1676,67 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use std::fs;
+
+    #[gpui::test]
+    fn confirms_file_restore_and_reloads_the_active_editor(cx: &mut TestAppContext) {
+        let projects = tempfile::tempdir().unwrap();
+        let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
+        let folder = projects.path().join(id);
+        fs::create_dir(&folder).unwrap();
+        fs::write(
+            folder.join(".refract.json"),
+            serde_json::json!({"id": id, "name": "Paper"}).to_string(),
+        )
+        .unwrap();
+        let source = folder.join("main.tex");
+        fs::write(&source, "Original\n").unwrap();
+        let project = list_projects(projects.path()).unwrap().pop().unwrap();
+        let version = snapshot_project(projects.path(), &project).unwrap();
+        fs::write(&source, "Current\n").unwrap();
+
+        cx.update(initialize_app);
+        let mut library = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| Library::new(projects.path().to_path_buf(), window, cx));
+            library = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let library = library.unwrap();
+        cx.update(|window, app| {
+            library.update(app, |library, cx| {
+                library.open_project(project, window, cx);
+                library.toggle_versions(cx);
+            })
+        });
+        cx.run_until_parked();
+        let request = |window: &mut Window, app: &mut App| {
+            library.update(app, |library, cx| {
+                library.request_version_file_restore(&version.id, window, cx)
+            });
+        };
+        cx.update(request);
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert_eq!(fs::read_to_string(&source).unwrap(), "Current\n");
+
+        cx.update(request);
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Restore file");
+        cx.run_until_parked();
+        assert_eq!(fs::read_to_string(&source).unwrap(), "Original\n");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            let document = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(document.state.read(app).value().as_ref(), "Original\n");
+            assert_eq!(document.saved, "Original\n");
+            assert_eq!(
+                selection.versions.as_ref().unwrap().as_ref().unwrap().len(),
+                3
+            );
+            assert!(selection.restore_error.is_none());
+        });
+    }
 
     #[gpui::test]
     fn autosaves_edit_bursts_and_keeps_conflicting_drafts_until_confirmed(cx: &mut TestAppContext) {

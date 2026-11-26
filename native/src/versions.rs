@@ -1,6 +1,6 @@
 use crate::{
-    Project, ProjectEntry, is_project_id, open_local_file, project_directory, read_local_file,
-    read_project_entries, source_path, valid_project_component,
+    Project, ProjectEntry, comments, is_project_id, open_local_file, project_directory,
+    read_local_file, read_project_entries, source_path, stage_file, valid_project_component,
 };
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -127,6 +127,176 @@ fn version_folder(folder: &Path, create: bool) -> io::Result<PathBuf> {
 
 pub fn list_versions(projects_dir: &Path, project: &Project) -> io::Result<Vec<Version>> {
     list_project_versions(&project_directory(projects_dir, project)?)
+}
+
+pub fn restore_version_file(
+    projects_dir: &Path,
+    project: &Project,
+    version_id: &str,
+    file: &str,
+) -> io::Result<()> {
+    let folder = project_directory(projects_dir, project)?;
+    let (version, mut archive) = open_version(&folder, version_id)?;
+    if !version.files.iter().any(|name| name == file) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "File not found in version",
+        ));
+    }
+    let name = file.replace('\\', "/");
+    let target = folder.join(&name);
+    let current = open_restore_target(&folder, &name)?;
+    let before = current
+        .as_ref()
+        .map(|file| copy_and_hash(file, &mut io::sink()))
+        .transpose()?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".refract-restore-file-")
+        .tempfile_in(&folder)?;
+    let entry = version_file(&mut archive, file)?;
+    let size = entry.size();
+    let after = copy_and_hash(entry.take(size.saturating_add(1)), &mut staged)?;
+    if after.0 != size {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Version archive entry has an invalid size",
+        ));
+    }
+    if before.as_ref() == Some(&after) {
+        return snapshot_project(projects_dir, project).map(|_| ());
+    }
+    if let Some(current) = &current {
+        let permissions = current.metadata()?.permissions();
+        if permissions.readonly() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "The file is read-only.",
+            ));
+        }
+        staged.as_file().set_permissions(permissions)?;
+    }
+    staged.as_file().sync_all()?;
+    drop(current);
+
+    let comment_path = folder.join(".refract-comments.json");
+    let original_comments = comments::read_comments_file(&folder)?;
+    let mut staged_comments = None;
+    if let Some(metadata) = &original_comments
+        && comments::has_attached_anchors(metadata, &name)?
+    {
+        let old_text = open_restore_target(&folder, &name)?
+            .map(read_anchor_text)
+            .transpose()?
+            .flatten();
+        let new_text = read_anchor_text(staged.reopen()?)?;
+        if let Some(updated) =
+            comments::plan_edit(metadata, &name, old_text.as_deref(), new_text.as_deref())?
+        {
+            staged_comments = Some(stage_file(&comment_path, &updated)?);
+        }
+    }
+
+    let recovery = snapshot_project(projects_dir, project)?;
+    if let Some(expected) = &before {
+        let (_, mut backup) = open_version(&folder, &recovery.id)?;
+        let entry = version_file(&mut backup, &name)?;
+        let fingerprint = copy_and_hash(entry.take(expected.0.saturating_add(1)), &mut io::sink())?;
+        if &fingerprint != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "The recovery version does not match the current file.",
+            ));
+        }
+    }
+    let mut created_folders = CreatedFolders::default();
+    if let Some((parent, _)) = name.rsplit_once('/') {
+        created_folders.ensure(&folder, parent)?;
+    }
+    let current = open_restore_target(&folder, &name)?
+        .map(|file| copy_and_hash(file, &mut io::sink()))
+        .transpose()?;
+    if current != before || comments::read_comments_file(&folder)? != original_comments {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "The file or comments changed during restore.",
+        ));
+    }
+    let result = match before {
+        Some(_) => staged.persist(&target),
+        None => staged.persist_noclobber(&target),
+    };
+    result.map_err(|error| error.error)?;
+    created_folders.0.clear();
+    if let Some(staged_comments) = staged_comments {
+        let update = comments::read_comments_file(&folder).and_then(|current| {
+            if current != original_comments {
+                return Err(io::Error::other("Comments changed during restore."));
+            }
+            staged_comments
+                .persist(comment_path)
+                .map(|_| ())
+                .map_err(|error| error.error)
+        });
+        if let Err(error) = update {
+            return Err(io::Error::other(format!(
+                "The file was restored, but comment anchors could not be updated. Recovery version: {}. {error}",
+                recovery.id
+            )));
+        }
+    }
+    snapshot_project(projects_dir, project).map_err(|error| io::Error::other(format!(
+        "The file was restored, but the new version could not be saved. Recovery version: {}. {error}", recovery.id
+    )))?;
+    Ok(())
+}
+
+fn open_restore_target(folder: &Path, name: &str) -> io::Result<Option<File>> {
+    match source_path(folder, name) {
+        Ok(target) => open_local_file(folder, &target).map(Some),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn read_anchor_text(mut file: File) -> io::Result<Option<String>> {
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if bytes.contains(&0) {
+        return Ok(None);
+    }
+    Ok(String::from_utf8(bytes).ok())
+}
+
+#[derive(Default)]
+struct CreatedFolders(Vec<PathBuf>);
+
+impl CreatedFolders {
+    fn ensure(&mut self, folder: &Path, parent: &str) -> io::Result<()> {
+        let mut path = folder.to_owned();
+        for name in parent.split('/') {
+            path.push(name);
+            match fs::create_dir(&path) {
+                Ok(()) => self.0.push(path.clone()),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+            if !path.symlink_metadata()?.is_dir() || !path.canonicalize()?.starts_with(folder) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Invalid folder for version restore",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CreatedFolders {
+    fn drop(&mut self) {
+        for path in self.0.iter().rev() {
+            let _ = fs::remove_dir(path);
+        }
+    }
 }
 
 pub fn compare_project(
@@ -535,6 +705,83 @@ mod tests {
     use crate::list_projects;
     use std::fs::File;
     use zip::ZipArchive;
+
+    #[test]
+    fn restores_binary_files_and_uses_the_pre_restore_version_as_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
+        let folder = root.path().join(id);
+        fs::create_dir_all(folder.join("sections/figures")).unwrap();
+        fs::write(
+            folder.join(".refract.json"),
+            serde_json::json!({"id":id,"name":"Paper"}).to_string(),
+        )
+        .unwrap();
+        let image = "sections/figures/figure.bin";
+        fs::write(folder.join(image), [0, 255, 10]).unwrap();
+        fs::write(folder.join("main.tex"), "Draft\n").unwrap();
+        let project = list_projects(root.path()).unwrap().pop().unwrap();
+        let original = snapshot_project(root.path(), &project).unwrap();
+        fs::write(folder.join(image), [0, 15, 20]).unwrap();
+        fs::write(folder.join("main.tex"), "Keep this edit\n").unwrap();
+        restore_version_file(root.path(), &project, &original.id, image).unwrap();
+        assert_eq!(fs::read(folder.join(image)).unwrap(), [0, 255, 10]);
+        assert_eq!(
+            fs::read_to_string(folder.join("main.tex")).unwrap(),
+            "Keep this edit\n"
+        );
+        let history = list_versions(root.path(), &project).unwrap();
+        assert_eq!(history.len(), 3);
+        restore_version_file(root.path(), &project, &history[1].id, image).unwrap();
+        assert_eq!(fs::read(folder.join(image)).unwrap(), [0, 15, 20]);
+
+        fs::remove_file(folder.join(image)).unwrap();
+        fs::remove_dir(folder.join("sections/figures")).unwrap();
+        fs::remove_dir(folder.join("sections")).unwrap();
+        restore_version_file(root.path(), &project, &original.id, image).unwrap();
+        assert_eq!(fs::read(folder.join(image)).unwrap(), [0, 255, 10]);
+        fs::write(
+            folder
+                .join(".refract-versions")
+                .join(format!("{}.zip", original.id)),
+            "damaged archive",
+        )
+        .unwrap();
+        let before = list_versions(root.path(), &project).unwrap().len();
+        fs::write(folder.join(image), [0, 1]).unwrap();
+        assert!(restore_version_file(root.path(), &project, &original.id, image).is_err());
+        assert_eq!(fs::read(folder.join(image)).unwrap(), [0, 1]);
+        assert_eq!(list_versions(root.path(), &project).unwrap().len(), before);
+    }
+
+    #[test]
+    fn restores_source_and_updates_anchored_comments() {
+        let root = tempfile::tempdir().unwrap();
+        let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
+        let folder = root.path().join(id);
+        fs::create_dir(&folder).unwrap();
+        fs::write(
+            folder.join(".refract.json"),
+            serde_json::json!({"id":id,"name":"Paper"}).to_string(),
+        )
+        .unwrap();
+        fs::write(folder.join("main.tex"), "Check this.\n").unwrap();
+        let project = list_projects(root.path()).unwrap().pop().unwrap();
+        let original = snapshot_project(root.path(), &project).unwrap();
+        fs::write(folder.join("main.tex"), "Draft\nCheck this.\n").unwrap();
+        fs::write(folder.join(".refract-comments.json"), serde_json::json!([{
+            "id":"read", "file":"main.tex", "quote":"Check", "text":"Clarify", "anchor":{
+                "start":6,"end":11,"prefix":"Draft\n","suffix":" this.\n","sourceHash":"","status":"attached"
+            }
+        }]).to_string()).unwrap();
+        restore_version_file(root.path(), &project, &original.id, "main.tex").unwrap();
+        let comments = comments::read_comments(root.path(), &project).unwrap();
+        assert_eq!(comments[0].source_position("Check this.\n"), Some((0, 0)));
+        let bytes = comments::read_comments_file(&folder).unwrap().unwrap();
+        let records: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(records[0]["anchor"]["start"], 0);
+        assert_eq!(records[0]["anchor"]["status"], "attached");
+    }
 
     #[test]
     fn captures_electron_compatible_versions_and_deduplicates_unchanged_projects() {

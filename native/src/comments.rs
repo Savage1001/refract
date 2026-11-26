@@ -162,9 +162,15 @@ impl Comment {
 pub(crate) fn plan_edit(
     metadata: &[u8],
     file: &str,
-    before: &str,
-    after: &str,
+    before: Option<&str>,
+    after: Option<&str>,
 ) -> io::Result<Option<Vec<u8>>> {
+    if before == after {
+        return Ok(None);
+    }
+    let (Some(before), Some(after)) = (before, after) else {
+        return update_anchors(metadata, file, |_, _| Ok(None));
+    };
     let before = before.replace("\r\n", "\n").replace('\r', "\n");
     let after = after.replace("\r\n", "\n").replace('\r', "\n");
     if before == after {
@@ -186,17 +192,8 @@ pub(crate) fn plan_edit(
     let old_end = before_units.len() - suffix_len;
     let delta = after_units.len() as isize - before_units.len() as isize;
     let hash = format!("{:x}", Sha256::digest(after.as_bytes()));
-    let mut records: Vec<Box<RawValue>> = serde_json::from_slice(metadata)?;
-    let mut changed = false;
 
-    for record in &mut records {
-        let comment: Comment = serde_json::from_str(record.get())?;
-        let Some(anchor) = &comment.anchor else {
-            continue;
-        };
-        if comment.file != file || anchor.status == "orphaned" {
-            continue;
-        }
+    update_anchors(metadata, file, |comment, anchor| {
         let selection = comment
             .locate(&before, &before_units)
             .and_then(|selection| {
@@ -210,29 +207,65 @@ pub(crate) fn plan_edit(
                 } else if prefix_len >= selection.start && old_end <= selection.end {
                     Some(selection.start..selection.end.checked_add_signed(delta)?)
                 } else {
-                    relocate_after_separate_edits(&comment, anchor, &before, &after, &after_units)
+                    relocate_after_separate_edits(comment, anchor, &before, &after, &after_units)
                 }
             });
 
-        let mut fields: BTreeMap<String, Box<RawValue>> = serde_json::from_str(record.get())?;
         let updated = selection
             .filter(|range| !range.is_empty())
             .and_then(|range| {
                 let quote = String::from_utf16(after_units.get(range.clone())?).ok()?;
                 Some((range, quote))
             });
-        if let Some((range, quote)) = updated {
-            let saved_anchor = SavedAnchor {
-                start: range.start,
-                end: range.end,
-                prefix: encode_context(&after_units[range.start.saturating_sub(48)..range.start])?,
-                suffix: encode_context(
-                    &after_units[range.end..(range.end + 48).min(after_units.len())],
-                )?,
-                source_hash: &hash,
-                status: "attached",
-            };
-            fields.insert("anchor".into(), to_raw_value(&saved_anchor)?);
+        updated
+            .map(|(range, quote)| {
+                let anchor = SavedAnchor {
+                    start: range.start,
+                    end: range.end,
+                    prefix: encode_context(
+                        &after_units[range.start.saturating_sub(48)..range.start],
+                    )?,
+                    suffix: encode_context(
+                        &after_units[range.end..(range.end + 48).min(after_units.len())],
+                    )?,
+                    source_hash: &hash,
+                    status: "attached",
+                };
+                Ok((to_raw_value(&anchor)?, quote))
+            })
+            .transpose()
+    })
+}
+
+pub(crate) fn has_attached_anchors(metadata: &[u8], file: &str) -> io::Result<bool> {
+    let comments: Vec<Comment> = serde_json::from_slice(metadata)?;
+    Ok(comments.iter().any(|comment| {
+        comment.file == file
+            && comment
+                .anchor
+                .as_ref()
+                .is_some_and(|anchor| anchor.status != "orphaned")
+    }))
+}
+
+fn update_anchors(
+    metadata: &[u8],
+    file: &str,
+    mut relocate: impl FnMut(&Comment, &Anchor) -> serde_json::Result<Option<(Box<RawValue>, String)>>,
+) -> io::Result<Option<Vec<u8>>> {
+    let mut records: Vec<Box<RawValue>> = serde_json::from_slice(metadata)?;
+    let mut changed = false;
+    for record in &mut records {
+        let comment: Comment = serde_json::from_str(record.get())?;
+        let Some(anchor) = &comment.anchor else {
+            continue;
+        };
+        if comment.file != file || anchor.status == "orphaned" {
+            continue;
+        }
+        let mut fields: BTreeMap<String, Box<RawValue>> = serde_json::from_str(record.get())?;
+        if let Some((anchor, quote)) = relocate(&comment, anchor)? {
+            fields.insert("anchor".into(), anchor);
             fields.insert("quote".into(), to_raw_value(&quote)?);
         } else if let Some(old) = fields.get("anchor") {
             let mut anchor_fields: BTreeMap<String, Box<RawValue>> =
@@ -417,8 +450,8 @@ mod tests {
         let updated = plan_edit(
             &serde_json::to_vec(&records).unwrap(),
             "main.tex",
-            before,
-            after,
+            Some(before),
+            Some(after),
         )
         .unwrap()
         .unwrap();

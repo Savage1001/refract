@@ -197,6 +197,27 @@ impl Library {
         let unit = if files == 1 { "file" } else { "files" };
         let version_id = version.id.clone();
         let comparison = comparison.filter(|active| active.version_id == version_id);
+        let restore = if self.file_to_restore(version, cx).is_some() {
+            let restore_id = version.id.clone();
+            comparison_button(
+                "restore-file",
+                "Restore file",
+                false,
+                palette,
+                cx,
+                move |library, window, cx| {
+                    library.request_version_file_restore(&restore_id, window, cx)
+                },
+            )
+            .into_any_element()
+        } else {
+            div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(palette.muted))
+                .child("Restore file")
+                .into_any_element()
+        };
         div()
             .id(SharedString::from(format!("version/{}", version.id)))
             .border_b_1()
@@ -207,6 +228,7 @@ impl Library {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("v{number} · {timestamp} · {files} {unit}")),
             )
+            .child(restore)
             .child(comparison_button(
                 "compare",
                 "Compare with current",

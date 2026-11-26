@@ -197,7 +197,12 @@ pub fn save_source(
     let comment_path = folder.join(".refract-comments.json");
     let original_comments = comments::read_comments_file(&folder)?;
     let next_comments = match &original_comments {
-        Some(bytes) => comments::plan_edit(bytes, &file.replace('\\', "/"), expected, edited)?,
+        Some(bytes) => comments::plan_edit(
+            bytes,
+            &file.replace('\\', "/"),
+            Some(expected),
+            Some(edited),
+        )?,
         None => None,
     };
     let staged = stage_file(&target, edited.as_bytes())?;
