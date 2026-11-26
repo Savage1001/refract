@@ -14,8 +14,8 @@ actions!(deleted_projects, [Activate, NextControl, PreviousControl]);
 
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("enter", Activate, Some("DeletedProjectControl")),
-        KeyBinding::new("space", Activate, Some("DeletedProjectControl")),
+        KeyBinding::new("enter", Activate, Some("RecoveryControl")),
+        KeyBinding::new("space", Activate, Some("RecoveryControl")),
         KeyBinding::new("tab", NextControl, Some("DeletedProjectsDialog")),
         KeyBinding::new("shift-tab", PreviousControl, Some("DeletedProjectsDialog")),
     ]);
@@ -340,7 +340,7 @@ fn deleted_projects_contents(
         )))
 }
 
-fn recovery_button(
+pub(super) fn recovery_button(
     id: &'static str,
     label: &'static str,
     focus: &FocusHandle,
@@ -352,7 +352,7 @@ fn recovery_button(
     div()
         .id(id)
         .track_focus(focus)
-        .key_context("DeletedProjectControl")
+        .key_context("RecoveryControl")
         .rounded_md()
         .border_1()
         .border_color(rgb(palette.border))

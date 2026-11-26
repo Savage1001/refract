@@ -1,4 +1,5 @@
 use super::{Library, Palette, ProjectEntry};
+use crate::deleted_projects_view::recovery_button;
 use chrono::Local;
 use gpui::{
     App, Context, FocusHandle, KeyBinding, KeyDownEvent, PromptLevel, SharedString, WeakEntity,
@@ -490,10 +491,11 @@ fn deleted_files_contents(
                                 div().text_xs().text_color(rgb(palette.muted)).child(detail),
                             ))
                             .child(recovery_button(
+                                "restore",
                                 "Restore",
                                 focus,
-                                busy,
                                 palette,
+                                !busy,
                                 move |window, app| {
                                     let _ = library.update(app, |library, cx| {
                                         library.restore_trashed_entry(index, window, cx)
@@ -524,10 +526,11 @@ fn deleted_files_contents(
         )
         .children(state.notice.clone())
         .child(div().flex().justify_end().child(recovery_button(
+            "close",
             "Close",
             &state.close_focus,
-            busy,
             palette,
+            !busy,
             move |window, app| {
                 let _ = close.update(app, |library, cx| {
                     library.deleted_files_dialog = None;
@@ -537,38 +540,6 @@ fn deleted_files_contents(
                 });
             },
         )))
-}
-
-fn recovery_button(
-    label: &'static str,
-    focus: &FocusHandle,
-    busy: bool,
-    palette: Palette,
-    activate: impl Fn(&mut Window, &mut gpui::App) + Clone + 'static,
-) -> impl IntoElement {
-    let click = activate.clone();
-    div()
-        .id(label)
-        .track_focus(focus)
-        .rounded_md()
-        .px_3()
-        .py_2()
-        .child(label)
-        .when(busy, |button| button.text_color(rgb(palette.muted)))
-        .when(!busy, |button| {
-            button
-                .cursor_pointer()
-                .hover(move |style| style.bg(rgb(palette.selection)))
-                .focus(move |style| style.bg(rgb(palette.selection)))
-                .on_click(move |_, window, app| click(window, app))
-                .on_key_down(move |event, window, app| {
-                    if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                        app.stop_propagation();
-                        window.prevent_default();
-                        activate(window, app);
-                    }
-                })
-        })
 }
 
 #[cfg(all(test, feature = "ui-tests"))]
@@ -645,8 +616,20 @@ mod tests {
             assert_eq!(dialog.rows[0].0.path, "sections");
             assert!(dialog.rows[0].1.is_focused(window));
         });
-        cx.simulate_keystrokes("tab shift-tab enter");
-        assert_eq!(fs::read_to_string(source).unwrap(), "Introduction\n");
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, app| {
+            let view = library.read(app);
+            let dialog = view.deleted_files_dialog.as_ref().unwrap().borrow();
+            assert!(dialog.close_focus.is_focused(window));
+        });
+        cx.simulate_keystrokes("shift-tab");
+        cx.update(|window, app| {
+            let view = library.read(app);
+            let dialog = view.deleted_files_dialog.as_ref().unwrap().borrow();
+            assert!(dialog.rows[0].1.is_focused(window));
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
         cx.update(|window, app| {
             let dialog = library
                 .read(app)
@@ -654,10 +637,12 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .borrow();
+            assert!(dialog.error.is_none(), "restore failed: {:?}", dialog.error);
             assert_eq!(dialog.notice.as_deref(), Some("Restored sections"));
             assert!(dialog.rows.is_empty());
             assert!(dialog.close_focus.is_focused(window));
         });
+        assert_eq!(fs::read_to_string(source).unwrap(), "Introduction\n");
         cx.simulate_keystrokes("enter");
         cx.update(|window, app| {
             let view = library.read(app);
