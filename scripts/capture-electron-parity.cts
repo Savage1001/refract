@@ -13,18 +13,24 @@ async function captureTheme(output: string, theme: 'light' | 'dark'): Promise<vo
     reducedMotion: 'reduce',
   });
   page.setDefaultTimeout(10_000);
+  const project = page.getByRole('button', { name: 'Open Spectral methods for fluid dynamics', exact: true });
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
   try {
-    await page.getByRole('button', { name: 'Open Spectral methods for fluid dynamics', exact: true }).waitFor();
+    await project.waitFor();
     await capture(page, output, theme, 'library-list');
     await page.locator('#grid-view').click();
     await capture(page, output, theme, 'library-grid');
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Settings', exact: true }).waitFor();
+    await settings.waitFor();
     await capture(page, output, theme, 'settings');
-    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await settings.getByRole('button', { name: 'Close', exact: true }).click();
+    await settings.waitFor({ state: 'hidden' });
 
-    await page.getByRole('button', { name: 'Open Spectral methods for fluid dynamics', exact: true }).press('Enter');
+    await project.click();
+    await page.mouse.move(0, 0);
+    await page.locator('#workspace').waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: 'Compiled', exact: true }).waitFor();
     await page.locator('.pdf-pages canvas[data-render-scale]').first().waitFor({ state: 'visible' });
     await page.locator('.pdf-text-layer').first().waitFor({ state: 'attached' });
     await capture(page, output, theme, 'workspace');
@@ -38,6 +44,9 @@ async function captureTheme(output: string, theme: 'light' | 'dark'): Promise<vo
     await page.setViewportSize(compact);
     await capture(page, output, theme, 'workspace-compact');
     assert.deepEqual(errors, []);
+  } catch (error) {
+    const diagnostics = errors.length ? ` Renderer errors: ${errors.join(' | ')}` : '';
+    throw new Error(`Failed to capture the ${theme} reference screenshots.${diagnostics}`, { cause: error });
   } finally {
     await browser.close();
   }
