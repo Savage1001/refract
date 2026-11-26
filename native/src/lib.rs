@@ -12,7 +12,7 @@ pub mod versions;
 pub use project_entries::{
     DeletedEntry, ProjectEntryKind, ProjectEntryMove, create_project_entry, download_project_file,
     export_project_zip, list_deleted_entries, move_project_entry, restore_deleted_entry,
-    trash_project_entry,
+    trash_project_entry, upload_project_files, upload_project_folder,
 };
 pub use project_management::{
     DeletedProject, ProjectArchive, create_project, duplicate_project, list_deleted_projects,

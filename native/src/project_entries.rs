@@ -8,10 +8,12 @@ use std::{
 mod relocate;
 mod transfer;
 mod trash;
+mod upload;
 pub(crate) use relocate::rename_without_replacement;
 pub use relocate::{ProjectEntryMove, move_project_entry};
 pub use transfer::{download_project_file, export_project_zip};
 pub use trash::{DeletedEntry, list_deleted_entries, restore_deleted_entry, trash_project_entry};
+pub use upload::{upload_project_files, upload_project_folder};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]

@@ -10,6 +10,8 @@ Right-click a file or folder or focus its row and press `Shift+F10` to open its 
 
 Use **Download file** to save a copy of a project file or **Export project ZIP** to save the visible project files and folders, including empty folders.
 
+Use **More file options** in the New file dialog to upload files or a folder into the selected project folder. Existing files at the destination are preserved.
+
 Use **Import ZIP** in the project library to open a LaTeX project archive. Select a root document when the archive has multiple candidates. **Import all** creates a separate project for each root in its own top-level folder.
 
 Open Comments to search discussions, add a file comment or comment on selected source, write replies, and resolve or reopen threads. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.

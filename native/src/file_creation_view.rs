@@ -1,7 +1,7 @@
 use super::{Library, Palette};
 use gpui::{
-    App, Context, Entity, KeyBinding, KeyDownEvent, SharedString, Subscription, WeakEntity, Window,
-    actions, div, prelude::*, rgb,
+    App, Context, Entity, KeyBinding, KeyDownEvent, PathPromptOptions, SharedString, Subscription,
+    WeakEntity, Window, actions, div, prelude::*, rgb,
 };
 use gpui_component::{
     WindowExt,
@@ -9,9 +9,14 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     select::{Select, SelectItem, SelectState},
 };
-use refract_native::{ProjectEntry, ProjectEntryKind, create_project_entry, project_tree};
+use refract_native::{
+    Project, ProjectEntry, ProjectEntryKind, create_project_entry, project_tree,
+    upload_project_files, upload_project_folder,
+};
 use std::{
     cell::{Cell, RefCell},
+    io,
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
@@ -56,6 +61,47 @@ pub(super) struct EntryDraft {
     destination: Entity<SelectState<Vec<FolderChoice>>>,
     error: Rc<RefCell<Option<String>>>,
     _watch_input: Subscription,
+}
+
+impl EntryDraft {
+    fn selected_folder(&self, cx: &App) -> String {
+        self.destination
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Upload {
+    Files,
+    Folder,
+}
+
+impl Upload {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Files => "Upload file",
+            Self::Folder => "Upload folder",
+        }
+    }
+
+    fn apply(
+        self,
+        projects: &Path,
+        project: &Project,
+        folder: &str,
+        paths: &[PathBuf],
+    ) -> io::Result<()> {
+        match self {
+            Self::Files => upload_project_files(projects, project, folder, paths).map(|_| ()),
+            Self::Folder => match paths.first() {
+                Some(path) => upload_project_folder(projects, project, folder, path).map(|_| ()),
+                None => Ok(()),
+            },
+        }
+    }
 }
 
 impl Library {
@@ -188,12 +234,7 @@ impl Library {
             cx.notify();
             return false;
         }
-        let destination = draft
-            .destination
-            .read(cx)
-            .selected_value()
-            .cloned()
-            .unwrap_or_default();
+        let destination = draft.selected_folder(cx);
         let path = if destination.is_empty() {
             name.to_owned()
         } else {
@@ -252,6 +293,76 @@ impl Library {
         cx.notify();
         true
     }
+
+    fn pick_upload(&mut self, upload: Upload, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(draft), Some(selection)) = (&self.entry_draft, &self.selection) else {
+            return;
+        };
+        if !self.project_writes_ready() {
+            *draft.error.borrow_mut() =
+                Some("Wait for the current project operation to finish.".into());
+            cx.notify();
+            return;
+        }
+        let folder = draft.selected_folder(cx);
+        let project = selection.project.clone();
+        let project_id = project.id.clone();
+        let projects = self.projects_dir.clone();
+        self.entry_draft = None;
+        window.close_dialog(cx);
+        let select_files = matches!(upload, Upload::Files);
+        let pick = cx.prompt_for_paths(PathPromptOptions {
+            files: select_files,
+            directories: !select_files,
+            multiple: select_files,
+            prompt: Some(upload.label().into()),
+        });
+        let executor = cx.background_executor().clone();
+        self.entry_write_task = Some(cx.spawn_in(window, async move |library, cx| {
+            let (error, tree) = match pick.await {
+                Ok(Ok(Some(paths))) if !paths.is_empty() => {
+                    executor
+                        .spawn(async move {
+                            let error = upload
+                                .apply(&projects, &project, &folder, &paths)
+                                .err()
+                                .map(|error| error.to_string());
+                            (error, Some(project_tree(&projects, &project)))
+                        })
+                        .await
+                }
+                Ok(Err(error)) => (Some(error.to_string()), None),
+                _ => (None, None),
+            };
+            let _ = library.update_in(cx, |library, window, cx| {
+                library.entry_write_task = None;
+                if let Some(selection) = &mut library.selection
+                    && selection.project.id == project_id
+                {
+                    if let Some(tree) = tree {
+                        library.tree_task = None;
+                        selection.tree = Some(tree);
+                        selection.file_action_error = None;
+                    }
+                    if let Some(error) = error {
+                        let action = if select_files {
+                            "upload files"
+                        } else {
+                            "upload folder"
+                        };
+                        selection.file_action_error = Some(format!("Couldn’t {action}. {error}"));
+                    }
+                }
+                library.start_next_save(window, cx);
+                if library.snapshot_timer.is_none() {
+                    library.start_snapshot(window, cx);
+                }
+                library.resume_navigation(window, cx);
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
 }
 
 fn collect_folders(entries: &[ProjectEntry], folders: &mut Vec<FolderChoice>) {
@@ -286,20 +397,35 @@ fn file_alternatives(
             },
         ))
         .when(shown, |container| {
-            container.child(alternative_button(
-                "create-folder",
-                "Create folder",
-                palette,
-                move |window, app| {
-                    let _ = action.update(app, |library, cx| {
-                        if library.submit_create_entry(ProjectEntryKind::Folder, window, cx) {
-                            library.entry_draft = None;
-                            window.close_dialog(cx);
-                            cx.notify();
-                        }
-                    });
-                },
-            ))
+            container
+                .child(alternative_button(
+                    "create-folder",
+                    "Create folder",
+                    palette,
+                    move |window, app| {
+                        let _ = action.update(app, |library, cx| {
+                            if library.submit_create_entry(ProjectEntryKind::Folder, window, cx) {
+                                library.entry_draft = None;
+                                window.close_dialog(cx);
+                                cx.notify();
+                            }
+                        });
+                    },
+                ))
+                .children(
+                    [
+                        ("upload-files", Upload::Files),
+                        ("upload-folder", Upload::Folder),
+                    ]
+                    .into_iter()
+                    .map(|(id, upload)| {
+                        let library = library.clone();
+                        alternative_button(id, upload.label(), palette, move |window, app| {
+                            let _ = library
+                                .update(app, |library, cx| library.pick_upload(upload, window, cx));
+                        })
+                    }),
+                )
         })
 }
 
@@ -312,6 +438,7 @@ fn alternative_button(
     let keyboard = activate.clone();
     div()
         .id(id)
+        .debug_selector(|| id.to_owned())
         .tab_index(0)
         .key_context("FileCreationAlternative")
         .cursor_pointer()
@@ -364,7 +491,10 @@ mod tests {
             );
         });
         cx.simulate_input("sections");
-        cx.simulate_keystrokes("tab enter tab enter");
+        cx.simulate_keystrokes("tab enter");
+        assert!(cx.debug_bounds("upload-files").is_some());
+        assert!(cx.debug_bounds("upload-folder").is_some());
+        cx.simulate_keystrokes("tab enter");
         cx.run_until_parked();
         assert!(folder.join("sections").is_dir());
         cx.update(|window, app| {
