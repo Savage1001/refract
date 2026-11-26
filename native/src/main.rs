@@ -20,6 +20,9 @@ use std::{
     time::Duration,
 };
 
+mod version_view;
+use version_view::Comparison;
+
 actions!(editor, [SaveSource]);
 
 struct Library {
@@ -34,6 +37,7 @@ struct Library {
     snapshot_task: Option<Task<()>>,
     snapshot_timer: Option<Task<()>>,
     snapshot_needed: bool,
+    comparison_task: Option<Task<()>>,
     navigation_after_save: Option<Navigation>,
     discard_prompt: Option<Task<()>>,
     focus_handle: FocusHandle,
@@ -52,6 +56,7 @@ struct Selection {
     show_comments: bool,
     show_versions: bool,
     versions: Option<io::Result<Vec<Version>>>,
+    comparison: Option<Comparison>,
     comments: Option<io::Result<Vec<Comment>>>,
     pending_comment: Option<Comment>,
     comment_status: Option<&'static str>,
@@ -114,6 +119,7 @@ impl Library {
             snapshot_task: None,
             snapshot_timer: None,
             snapshot_needed: false,
+            comparison_task: None,
             navigation_after_save: None,
             discard_prompt: None,
             focus_handle,
@@ -142,6 +148,7 @@ impl Library {
             show_comments: false,
             show_versions: false,
             versions: None,
+            comparison: None,
             comments: None,
             pending_comment: None,
             comment_status: None,
@@ -282,6 +289,7 @@ impl Library {
         self.tree_task = None;
         self.preview_task = None;
         self.comments_task = None;
+        self.comparison_task = None;
         if let Some(previous) = self.selection.take()
             && let Some(focus) = self.project_focus.get(&previous.project.id)
         {
@@ -306,6 +314,8 @@ impl Library {
         selection.show_comments = !selection.show_comments;
         if selection.show_comments {
             selection.show_versions = false;
+            selection.comparison = None;
+            self.comparison_task = None;
             selection.comments = None;
             self.load_comments(cx);
         }
@@ -317,6 +327,9 @@ impl Library {
             selection.show_versions = !selection.show_versions;
             if selection.show_versions {
                 selection.show_comments = false;
+            } else {
+                selection.comparison = None;
+                self.comparison_task = None;
             }
             cx.notify();
         }
@@ -615,6 +628,8 @@ struct Palette {
     input_border: u32,
     selection: u32,
     focus: u32,
+    warning: u32,
+    warning_surface: u32,
 }
 
 impl Palette {
@@ -631,6 +646,8 @@ impl Palette {
                 input_border: 0x1e1e1e,
                 selection: 0x1a1b1b,
                 focus: 0x79a8ff,
+                warning: 0xffb900,
+                warning_surface: 0x312108,
             },
             _ => Self {
                 canvas: 0xfcfcfc,
@@ -642,6 +659,8 @@ impl Palette {
                 input_border: 0xd4d4d8,
                 selection: 0xf0f0f2,
                 focus: 0x1b4ed8,
+                warning: 0xbb4d00,
+                warning_surface: 0xfcf4e8,
             },
         }
     }
@@ -983,14 +1002,23 @@ impl Library {
                 workspace.child(self.comments_pane(selection, palette, cx))
             })
             .when(selection.show_versions, |workspace| {
-                workspace.child(self.versions_pane(selection, palette))
+                workspace.child(self.versions_pane(selection, palette, cx))
             })
     }
 
-    fn versions_pane(&self, selection: &Selection, palette: Palette) -> impl IntoElement {
+    fn versions_pane(
+        &self,
+        selection: &Selection,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let pane = div()
             .id("versions-pane")
-            .w(px(300.))
+            .w(px(if selection.comparison.is_some() {
+                560.
+            } else {
+                300.
+            }))
             .flex_none()
             .flex()
             .flex_col()
@@ -1013,32 +1041,17 @@ impl Library {
             None => list.child("Loading versions…"),
             Some(Err(error)) => list.child(format!("Couldn’t load version history: {error}")),
             Some(Ok(versions)) if versions.is_empty() => list.child("No saved versions."),
-            Some(Ok(versions)) => list.children(versions.iter().map(|version| {
-                let timestamp = chrono::DateTime::parse_from_rfc3339(&version.created)
-                    .map(|date| {
-                        date.with_timezone(&chrono::Local)
-                            .format("%-m/%-d/%Y, %-I:%M %p")
-                            .to_string()
-                    })
-                    .unwrap_or_else(|_| version.created.clone());
-                let files = version.files.len();
-                let description = if files == 1 {
-                    "1 file".to_owned()
-                } else {
-                    format!("{files} files")
-                };
-                div()
-                    .border_b_1()
-                    .border_color(rgb(palette.border))
-                    .py_2()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(timestamp))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(palette.muted))
-                            .child(description),
+            Some(Ok(versions)) => {
+                list.children(versions.iter().enumerate().map(|(index, version)| {
+                    self.version_row(
+                        version,
+                        versions.len() - index,
+                        selection.comparison.as_ref(),
+                        palette,
+                        cx,
                     )
-            })),
+                }))
+            }
         })
     }
 
@@ -1675,9 +1688,28 @@ mod tests {
             assert!(library.home_focus.is_focused(window));
         });
         cx.simulate_keystrokes("tab tab tab tab enter");
-        cx.update(|_, app| {
+        let versions_focus = cx.update(|window, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert!(selection.show_versions);
+            window.focused(app).unwrap()
+        });
+        cx.simulate_keystrokes("tab tab tab enter");
+        cx.update(|_, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            let comparison = selection.comparison.as_ref().unwrap();
+            let changes = comparison.changes.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0].name, "sections/abstract.tex");
+        });
+        cx.simulate_keystrokes("tab enter");
+        cx.update(|window, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            let comparison = selection.comparison.as_ref().unwrap();
+            let file = comparison.selection.as_ref().unwrap();
+            let lines = file.lines.as_ref().unwrap().as_ref().unwrap();
+            let current = &lines.current.as_ref().unwrap().content;
+            assert_eq!(current.lines[current.changed_indices[0]].text, "A draft");
+            window.focus(&versions_focus);
         });
         cx.simulate_keystrokes("tab enter");
         cx.update(|_, app| {

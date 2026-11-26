@@ -4,7 +4,7 @@ This opt-in Rust and GPUI app opens the existing Refract project library in list
 
 Open Comments to read existing project comments and replies. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
 
-Versions lists existing and newly captured snapshots. Refract captures a snapshot when you open a project and after saved edits settle, using the same manifest and ZIP format as the Electron app. Use Electron to compare or restore versions.
+Versions lists existing and newly captured snapshots. Refract captures a snapshot when you open a project and after saved edits settle, using the same manifest and ZIP format as the Electron app. Compare with current shows file, folder, and root document changes. Open a changed file to see its previous and current lines side by side. Use Electron to restore versions.
 
 From the repository root, use stable Rust and the Windows MSVC toolchain to build the preview. Running the binary opens a desktop window.
 
