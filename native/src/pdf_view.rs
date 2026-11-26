@@ -1,9 +1,9 @@
 use super::{Library, Palette};
 use gpui::{
-    Bounds, Context, Image, ImageFormat, KeyDownEvent, MouseButton, MouseDownEvent, Pixels,
-    ScrollHandle, Window, canvas, div, img, point, prelude::*, px, rgb,
+    Bounds, Context, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, RenderImage, ScrollHandle,
+    Window, canvas, div, img, point, prelude::*, px, rgb,
 };
-use refract_native::tex::synctex::PdfPosition;
+use refract_native::{pdf_raster::PageRequest, tex::synctex::PdfPosition};
 use std::{cell::Cell, io, path::Path, rc::Rc, sync::Arc};
 
 pub(super) const PDF_PANE_WIDTH: f32 = 352.;
@@ -30,29 +30,12 @@ impl Zoom {
 pub(super) struct PdfViewport {
     page: u32,
     zoom: Zoom,
-    frame: Option<PageImage>,
+    frame: Option<RasterizedPage>,
     pending: bool,
     error: Option<String>,
     last_sync: Option<PdfPosition>,
     center_sync: bool,
     scroll: ScrollHandle,
-}
-
-struct PageImage {
-    current: u32,
-    count: u32,
-    width: f32,
-    height: f32,
-    point_width: f64,
-    point_height: f64,
-    image: Arc<Image>,
-}
-
-struct PageRequest {
-    index: u32,
-    width: Option<f32>,
-    height: Option<f32>,
-    display_scale: f32,
 }
 
 pub(super) struct RasterizedPage {
@@ -62,7 +45,7 @@ pub(super) struct RasterizedPage {
     height: f32,
     point_width: f64,
     point_height: f64,
-    pub(super) png: Vec<u8>,
+    pub(super) image: Arc<RenderImage>,
 }
 
 impl Library {
@@ -114,15 +97,6 @@ impl Library {
                     match page {
                         Ok(page) => {
                             pane.page = page.current;
-                            pane.frame = Some(PageImage {
-                                current: page.current,
-                                count: page.count,
-                                width: page.width,
-                                height: page.height,
-                                point_width: page.point_width,
-                                point_height: page.point_height,
-                                image: Arc::new(Image::from_bytes(ImageFormat::Png, page.png)),
-                            });
                             if pane.center_sync {
                                 pane.center_sync = false;
                                 if let Some(position) = pane
@@ -138,6 +112,9 @@ impl Library {
                                     pane.scroll
                                         .set_offset(point(pane.scroll.offset().x, px(-y)));
                                 }
+                            }
+                            if let Some(previous) = pane.frame.replace(page) {
+                                let _ = window.drop_image(previous.image);
                             }
                         }
                         Err(error) => pane.error = Some(error.to_string()),
@@ -265,6 +242,11 @@ impl Library {
 }
 
 impl PdfViewport {
+    pub(super) fn release(&mut self, window: &mut Window) {
+        if let Some(frame) = self.frame.take() {
+            let _ = window.drop_image(frame.image);
+        }
+    }
     pub(super) fn jump_to(&mut self, position: PdfPosition) {
         self.page = position.page.saturating_sub(1);
         self.last_sync = Some(position);
@@ -322,7 +304,7 @@ impl PdfViewport {
     }
 }
 
-impl PageImage {
+impl RasterizedPage {
     fn render(
         &self,
         last_sync: Option<PdfPosition>,
@@ -439,15 +421,22 @@ use windows_pdf::render_page;
 #[cfg(windows)]
 pub(super) use windows_pdf::render_asset_page;
 
-#[cfg(not(windows))]
-pub(super) fn render_asset_page(_: &[u8], _: u32) -> io::Result<RasterizedPage> {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod portable_pdf;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) use portable_pdf::render_asset_page;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use portable_pdf::render_page;
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+pub(super) fn render_asset_page(_: Arc<Vec<u8>>, _: u32) -> io::Result<RasterizedPage> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Inline project PDF preview is unavailable on this platform.",
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn render_page(_: &Path, _: PageRequest) -> io::Result<RasterizedPage> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

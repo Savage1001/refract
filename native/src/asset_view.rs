@@ -20,7 +20,7 @@ pub(super) enum AssetPreview {
 }
 
 pub(super) struct ProjectPdf {
-    bytes: Arc<[u8]>,
+    bytes: Arc<Vec<u8>>,
     frame: PdfFrame,
     pending: Option<u32>,
     error: Option<String>,
@@ -44,25 +44,28 @@ pub(super) fn load_file(
             Ok(image) => AssetPreview::Image(image),
             Err(_) => AssetPreview::Message("Could not preview this image.".into()),
         },
-        Preview::Pdf(bytes) => match decode_pdf(&bytes, 0) {
-            Ok(frame) => AssetPreview::Pdf(ProjectPdf {
-                bytes: bytes.into(),
-                frame,
-                pending: None,
-                error: None,
-            }),
-            Err(error) => AssetPreview::Message(format!("Could not preview PDF: {error}")),
-        },
+        Preview::Pdf(bytes) => {
+            let bytes = Arc::new(bytes);
+            match decode_pdf(bytes.clone(), 0) {
+                Ok(frame) => AssetPreview::Pdf(ProjectPdf {
+                    bytes,
+                    frame,
+                    pending: None,
+                    error: None,
+                }),
+                Err(error) => AssetPreview::Message(format!("Could not preview PDF: {error}")),
+            }
+        }
     };
     Ok(LoadedFile::Asset(asset))
 }
 
-fn decode_pdf(bytes: &[u8], index: u32) -> io::Result<PdfFrame> {
+fn decode_pdf(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<PdfFrame> {
     let page = render_asset_page(bytes, index)?;
     Ok(PdfFrame {
         page: page.current,
         count: page.count,
-        image: asset_image::decode(page.png, ImageKind::Png)?,
+        image: page.image,
     })
 }
 
@@ -103,7 +106,7 @@ impl Library {
         pdf.error = None;
         let load = cx
             .background_executor()
-            .spawn(async move { decode_pdf(&request_bytes, target) });
+            .spawn(async move { decode_pdf(request_bytes, target) });
         self.preview_task = Some(cx.spawn_in(window, async move |view, cx| {
             let page = load.await;
             let _ = view.update_in(cx, |view, window, cx| {

@@ -30,7 +30,7 @@ pub(super) fn decode(bytes: Vec<u8>, kind: ImageKind) -> io::Result<Arc<RenderIm
             if webp.has_animation() {
                 return animation(webp.into_frames());
             }
-            ImageFormat::WebP
+            return decode_still(webp);
         }
         ImageKind::Png => {
             let mut png = PngDecoder::new(cursor).map_err(io::Error::other)?;
@@ -40,14 +40,17 @@ pub(super) fn decode(bytes: Vec<u8>, kind: ImageKind) -> io::Result<Arc<RenderIm
                 let png = png.apng().map_err(io::Error::other)?;
                 return animation(png.into_frames());
             }
-            ImageFormat::Png
+            return decode_still(png);
         }
         ImageKind::Bmp => ImageFormat::Bmp,
         ImageKind::Jpeg => ImageFormat::Jpeg,
     };
     let mut reader = ImageReader::with_format(cursor, format);
     reader.limits(limits());
-    let mut decoder = reader.into_decoder().map_err(io::Error::other)?;
+    decode_still(reader.into_decoder().map_err(io::Error::other)?)
+}
+
+fn decode_still(mut decoder: impl ImageDecoder) -> io::Result<Arc<RenderImage>> {
     check_dimensions(decoder.dimensions())?;
     let orientation = decoder.orientation().map_err(io::Error::other)?;
     let mut image = image::DynamicImage::from_decoder(decoder).map_err(io::Error::other)?;
@@ -98,7 +101,7 @@ fn animation(frames: Frames<'_>) -> io::Result<Arc<RenderImage>> {
     Ok(Arc::new(RenderImage::new(decoded)))
 }
 
-fn frame_image(mut buffer: RgbaImage) -> Arc<RenderImage> {
+pub(super) fn frame_image(mut buffer: RgbaImage) -> Arc<RenderImage> {
     to_render_order(&mut buffer);
     Arc::new(RenderImage::new([Frame::new(buffer)]))
 }

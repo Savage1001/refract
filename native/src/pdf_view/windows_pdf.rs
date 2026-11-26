@@ -1,5 +1,7 @@
 use super::{PageRequest, RasterizedPage, io};
-use std::path::Path;
+use crate::asset_image;
+use refract_native::{file_preview::ImageKind, pdf_raster::page_layout};
+use std::{path::Path, sync::Arc};
 use windows::{
     Data::Pdf::{PdfDocument, PdfPageRenderOptions},
     Graphics::Imaging::BitmapEncoder,
@@ -10,8 +12,6 @@ use windows::{
     Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize},
     core::HSTRING,
 };
-
-const MAX_PIXELS: f32 = 8_000_000.;
 
 pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<RasterizedPage> {
     render(path, request)
@@ -26,8 +26,8 @@ fn render(path: &Path, request: PageRequest) -> Result<RasterizedPage, Box<dyn s
     render_document(&document, request)
 }
 
-pub(crate) fn render_asset_page(bytes: &[u8], index: u32) -> io::Result<RasterizedPage> {
-    render_asset(bytes, index)
+pub(crate) fn render_asset_page(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<RasterizedPage> {
+    render_asset(&bytes, index)
         .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
 }
 
@@ -42,15 +42,7 @@ fn render_asset(bytes: &[u8], index: u32) -> Result<RasterizedPage, Box<dyn std:
     writer.DetachStream()?;
     stream.Seek(0)?;
     let document = PdfDocument::LoadFromStreamAsync(&stream)?.get()?;
-    render_document(
-        &document,
-        PageRequest {
-            index,
-            width: None,
-            height: None,
-            display_scale: 1.2,
-        },
-    )
+    render_document(&document, PageRequest::project_file(index))
 }
 
 fn render_document(
@@ -64,25 +56,11 @@ fn render_document(
     let current = request.index.min(count - 1);
     let page = document.GetPage(current)?;
     let size = page.Size()?;
-    if !size.Width.is_finite() || !size.Height.is_finite() || size.Width <= 0. || size.Height <= 0.
-    {
-        return Err("The PDF page dimensions are invalid.".into());
-    }
-    let aspect = size.Height / size.Width;
-    let requested_width = request.width.unwrap_or(size.Width * 72. / 96.);
-    let width = request.height.map_or(requested_width, |height| {
-        requested_width.min(height / aspect)
-    });
-    let height = width * aspect;
-    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. {
-        return Err("The PDF page could not be fitted in the preview.".into());
-    }
-    let quality = request.display_scale.clamp(1., 4.) * 1.25;
-    let scale = quality
-        .min((MAX_PIXELS / (width * height)).sqrt())
-        .min(4096. / width.max(height));
-    let pixels_wide = (width * scale).round().max(1.) as u32;
-    let pixels_high = (height * scale).round().max(1.) as u32;
+    let point_width = f64::from(size.Width) * 72. / 96.;
+    let point_height = f64::from(size.Height) * 72. / 96.;
+    let layout = page_layout(point_width, point_height, request)?;
+    let pixels_wide = layout.pixel_width;
+    let pixels_high = layout.pixel_height;
     let target = InMemoryRandomAccessStream::new()?;
     let settings = PdfPageRenderOptions::new()?;
     settings.SetDestinationWidth(pixels_wide)?;
@@ -108,11 +86,11 @@ fn render_document(
     Ok(RasterizedPage {
         current,
         count,
-        width,
-        height,
-        point_width: f64::from(size.Width) * 72. / 96.,
-        point_height: f64::from(size.Height) * 72. / 96.,
-        png,
+        width: layout.width,
+        height: layout.height,
+        point_width,
+        point_height,
+        image: asset_image::decode(png, ImageKind::Png)?,
     })
 }
 
@@ -181,10 +159,10 @@ mod tests {
         assert_eq!(frame.count, 2);
         assert!((frame.width - 200.).abs() < 0.01);
         assert!((frame.height - 300.).abs() < 0.01);
-        assert!(frame.png.starts_with(b"\x89PNG\r\n\x1a\n"));
-        let asset = render_asset_page(&pdf, 1).unwrap();
+        assert_eq!(frame.image.as_bytes(0).unwrap().len(), 250 * 375 * 4);
+        let asset = render_asset_page(Arc::new(pdf), 1).unwrap();
         assert_eq!((asset.current, asset.count), (1, 2));
         assert!((asset.width - 200.).abs() < 0.01);
-        assert!(asset.png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert_eq!(asset.image.as_bytes(0).unwrap().len(), 300 * 450 * 4);
     }
 }

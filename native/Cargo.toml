@@ -7,8 +7,9 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:gpui", "dep:gpui-component", "dep:image", "dep:katex-native", "dep:resvg", "dep:windows", "latex-syntax"]
+desktop = ["dep:gpui", "dep:gpui-component", "dep:image", "dep:katex-native", "dep:resvg", "dep:windows", "latex-syntax", "portable-pdf"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
+portable-pdf = ["dep:hayro"]
 ui-tests = ["desktop", "gpui/test-support"]
 
 [[bin]]
@@ -43,4 +44,5 @@ windows = { version = "=0.61.3", optional = true, features = ["Data_Pdf", "Found
 windows-sys = { version = "=0.61.2", features = ["Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+hayro = { version = "=0.9.0", optional = true }
 rustix = { version = "=1.1.6", features = ["fs", "process"] }

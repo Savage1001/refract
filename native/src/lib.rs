@@ -12,6 +12,7 @@ pub mod latex_commands;
 #[cfg(feature = "latex-syntax")]
 pub mod latex_syntax;
 pub mod outline;
+pub mod pdf_raster;
 mod project_entries;
 mod project_management;
 pub mod project_search;

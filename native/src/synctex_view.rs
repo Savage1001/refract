@@ -29,7 +29,7 @@ impl Library {
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let enabled = cfg!(windows)
+        let enabled = cfg!(any(windows, target_os = "linux", target_os = "macos"))
             && self.active_editor().is_some()
             && selection.build.pdf().is_some()
             && self.sync_task.is_none();

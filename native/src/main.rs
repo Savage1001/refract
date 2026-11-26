@@ -523,7 +523,8 @@ impl Library {
         self.outline.clear(window);
         self.comments_task = None;
         self.comparison_task = None;
-        if let Some(previous) = self.selection.take() {
+        if let Some(mut previous) = self.selection.take() {
+            previous.build.preview.release(window);
             if let Some(asset) = previous.asset_preview {
                 asset.release(window);
             }
