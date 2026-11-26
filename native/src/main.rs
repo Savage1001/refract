@@ -1,20 +1,24 @@
 use gpui::{
     AnyElement, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight, Image,
-    ImageFormat, SharedString, Task, Window, WindowAppearance, WindowBounds, WindowOptions, div,
-    img, prelude::*, px, rgb, size,
+    ImageFormat, KeyBinding, SharedString, Task, Window, WindowAppearance, WindowBounds,
+    WindowOptions, actions, div, img, prelude::*, px, rgb, size,
 };
 use gpui_component::{
     Root,
     input::{Input, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
-use refract_native::{Project, ProjectEntry, list_projects, project_tree, read_source};
+use refract_native::{
+    Project, ProjectEntry, list_projects, project_tree, read_source, save_source,
+};
 use std::{
     collections::{HashMap, HashSet},
     env, io,
     path::PathBuf,
     sync::Arc,
 };
+
+actions!(editor, [SaveSource]);
 
 struct Library {
     projects_dir: PathBuf,
@@ -23,6 +27,7 @@ struct Library {
     tree_task: Option<Task<()>>,
     preview_task: Option<Task<()>>,
     comments_task: Option<Task<()>>,
+    save_task: Option<Task<()>>,
     focus_handle: FocusHandle,
     project_focus: HashMap<String, FocusHandle>,
     home_focus: FocusHandle,
@@ -46,7 +51,13 @@ struct FileTab {
     path: String,
     open_focus: FocusHandle,
     close_focus: FocusHandle,
-    editor: Option<io::Result<Entity<InputState>>>,
+    editor: Option<io::Result<EditorDocument>>,
+}
+
+struct EditorDocument {
+    state: Entity<InputState>,
+    saved: String,
+    save_error: Option<String>,
 }
 
 impl Library {
@@ -81,6 +92,7 @@ impl Library {
             tree_task: None,
             preview_task: None,
             comments_task: None,
+            save_task: None,
             focus_handle,
             project_focus: HashMap::new(),
             home_focus: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -166,17 +178,23 @@ impl Library {
                     return;
                 };
                 tab.editor = Some(source.map(|source| {
-                    cx.new(|cx| {
+                    let state = cx.new(|cx| {
                         InputState::new(window, cx)
                             .code_editor("text")
                             .soft_wrap(false)
-                            .default_value(source)
-                    })
+                            .default_value(source.clone())
+                    });
+                    EditorDocument {
+                        state,
+                        saved: source,
+                        save_error: None,
+                    }
                 }));
                 if let Some(comment) = selection.pending_comment.take()
                     && let Some(Ok(editor)) = tab.editor.as_ref()
                 {
-                    selection.comment_status = Self::jump_to_comment(editor, &comment, window, cx);
+                    selection.comment_status =
+                        Self::jump_to_comment(&editor.state, &comment, window, cx);
                 }
                 cx.notify();
             });
@@ -185,6 +203,9 @@ impl Library {
     }
 
     fn close_file(&mut self, file: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.save_task.is_some() {
+            return;
+        }
         let Some(selection) = &mut self.selection else {
             return;
         };
@@ -223,6 +244,9 @@ impl Library {
     }
 
     fn return_to_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.save_task.is_some() {
+            return;
+        }
         self.tree_task = None;
         self.preview_task = None;
         self.comments_task = None;
@@ -249,22 +273,86 @@ impl Library {
         };
         selection.show_comments = !selection.show_comments;
         if selection.show_comments {
-            selection.comments = None;
-            let project = selection.project.clone();
-            let path = self.projects_dir.clone();
-            let load = cx
-                .background_executor()
-                .spawn(async move { read_comments(&path, &project) });
-            self.comments_task = Some(cx.spawn(async move |library, cx| {
-                let comments = load.await;
-                let _ = library.update(cx, |library, cx| {
-                    if let Some(selection) = &mut library.selection {
-                        selection.comments = Some(comments);
-                        cx.notify();
-                    }
-                });
-            }));
+            self.load_comments(cx);
         }
+        cx.notify();
+    }
+
+    fn load_comments(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        selection.comments = None;
+        let project = selection.project.clone();
+        let path = self.projects_dir.clone();
+        let load = cx
+            .background_executor()
+            .spawn(async move { read_comments(&path, &project) });
+        self.comments_task = Some(cx.spawn(async move |library, cx| {
+            let comments = load.await;
+            let _ = library.update(cx, |library, cx| {
+                if let Some(selection) = &mut library.selection {
+                    selection.comments = Some(comments);
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
+    fn save_active_file(&mut self, cx: &mut Context<Self>) {
+        if self.save_task.is_some() {
+            return;
+        }
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        let Some(file) = selection.file.clone() else {
+            return;
+        };
+        let document = selection
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.path == file)
+            .and_then(|tab| tab.editor.as_mut()?.as_mut().ok());
+        let Some(document) = document else {
+            return;
+        };
+        let edited = document.state.read(cx).value().to_string();
+        if document.saved == edited {
+            return;
+        }
+        document.save_error = None;
+        let expected = document.saved.clone();
+        let project = selection.project.clone();
+        let path = self.projects_dir.clone();
+        let saved_file = file.clone();
+        let save = cx.background_executor().spawn(async move {
+            save_source(&path, &project, &saved_file, &expected, &edited).map(|()| edited)
+        });
+        self.save_task = Some(cx.spawn(async move |library, cx| {
+            let result = save.await;
+            let reload_comments = result.is_ok();
+            let _ = library.update(cx, |library, cx| {
+                library.save_task = None;
+                if let Some(selection) = &mut library.selection {
+                    if let Some(document) = selection
+                        .tabs
+                        .iter_mut()
+                        .find(|tab| tab.path == file)
+                        .and_then(|tab| tab.editor.as_mut()?.as_mut().ok())
+                    {
+                        match result {
+                            Ok(saved) => document.saved = saved,
+                            Err(error) => document.save_error = Some(error.to_string()),
+                        }
+                    }
+                    if reload_comments && selection.show_comments {
+                        library.load_comments(cx);
+                    }
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
@@ -285,7 +373,7 @@ impl Library {
         };
         let tab = selection.tabs.iter().find(|tab| tab.path == file);
         if let Some(Ok(editor)) = tab.and_then(|tab| tab.editor.as_ref()) {
-            selection.comment_status = Self::jump_to_comment(editor, &comment, window, cx);
+            selection.comment_status = Self::jump_to_comment(&editor.state, &comment, window, cx);
         } else {
             selection.pending_comment = Some(comment);
         }
@@ -368,6 +456,7 @@ impl Render for Library {
         div()
             .id("library")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|library, _: &SaveSource, _, cx| library.save_active_file(cx)))
             .size_full()
             .flex()
             .bg(rgb(palette.canvas))
@@ -1003,12 +1092,42 @@ impl Library {
         let file = div()
             .truncate()
             .text_color(rgb(palette.muted))
-            .child(format!("{path} · Temporary draft"));
+            .child(path.clone());
         let editor = selection
             .tabs
             .iter()
             .find(|tab| &tab.path == path)
             .and_then(|tab| tab.editor.as_ref());
+        let mut header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(file);
+        if editor.is_some_and(Result::is_ok) {
+            let saving = self.save_task.is_some();
+            header = header.child(
+                div()
+                    .id("save-file")
+                    .tab_index(3)
+                    .rounded_md()
+                    .px_2()
+                    .py_1()
+                    .focus(move |style| style.bg(rgb(palette.selection)))
+                    .when(!saving, |button| {
+                        button
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(rgb(palette.selection)))
+                    })
+                    .child(if saving { "Saving…" } else { "Save" })
+                    .on_click(cx.listener(|library, _, _, cx| library.save_active_file(cx)))
+                    .on_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                            library.save_active_file(cx);
+                        }
+                    })),
+            );
+        }
         let preview = match editor {
             None => div().child("Loading source…").into_any_element(),
             Some(Err(error)) => div()
@@ -1023,7 +1142,7 @@ impl Library {
                 .flex_1()
                 .min_h(px(0.))
                 .child(
-                    Input::new(editor)
+                    Input::new(&editor.state)
                         .h_full()
                         .appearance(false)
                         .font_family(monospace_font())
@@ -1031,7 +1150,12 @@ impl Library {
                 )
                 .into_any_element(),
         };
-        pane.child(file)
+        pane.child(header)
+            .children(
+                editor
+                    .and_then(|editor| editor.as_ref().ok()?.save_error.clone())
+                    .map(|error| format!("Couldn’t save source: {error}")),
+            )
             .children(selection.comment_status)
             .child(preview)
     }
@@ -1063,6 +1187,11 @@ fn projects_dir() -> Option<PathBuf> {
     config_dir.map(|dir| dir.join("Refract").join("projects"))
 }
 
+fn initialize_app(cx: &mut App) {
+    gpui_component::init(cx);
+    cx.bind_keys([KeyBinding::new("secondary-s", SaveSource, None)]);
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let projects_dir = projects_dir().ok_or_else(|| {
         io::Error::new(
@@ -1071,7 +1200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     })?;
     Application::new().run(move |cx: &mut App| {
-        gpui_component::init(cx);
+        initialize_app(cx);
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -1087,6 +1216,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             |window, cx| {
                 window.set_window_title("Refract · Native Preview");
                 let library = cx.new(|cx| Library::new(projects_dir, window, cx));
+                let close_guard = library.downgrade();
+                window.on_window_should_close(cx, move |_, cx| {
+                    close_guard
+                        .upgrade()
+                        .is_none_or(|library| library.read(cx).save_task.is_none())
+                });
                 cx.new(|cx| Root::new(library, window, cx))
             },
         );
@@ -1108,7 +1243,7 @@ mod tests {
     use std::fs;
 
     #[gpui::test]
-    fn keeps_source_drafts_in_their_tabs_and_restores_library_focus(cx: &mut TestAppContext) {
+    fn saves_source_drafts_and_restores_library_focus(cx: &mut TestAppContext) {
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
         let id = "b3b9ffb5-13c0-4d22-b427-54520347684a";
@@ -1131,13 +1266,14 @@ mod tests {
                 "quote": "abstract",
                 "text": "Check this statement",
                 "resolved": true,
-                "replies": [{"text": "Checked"}]
+            "replies": [{"text": "Checked"}],
+            "anchor": {"start": 3, "end": 11, "prefix": "An ", "suffix": "\n", "sourceHash": "", "status": "attached"}
             }])
             .to_string(),
         )
         .unwrap();
 
-        cx.update(gpui_component::init);
+        cx.update(initialize_app);
         let mut library = None;
         let (_, cx) = cx.add_window_view(|window, cx| {
             let view = cx.new(|cx| Library::new(projects, window, cx));
@@ -1153,7 +1289,7 @@ mod tests {
             let selection = library.read(app).selection.as_ref().expect("open project");
             assert_eq!(selection.project.id, id);
             let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
-            assert_eq!(editor.read(app).value().as_ref(), "A line of LaTeX\n");
+            assert_eq!(editor.state.read(app).value().as_ref(), "A line of LaTeX\n");
         });
         cx.simulate_keystrokes("tab enter");
         cx.update(|_, app| {
@@ -1171,6 +1307,7 @@ mod tests {
                 .unwrap()
                 .as_ref()
                 .unwrap()
+                .state
                 .clone();
             assert_eq!(editor.read(app).value().as_ref(), "An abstract\n");
             let tree_focus = window.focused(app).unwrap();
@@ -1181,6 +1318,15 @@ mod tests {
         });
         cx.simulate_keystrokes("enter");
         cx.simulate_input("A draft");
+        assert_eq!(
+            fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),
+            "An abstract\n"
+        );
+        cx.simulate_keystrokes("secondary-s");
+        assert_eq!(
+            fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),
+            "An abstract\nA draft\n"
+        );
         cx.update(|window, _| window.focus(&tree_focus));
         cx.simulate_keystrokes("tab tab enter");
         cx.update(|_, app| {
@@ -1195,7 +1341,10 @@ mod tests {
             assert_eq!(selection.tabs.len(), 1);
             assert!(selection.tabs[0].open_focus.is_focused(window));
             let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
-            assert_eq!(editor.read(app).value().as_ref(), "An abstract\nA draft\n");
+            assert_eq!(
+                editor.state.read(app).value().as_ref(),
+                "An abstract\nA draft\n"
+            );
         });
         cx.simulate_keystrokes("tab enter");
         cx.update(|window, app| {
@@ -1220,7 +1369,7 @@ mod tests {
             assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));
             let editor = selection.tabs[0].editor.as_ref().unwrap().as_ref().unwrap();
             assert_eq!(
-                editor.read(app).cursor_position(),
+                editor.state.read(app).cursor_position(),
                 gpui_component::input::Position::new(0, 3)
             );
             assert!(selection.comment_status.is_none());
@@ -1235,7 +1384,7 @@ mod tests {
         });
         assert_eq!(
             fs::read_to_string(project.join("sections/abstract.tex")).unwrap(),
-            "An abstract\n"
+            "An abstract\nA draft\n"
         );
     }
 }

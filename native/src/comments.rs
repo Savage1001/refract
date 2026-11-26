@@ -1,8 +1,8 @@
 use crate::{Project, project_directory, read_local_file};
-use serde::{Deserialize, Deserializer, de::Error};
-use serde_json::value::RawValue;
+use serde::{Deserialize, Deserializer, Serialize, de::Error};
+use serde_json::value::{RawValue, to_raw_value};
 use sha2::{Digest, Sha256};
-use std::{io, ops::Range, path::Path};
+use std::{collections::BTreeMap, fmt::Write, io, ops::Range, path::Path};
 
 const COMMENTS_LIMIT: usize = 4 * 1024 * 1024;
 const MAX_MATCHES: usize = 10_000;
@@ -41,10 +41,17 @@ struct Anchor {
 
 pub fn read_comments(projects_dir: &Path, project: &Project) -> io::Result<Vec<Comment>> {
     let folder = project_directory(projects_dir, project)?;
+    match read_comments_file(&folder)? {
+        Some(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        None => Ok(Vec::new()),
+    }
+}
+
+pub(crate) fn read_comments_file(folder: &Path) -> io::Result<Option<Vec<u8>>> {
     let path = folder.join(".refract-comments.json");
     let metadata = match path.symlink_metadata() {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
     if !metadata.is_file() {
@@ -53,8 +60,7 @@ pub fn read_comments(projects_dir: &Path, project: &Project) -> io::Result<Vec<C
             "Invalid comments file",
         ));
     }
-    let bytes = read_local_file(&folder, &path, COMMENTS_LIMIT)?;
-    Ok(serde_json::from_slice(&bytes)?)
+    read_local_file(folder, &path, COMMENTS_LIMIT).map(Some)
 }
 
 impl Comment {
@@ -153,6 +159,167 @@ impl Comment {
     }
 }
 
+pub(crate) fn plan_edit(
+    metadata: &[u8],
+    file: &str,
+    before: &str,
+    after: &str,
+) -> io::Result<Option<Vec<u8>>> {
+    let before = before.replace("\r\n", "\n").replace('\r', "\n");
+    let after = after.replace("\r\n", "\n").replace('\r', "\n");
+    if before == after {
+        return Ok(None);
+    }
+    let before_units: Vec<u16> = before.encode_utf16().collect();
+    let after_units: Vec<u16> = after.encode_utf16().collect();
+    let prefix_len = before_units
+        .iter()
+        .zip(&after_units)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix_len = before_units[prefix_len..]
+        .iter()
+        .rev()
+        .zip(after_units[prefix_len..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let old_end = before_units.len() - suffix_len;
+    let delta = after_units.len() as isize - before_units.len() as isize;
+    let hash = format!("{:x}", Sha256::digest(after.as_bytes()));
+    let mut records: Vec<Box<RawValue>> = serde_json::from_slice(metadata)?;
+    let mut changed = false;
+
+    for record in &mut records {
+        let comment: Comment = serde_json::from_str(record.get())?;
+        let Some(anchor) = &comment.anchor else {
+            continue;
+        };
+        if comment.file != file || anchor.status == "orphaned" {
+            continue;
+        }
+        let selection = comment
+            .locate(&before, &before_units)
+            .and_then(|selection| {
+                if selection.end <= prefix_len {
+                    Some(selection)
+                } else if selection.start >= old_end {
+                    Some(
+                        selection.start.checked_add_signed(delta)?
+                            ..selection.end.checked_add_signed(delta)?,
+                    )
+                } else if prefix_len >= selection.start && old_end <= selection.end {
+                    Some(selection.start..selection.end.checked_add_signed(delta)?)
+                } else {
+                    relocate_after_separate_edits(&comment, anchor, &before, &after, &after_units)
+                }
+            });
+
+        let mut fields: BTreeMap<String, Box<RawValue>> = serde_json::from_str(record.get())?;
+        let updated = selection
+            .filter(|range| !range.is_empty())
+            .and_then(|range| {
+                let quote = String::from_utf16(after_units.get(range.clone())?).ok()?;
+                Some((range, quote))
+            });
+        if let Some((range, quote)) = updated {
+            let saved_anchor = SavedAnchor {
+                start: range.start,
+                end: range.end,
+                prefix: encode_context(&after_units[range.start.saturating_sub(48)..range.start])?,
+                suffix: encode_context(
+                    &after_units[range.end..(range.end + 48).min(after_units.len())],
+                )?,
+                source_hash: &hash,
+                status: "attached",
+            };
+            fields.insert("anchor".into(), to_raw_value(&saved_anchor)?);
+            fields.insert("quote".into(), to_raw_value(&quote)?);
+        } else if let Some(old) = fields.get("anchor") {
+            let mut anchor_fields: BTreeMap<String, Box<RawValue>> =
+                serde_json::from_str(old.get())?;
+            anchor_fields.insert("status".into(), to_raw_value("orphaned")?);
+            fields.insert("anchor".into(), to_raw_value(&anchor_fields)?);
+        }
+        *record = to_raw_value(&fields)?;
+        changed = true;
+    }
+
+    if changed {
+        let bytes = serde_json::to_vec(&records)?;
+        if bytes.len() > COMMENTS_LIMIT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Comment data exceeds the save limit",
+            ));
+        }
+        Ok(Some(bytes))
+    } else {
+        Ok(None)
+    }
+}
+
+fn relocate_after_separate_edits(
+    comment: &Comment,
+    anchor: &Anchor,
+    before: &str,
+    after: &str,
+    units: &[u16],
+) -> Option<Range<usize>> {
+    let before_count = quote_count(before, &comment.quote);
+    if before_count == 0
+        || before_count > MAX_MATCHES
+        || quote_count(after, &comment.quote) != before_count
+    {
+        return None;
+    }
+    let range = comment.locate(after, units)?;
+    let prefix = &anchor.prefix[anchor.prefix.len().saturating_sub(8)..];
+    let suffix = &anchor.suffix[..anchor.suffix.len().min(8)];
+    let left = units.get(range.start.saturating_sub(prefix.len())..range.start)?;
+    let right = units.get(range.end..range.end + suffix.len())?;
+    (left == prefix && right == suffix).then_some(range)
+}
+
+fn quote_count(text: &str, quote: &str) -> usize {
+    if quote.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut rest = text;
+    while let Some(found) = rest.find(quote) {
+        count += 1;
+        if count > MAX_MATCHES {
+            break;
+        }
+        let first = rest[found..].chars().next().expect("a non-empty quote");
+        rest = &rest[found + first.len_utf8()..];
+    }
+    count
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedAnchor<'a> {
+    start: usize,
+    end: usize,
+    prefix: Box<RawValue>,
+    suffix: Box<RawValue>,
+    source_hash: &'a str,
+    status: &'static str,
+}
+
+fn encode_context(units: &[u16]) -> serde_json::Result<Box<RawValue>> {
+    if let Ok(text) = String::from_utf16(units) {
+        return to_raw_value(&text);
+    }
+    let mut text = String::from('"');
+    for unit in units {
+        write!(text, "\\u{unit:04x}").expect("writing to a String cannot fail");
+    }
+    text.push('"');
+    RawValue::from_string(text)
+}
+
 // Electron stores substring context in UTF-16. A context boundary can bisect a surrogate pair.
 fn decode_context<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u16>, D::Error> {
     let raw = Box::<RawValue>::deserialize(deserializer)?;
@@ -234,5 +401,29 @@ mod tests {
             comment.source_position("😀 comments: item\n"),
             Some((0, 12))
         );
+    }
+
+    #[test]
+    fn removing_quoted_text_does_not_move_the_comment_to_a_second_match() {
+        let before = "Start context: item and rest\nAnother item";
+        let after = "Start context:  and rest\nAnother item";
+        let records = serde_json::json!([{
+            "id": "one", "file": "main.tex", "quote": "item", "text": "Clarify this",
+            "anchor": {
+                "start": 15, "end": 19, "prefix": "Start context: ", "suffix": " and rest",
+                "sourceHash": "", "status": "attached",
+            }
+        }]);
+        let updated = plan_edit(
+            &serde_json::to_vec(&records).unwrap(),
+            "main.tex",
+            before,
+            after,
+        )
+        .unwrap()
+        .unwrap();
+        let updated: Vec<Comment> = serde_json::from_slice(&updated).unwrap();
+        assert_eq!(updated[0].anchor.as_ref().unwrap().status, "orphaned");
+        assert_eq!(updated[0].source_position(after), None);
     }
 }

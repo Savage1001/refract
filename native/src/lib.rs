@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::{
     fs::{self, File},
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -114,6 +114,24 @@ fn read_project_entries(root: &Path, parent: &str) -> io::Result<Vec<ProjectEntr
 }
 
 pub fn read_source(projects_dir: &Path, project: &Project, file: &str) -> io::Result<String> {
+    let project_dir = project_directory(projects_dir, project)?;
+    let target = source_path(&project_dir, file)?;
+    let source = read_local_file(&project_dir, &target, SOURCE_LIMIT)?;
+    if !is_source_text(&source) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "This file cannot be previewed as text.",
+        ));
+    }
+    String::from_utf8(source).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "This file cannot be previewed as text.",
+        )
+    })
+}
+
+fn source_path(project_dir: &Path, file: &str) -> io::Result<PathBuf> {
     let parts = file.split(['/', '\\']);
     if !parts.clone().all(valid_project_component) {
         return Err(io::Error::new(
@@ -121,35 +139,135 @@ pub fn read_source(projects_dir: &Path, project: &Project, file: &str) -> io::Re
             "Invalid project file path",
         ));
     }
-    let project_dir = project_directory(projects_dir, project)?;
-    let mut target = project_dir.clone();
+    let mut target = project_dir.to_owned();
     for part in parts {
         target.push(part);
         if fs::symlink_metadata(&target)?.is_symlink() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Linked files cannot be previewed",
+                "Linked files cannot be opened",
             ));
         }
     }
-    let source = read_local_file(&project_dir, &target, SOURCE_LIMIT)?;
-    let invalid_text = || {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "This file cannot be previewed as text.",
-        )
-    };
-    if source.starts_with(b"%PDF-")
+    Ok(target)
+}
+
+fn is_source_text(source: &[u8]) -> bool {
+    !(source.starts_with(b"%PDF-")
         || source.starts_with(b"\x7fELF")
         || source.starts_with(b"MZ")
         || source.starts_with(b"PK\x03\x04")
         || source
             .iter()
-            .any(|&byte| matches!(byte, 0..=8 | 11 | 14..=31 | 127))
-    {
-        return Err(invalid_text());
+            .any(|&byte| matches!(byte, 0..=8 | 11 | 14..=31 | 127)))
+}
+
+pub fn save_source(
+    projects_dir: &Path,
+    project: &Project,
+    file: &str,
+    expected: &str,
+    edited: &str,
+) -> io::Result<()> {
+    let folder = project_directory(projects_dir, project)?;
+    let target = source_path(&folder, file)?;
+    let conflict = || {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "The file changed on disk after it was opened.",
+        )
+    };
+    if read_local_file(&folder, &target, SOURCE_LIMIT)? != expected.as_bytes() {
+        return Err(conflict());
     }
-    String::from_utf8(source).map_err(|_| invalid_text())
+    if expected == edited {
+        return Ok(());
+    }
+    if edited.len() > SOURCE_LIMIT
+        || !is_source_text(edited.as_bytes())
+        || !is_source_text(expected.as_bytes())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "The draft must be text within the preview size limit.",
+        ));
+    }
+
+    let comment_path = folder.join(".refract-comments.json");
+    let original_comments = comments::read_comments_file(&folder)?;
+    let next_comments = match &original_comments {
+        Some(bytes) => comments::plan_edit(bytes, &file.replace('\\', "/"), expected, edited)?,
+        None => None,
+    };
+    let staged = stage_file(&target, edited.as_bytes())?;
+    let staged_comments = next_comments
+        .as_deref()
+        .map(|bytes| stage_file(&comment_path, bytes))
+        .transpose()?;
+    let rollback = if staged_comments.is_some() {
+        Some(stage_file(&target, expected.as_bytes())?)
+    } else {
+        None
+    };
+    let comments_conflict = || {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "Comments changed on disk during the save.",
+        )
+    };
+    if comments::read_comments_file(&folder)? != original_comments {
+        return Err(comments_conflict());
+    }
+    let target = source_path(&folder, file)?;
+    if read_local_file(&folder, &target, SOURCE_LIMIT)? != expected.as_bytes() {
+        return Err(conflict());
+    }
+
+    staged.persist(&target).map_err(|error| error.error)?;
+    if let (Some(staged_comments), Some(rollback)) = (staged_comments, rollback) {
+        let commit_comments = (|| {
+            if comments::read_comments_file(&folder)? != original_comments {
+                return Err(comments_conflict());
+            }
+            staged_comments
+                .persist(comment_path)
+                .map(|_| ())
+                .map_err(|error| error.error)
+        })();
+        if let Err(error) = commit_comments {
+            if source_path(&folder, file)
+                .and_then(|target| read_local_file(&folder, &target, SOURCE_LIMIT))
+                .is_ok_and(|bytes| bytes == edited.as_bytes())
+                && rollback.persist(target).is_ok()
+            {
+                return Err(error);
+            }
+            return Err(io::Error::other(format!(
+                "Source was saved, but the comment update and source rollback failed: {error}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn stage_file(target: &Path, content: &[u8]) -> io::Result<tempfile::NamedTempFile> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing project folder"))?;
+    let permissions = fs::metadata(target)?.permissions();
+    if permissions.readonly() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "The file is read-only.",
+        ));
+    }
+    let mut file = tempfile::Builder::new()
+        .prefix(".refract-save-")
+        .tempfile_in(parent)?;
+    file.write_all(content)?;
+    file.as_file().set_permissions(permissions)?;
+    file.as_file().sync_all()?;
+    Ok(file)
 }
 
 fn project_directory(projects_dir: &Path, project: &Project) -> io::Result<PathBuf> {
@@ -367,5 +485,69 @@ mod tests {
                 .kind(),
             io::ErrorKind::InvalidData
         );
+    }
+
+    #[test]
+    fn saves_source_and_updates_existing_comment_anchors() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = write_metadata(
+            root.path(),
+            LEGACY_ID,
+            json!({"id": LEGACY_ID, "name": "Paper"}),
+        );
+        let source = folder.join("main.tex");
+        let comments_path = folder.join(".refract-comments.json");
+        let before = "😀 An abstract\r\n";
+        let after = "Added\r\n😀 An abstract\r\n";
+        fs::write(&source, before).unwrap();
+        fs::write(
+            &comments_path,
+            json!([{
+                "id": "one", "file": "main.tex", "quote": "abstract", "text": "Review",
+                "extraMetadata": {"keep": true},
+                "anchor": {
+                    "start": 6, "end": 14, "prefix": "😀 An ", "suffix": "\n",
+                    "sourceHash": "", "status": "attached",
+                }
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let project = list_projects(root.path()).unwrap().pop().unwrap();
+
+        save_source(root.path(), &project, "main.tex", before, after).unwrap();
+        assert_eq!(fs::read_to_string(&source).unwrap(), after);
+        let raw_comments = fs::read(&comments_path).unwrap();
+        let metadata: serde_json::Value = serde_json::from_slice(&raw_comments).unwrap();
+        assert_eq!(metadata[0]["anchor"]["start"], 12);
+        assert_eq!(metadata[0]["extraMetadata"]["keep"], true);
+        let comments = comments::read_comments(root.path(), &project).unwrap();
+        assert_eq!(comments[0].source_position(after), Some((1, 5)));
+
+        fs::write(&source, "An external edit").unwrap();
+        assert_eq!(
+            save_source(root.path(), &project, "main.tex", after, "A stale draft")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_to_string(source).unwrap(), "An external edit");
+        assert_eq!(fs::read(comments_path).unwrap(), raw_comments);
+    }
+
+    #[test]
+    fn leaves_source_untouched_when_comments_cannot_be_loaded() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = write_metadata(
+            root.path(),
+            LEGACY_ID,
+            json!({"id": LEGACY_ID, "name": "Paper"}),
+        );
+        let source = folder.join("main.tex");
+        fs::write(&source, "Original").unwrap();
+        fs::write(folder.join(".refract-comments.json"), "invalid JSON").unwrap();
+        let project = list_projects(root.path()).unwrap().pop().unwrap();
+        assert!(save_source(root.path(), &project, "main.tex", "Original", "Edited").is_err());
+        assert_eq!(fs::read_to_string(source).unwrap(), "Original");
     }
 }
