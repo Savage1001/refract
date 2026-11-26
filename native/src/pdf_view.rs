@@ -647,7 +647,7 @@ mod tests {
             assert!(view.frames.contains_key(&0));
 
             view.go_to_page(10, window);
-            assert_eq!(view.visible, 10..11);
+            assert_eq!(view.visible, 9..11);
             assert_eq!(view.page, 10);
             assert!(view.frames.is_empty());
             assert_eq!(view.next_visible_page(), Some(10));

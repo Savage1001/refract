@@ -4,7 +4,7 @@ use super::{
 use gpui::{Context, ObjectFit, RenderImage, Window, div, img, prelude::*, px, rgb};
 use refract_native::{
     Project,
-    file_preview::{ImageKind, Preview, inspect_file},
+    file_preview::{Preview, inspect_file},
 };
 use std::{io, path::Path, sync::Arc};
 

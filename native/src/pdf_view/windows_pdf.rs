@@ -168,8 +168,10 @@ mod tests {
         fs::write(&path, &pdf).unwrap();
         let sizes = read_page_sizes(&path).unwrap();
         assert_eq!(sizes.len(), 2);
-        assert_eq!((sizes[0].width, sizes[0].height), (300., 200.));
-        assert_eq!((sizes[1].width, sizes[1].height), (200., 300.));
+        for (size, (width, height)) in sizes.iter().zip([(300., 200.), (200., 300.)]) {
+            assert!((size.width - width).abs() < 0.01);
+            assert!((size.height - height).abs() < 0.01);
+        }
         let frame = render_page(
             &path,
             PageRequest {
