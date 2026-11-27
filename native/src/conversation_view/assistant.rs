@@ -9,12 +9,13 @@ use refract_native::{
     Project, ProjectEntry,
     assistant_launch::{CodexCli, OpenCodeCli, discover_codex_cli, discover_opencode_cli},
     assistant_preferences::{AssistantConnection, load_assistant_preferences},
-    assistant_protocol::CodexThreadOptions,
+    assistant_protocol::{CodexThreadOptions, CodexToolConnection},
     assistant_runtime::{
         CodexTurnRequest, CodexUpdate,
-        opencode::{OpenCodeTurnRequest, run_opencode},
+        opencode::{OpenCodeToolConnection, OpenCodeTurnRequest, run_opencode},
         run_codex,
     },
+    assistant_tools::{AssistantToolServer, AssistantTools, claims_successful_build},
     conversation::{
         Attachment, Conversation, ConversationId, Message, Provider, StartTurn,
         begin_conversation_turn,
@@ -166,11 +167,12 @@ struct CompletedTurn {
     tree: io::Result<Vec<ProjectEntry>>,
     versions: io::Result<Vec<Version>>,
     checkpoint_error: Option<io::Error>,
+    project: Project,
 }
 
 fn run_turn(
     work: TurnWork,
-    cancel: &AtomicBool,
+    cancel: &Arc<AtomicBool>,
     notices: async_channel::Sender<TurnNotice>,
 ) -> io::Result<CompletedTurn> {
     let mode = match work.provider.kind() {
@@ -185,6 +187,16 @@ fn run_turn(
     })?;
     let preferences = load_assistant_preferences(profile, mode)?;
     snapshot_project(&work.projects, &work.project)?;
+    let tools = AssistantTools::new(
+        work.projects.clone(),
+        work.project.clone(),
+        work.id.clone(),
+        cancel.clone(),
+    );
+    let engine_instructions = tools.engine_instructions();
+    let instructions = tools.instructions();
+    let successful_build = tools.build_status();
+    let server = AssistantToolServer::start(tools)?;
     let (mut turn, context) = begin_conversation_turn(
         &work.projects,
         &work.project,
@@ -194,7 +206,7 @@ fn run_turn(
             prompt: &work.prompt,
             attachments: &work.attachments,
             codex_account: None,
-            build_instructions: None,
+            build_instructions: Some(&instructions),
         },
     )?;
     let _ = notices.try_send(TurnNotice::Saved);
@@ -209,61 +221,96 @@ fn run_turn(
             let _ = notices.try_send(TurnNotice::Progress(progress));
         }
     };
-    let (result, session) = match work.provider {
-        InstalledProvider::Codex(cli) => {
-            match run_codex(
-                cli.app_server_command(&context.workspace),
-                CodexTurnRequest {
-                    account_connection: false,
-                    session_id: context.session_id.as_deref(),
-                    prompt: &context.prompt,
-                    images: &context.images,
-                    options: CodexThreadOptions {
-                        model: preferences.model.as_deref(),
-                        reasoning_effort: preferences.reasoning_effort.as_deref(),
-                        fast_mode: preferences.fast_mode,
-                        ..Default::default()
+    let mut execute =
+        |prompt: &str, session_id: Option<&str>, images: &[PathBuf]| match &work.provider {
+            InstalledProvider::Codex(cli) => {
+                match run_codex(
+                    cli.app_server_command(&context.workspace),
+                    CodexTurnRequest {
+                        account_connection: false,
+                        session_id,
+                        prompt,
+                        images,
+                        options: CodexThreadOptions {
+                            model: preferences.model.as_deref(),
+                            reasoning_effort: preferences.reasoning_effort.as_deref(),
+                            fast_mode: preferences.fast_mode,
+                            developer_instructions: Some(&engine_instructions),
+                            tools: Some(CodexToolConnection {
+                                url: server.url(),
+                                token: server.token(),
+                            }),
+                        },
                     },
-                },
-                cancel,
-                &mut update,
-            ) {
-                Ok(reply) => (Ok(reply.text), Some(reply.session_id)),
-                Err(error) => (Err(error.message), error.session_id),
+                    cancel,
+                    &mut update,
+                ) {
+                    Ok(reply) => (Ok(reply.text), Some(reply.session_id)),
+                    Err(error) => (Err(error.message), error.session_id),
+                }
             }
-        }
-        InstalledProvider::OpenCode(cli) => {
-            match run_opencode(
-                &cli,
-                OpenCodeTurnRequest {
-                    cwd: &context.workspace,
-                    session_id: context.session_id.as_deref(),
-                    prompt: &context.prompt,
-                    images: &context.images,
-                    model: preferences.model.as_deref(),
-                    variant: preferences.reasoning_effort.as_deref(),
-                    tools: None,
-                },
-                cancel,
-                &mut update,
-            ) {
-                Ok(reply) => (Ok(reply.text), reply.session_id),
-                Err(error) => (Err(error.message), error.session_id),
+            InstalledProvider::OpenCode(cli) => {
+                match run_opencode(
+                    cli,
+                    OpenCodeTurnRequest {
+                        cwd: &context.workspace,
+                        session_id,
+                        prompt,
+                        images,
+                        model: preferences.model.as_deref(),
+                        variant: preferences.reasoning_effort.as_deref(),
+                        tools: Some(OpenCodeToolConnection {
+                            url: server.url(),
+                            token: server.token(),
+                        }),
+                    },
+                    cancel,
+                    &mut update,
+                ) {
+                    Ok(reply) => (Ok(reply.text), reply.session_id),
+                    Err(error) => (Err(error.message), error.session_id),
+                }
             }
-        }
+        };
+    let (mut result, mut session) = execute(
+        &context.prompt,
+        context.session_id.as_deref(),
+        &context.images,
+    );
+    let unverified_claim = |result: &Result<String, String>| {
+        !successful_build.load(Ordering::Acquire)
+            && result.as_deref().is_ok_and(claims_successful_build)
     };
+    if mode == AssistantConnection::CodexCli && unverified_claim(&result) {
+        if let Some(reference) = session.as_deref() {
+            let (corrected, updated_session) = execute(
+                "Refract recorded no successful build for this turn. If the user requested compilation, call the Refract build tool and report its actual result. Otherwise correct the claim without building.",
+                Some(reference),
+                &[],
+            );
+            result = corrected;
+            if updated_session.is_some() {
+                session = updated_session;
+            }
+        }
+        if unverified_claim(&result) {
+            result = Ok("I couldn’t verify a successful Refract build for this turn.".into());
+        }
+    }
     let history = turn.finish(
         result.as_deref().map_err(String::as_str),
         session.as_deref(),
     );
-    let tree = project_tree(&work.projects, &work.project);
-    let versions = snapshot_project(&work.projects, &work.project)
-        .and_then(|_| list_versions(&work.projects, &work.project));
+    let project = server.finish().unwrap_or(work.project);
+    let tree = project_tree(&work.projects, &project);
+    let versions = snapshot_project(&work.projects, &project)
+        .and_then(|_| list_versions(&work.projects, &project));
     Ok(CompletedTurn {
         history,
         tree,
         versions,
         checkpoint_error,
+        project,
     })
 }
 
@@ -412,6 +459,7 @@ impl Library {
         }
         selection.tree = Some(result.tree);
         selection.versions = Some(result.versions);
+        selection.project = result.project;
         selection.build.invalidate();
         for tab in &mut selection.tabs {
             tab.editor = None;

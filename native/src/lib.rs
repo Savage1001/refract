@@ -9,6 +9,7 @@ pub mod assistant_launch;
 pub mod assistant_preferences;
 pub mod assistant_protocol;
 pub mod assistant_runtime;
+pub mod assistant_tools;
 pub mod comments;
 pub mod conversation;
 pub mod editor_find;

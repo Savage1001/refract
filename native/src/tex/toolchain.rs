@@ -61,7 +61,7 @@ impl TexToolchain {
         self.executable("synctex")
     }
 
-    pub(super) fn executable(&self, name: &str) -> PathBuf {
+    pub(crate) fn executable(&self, name: &str) -> PathBuf {
         tex_executable(&self.bin, name)
     }
 }

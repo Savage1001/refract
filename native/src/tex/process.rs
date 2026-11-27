@@ -9,12 +9,12 @@ use std::{
 
 const PROCESS_LOG_LIMIT: usize = 100_000;
 
-pub(super) struct ProcessOutput {
-    pub(super) code: Option<i32>,
-    pub(super) log: String,
+pub(crate) struct ProcessOutput {
+    pub(crate) code: Option<i32>,
+    pub(crate) log: String,
 }
 
-pub(super) fn run_process(command: Command, cancel: &AtomicBool) -> io::Result<ProcessOutput> {
+pub(crate) fn run_process(command: Command, cancel: &AtomicBool) -> io::Result<ProcessOutput> {
     if cancel.load(Ordering::Relaxed) {
         return Ok(ProcessOutput {
             code: None,
