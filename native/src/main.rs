@@ -14,7 +14,9 @@ use refract_native::versions::{
     Version, list_versions, recover_project_restore, restore_project_version, restore_version_file,
     retry_retained_restore_stages, snapshot_project,
 };
-use refract_native::workspace_layout::{Divider, Pane, PaneVisibility, WorkspaceLayout};
+use refract_native::workspace_layout::{
+    Divider, Pane, PaneVisibility, WORKSPACE_HEADER_HEIGHT, WorkspaceLayout,
+};
 use refract_native::{Project, ProjectEntry, list_projects, project_tree, save_source};
 use std::{
     cell::RefCell,
@@ -1636,7 +1638,7 @@ impl Library {
             .child(
                 div()
                     .flex()
-                    .h(px(42.))
+                    .h(px(WORKSPACE_HEADER_HEIGHT))
                     .flex_none()
                     .items_center()
                     .border_b_1()
@@ -1740,6 +1742,7 @@ impl Library {
                                     pane.child(self.conversation_pane(
                                         selection,
                                         visible.editor,
+                                        window,
                                         palette,
                                         cx,
                                     ))

@@ -1,16 +1,18 @@
-use super::{Library, Palette, Selection};
+use super::{Library, Palette, Selection, asset_image};
 use gpui::{
-    Context, FocusHandle, Focusable, FontWeight, KeyDownEvent, ScrollHandle, SharedString,
-    Subscription, Task, Window, div, prelude::*, px, rgb, svg,
+    Context, FocusHandle, Focusable, FontWeight, KeyDownEvent, ObjectFit, ScrollHandle,
+    SharedString, Subscription, Task, Window, div, img, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
+    WindowExt,
     input::{Input, InputEvent, InputState, SelectAll},
     tooltip::Tooltip,
 };
 use refract_native::conversation::{
-    Conversation, ConversationId, ConversationSummary, Message, create_conversation,
-    list_conversations, load_conversation, rename_conversation,
+    Attachment, Conversation, ConversationId, ConversationSummary, Message, create_conversation,
+    list_conversations, load_conversation, read_conversation_image, rename_conversation,
 };
+use refract_native::workspace_layout::Divider;
 use std::{collections::HashMap, io};
 
 #[derive(Default)]
@@ -21,6 +23,7 @@ pub(super) struct ConversationPane {
     rows: Option<io::Result<Vec<ConversationRow>>>,
     load_task: Option<Task<()>>,
     list_task: Option<Task<()>>,
+    image_task: Option<Task<()>>,
     scroll: ScrollHandle,
     welcome_dismissed: bool,
     draft: Option<NameDraft>,
@@ -48,6 +51,7 @@ enum Change {
 impl ConversationPane {
     fn display(&mut self, id: ConversationId, history: Conversation) {
         self.active = id;
+        self.image_task = None;
         self.scroll = ScrollHandle::new();
         if let Some(index) = history
             .messages
@@ -91,6 +95,60 @@ impl ConversationPane {
 }
 
 impl Library {
+    fn preview_conversation_image(
+        &mut self,
+        image: Attachment,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selection) = &mut self.selection else {
+            return;
+        };
+        let project = selection.project.clone();
+        let path = self.projects_dir.clone();
+        let sequence = self.project_open_sequence;
+        let token = image.token.clone();
+        let load = cx.background_executor().spawn(async move {
+            let (kind, bytes) = read_conversation_image(&path, &project, &token)?;
+            asset_image::decode(bytes, kind)
+        });
+        selection.conversation.image_task = Some(cx.spawn_in(window, async move |library, cx| {
+            let result = load.await;
+            let _ = library.update_in(cx, |library, window, cx| {
+                if library.project_open_sequence != sequence {
+                    return;
+                }
+                let Some(selection) = &mut library.selection else {
+                    return;
+                };
+                selection.conversation.image_task = None;
+                match result {
+                    Ok(bitmap) => window.open_dialog(cx, move |dialog, window, _| {
+                        let viewport = window.viewport_size();
+                        let release = bitmap.clone();
+                        dialog
+                            .title(image.name.clone())
+                            .width(viewport.width * 0.9)
+                            .child(
+                                img(bitmap.clone())
+                                    .size_full()
+                                    .h(viewport.height * 0.7)
+                                    .object_fit(ObjectFit::Contain),
+                            )
+                            .on_close(move |_, window, _| {
+                                let _ = window.drop_image(release.clone());
+                            })
+                    }),
+                    Err(error) => {
+                        selection.conversation.error =
+                            Some(format!("Couldn’t preview {}. {error}", image.name));
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
     pub(super) fn load_project_conversation(&mut self, id: ConversationId, cx: &mut Context<Self>) {
         let Some(selection) = &mut self.selection else {
             return;
@@ -429,10 +487,25 @@ impl Library {
         &self,
         selection: &Selection,
         editor_shown: bool,
+        window: &Window,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let pane = &selection.conversation;
+        let has_messages = pane.history.as_ref().is_some_and(|chat| {
+            chat.messages.iter().any(|message| {
+                matches!(
+                    message,
+                    Message::User { .. } | Message::Assistant { .. } | Message::Error { .. }
+                )
+            })
+        });
+        let viewport = window.viewport_size();
+        let height = self.workspace_layout.chat_height(
+            f32::from(viewport.width),
+            f32::from(viewport.height),
+            has_messages,
+        );
         let header = div()
             .h(px(30.))
             .flex()
@@ -524,12 +597,14 @@ impl Library {
                 conversation
                     .messages
                     .iter()
-                    .map(|message| message_content(message, palette)),
+                    .enumerate()
+                    .map(|(index, message)| message_content(index, message, palette, cx)),
             ),
         };
         div()
             .id("conversation")
             .debug_selector(|| "conversation".into())
+            .relative()
             .flex()
             .flex_col()
             .mx_4()
@@ -540,9 +615,7 @@ impl Library {
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
-            .when(editor_shown, |pane| {
-                pane.h(px(280.)).max_h(gpui::relative(0.65)).flex_none()
-            })
+            .when(editor_shown, |panel| panel.h(px(height)).flex_none())
             .when(!editor_shown, |pane| pane.flex_1().min_h(px(0.)).mt_4())
             .child(header)
             .children(
@@ -551,6 +624,9 @@ impl Library {
                     .map(|error| div().text_color(rgb(palette.warning)).child(error)),
             )
             .child(history)
+            .when(editor_shown, |panel| {
+                panel.child(self.workspace_divider(Divider::Chat, height, palette, cx))
+            })
     }
 }
 
@@ -581,8 +657,18 @@ fn chat_button(
         )
 }
 
-fn message_content(message: &Message, palette: Palette) -> impl IntoElement {
-    let block = div().my_2().rounded(px(8.)).py(px(10.)).text_size(px(13.));
+fn message_content(
+    index: usize,
+    message: &Message,
+    palette: Palette,
+    cx: &Context<Library>,
+) -> impl IntoElement {
+    let block = div()
+        .id(index)
+        .my_2()
+        .rounded(px(8.))
+        .py(px(10.))
+        .text_size(px(13.));
     match message {
         Message::User { text, attachments } => block
             .ml_6()
@@ -594,20 +680,11 @@ fn message_content(message: &Message, palette: Palette) -> impl IntoElement {
                     .as_ref()
                     .filter(|files| !files.is_empty())
                     .map(|files| {
-                        div()
-                            .mt_2()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .children(files.iter().map(|file| {
-                                div()
-                                    .rounded_md()
-                                    .px_2()
-                                    .py_1()
-                                    .bg(rgb(palette.surface))
-                                    .text_color(rgb(palette.muted))
-                                    .child(file.name.clone())
-                            }))
+                        div().mt_2().flex().flex_wrap().gap_2().children(
+                            files
+                                .iter()
+                                .map(|file| attachment_preview(file, palette, cx)),
+                        )
                     }),
             ),
         Message::Assistant { text } => block.pr_3().child(text.clone()),
@@ -632,7 +709,42 @@ fn message_content(message: &Message, palette: Palette) -> impl IntoElement {
                 .child(format!("{} → {}", provider_name(from), provider_name(to)))
                 .child(div().h(px(1.)).flex_1().bg(rgb(palette.border)))
         }
-        Message::Unsupported => div(),
+        Message::Unsupported => block.hidden(),
+    }
+}
+
+fn attachment_preview(
+    file: &Attachment,
+    palette: Palette,
+    cx: &Context<Library>,
+) -> impl IntoElement {
+    let row = div().id(SharedString::from(file.token.clone()));
+    let image = file
+        .token
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| matches!(extension, "png" | "jpg" | "jpeg" | "webp"));
+    if image {
+        let file = file.clone();
+        let title = file.name.clone();
+        let tip = format!("Preview {title}");
+        row.child(
+            chat_button(
+                "preview-attachment",
+                palette,
+                cx,
+                move |library, window, cx| {
+                    library.preview_conversation_image(file.clone(), window, cx)
+                },
+            )
+            .px_2()
+            .py_1()
+            .border_1()
+            .border_color(rgb(palette.input_border))
+            .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+            .child(title),
+        )
+    } else {
+        row.text_size(px(12.)).child(file.name.clone())
     }
 }
 

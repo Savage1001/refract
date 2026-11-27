@@ -8,6 +8,8 @@ use std::{
 const COMPACT_WIDTH: f32 = 1200.;
 const MIN_EDITOR_WIDTH: f32 = 300.;
 const PDF_CLEARANCE: f32 = 292.;
+pub const WORKSPACE_HEADER_HEIGHT: f32 = 42.;
+const MIN_CHAT_HEIGHT: f32 = 220.;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pane {
@@ -20,6 +22,7 @@ pub enum Pane {
 pub enum Divider {
     Sidebar,
     Editor,
+    Chat,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -91,6 +94,7 @@ pub struct WorkspaceLayout {
     compact_preview: bool,
     sidebar_width: Option<f32>,
     editor_width: Option<f32>,
+    chat_height: Option<f32>,
 }
 
 impl WorkspaceLayout {
@@ -177,16 +181,28 @@ impl WorkspaceLayout {
         )
     }
 
-    pub fn resize(&mut self, divider: Divider, width: f32, viewport: f32) {
+    pub fn chat_height(&self, width: f32, height: f32, has_messages: bool) -> f32 {
+        let fraction = if Self::compact(width) { 0.55 } else { 0.65 };
+        let maximum = ((height - WORKSPACE_HEADER_HEIGHT) * fraction).max(MIN_CHAT_HEIGHT);
+        self.chat_height
+            .unwrap_or(if has_messages { 380. } else { 280. })
+            .clamp(MIN_CHAT_HEIGHT, maximum)
+    }
+
+    pub fn resize(&mut self, divider: Divider, length: f32, viewport: f32) {
         match divider {
             Divider::Sidebar => {
                 let maximum = (viewport * 0.4).floor().max(150.);
-                self.sidebar_width = Some(width.clamp(150., maximum));
+                self.sidebar_width = Some(length.clamp(150., maximum));
             }
             Divider::Editor => {
                 let maximum =
                     (viewport - self.sidebar_width(viewport) - PDF_CLEARANCE).max(MIN_EDITOR_WIDTH);
-                self.editor_width = Some(width.clamp(MIN_EDITOR_WIDTH, maximum));
+                self.editor_width = Some(length.clamp(MIN_EDITOR_WIDTH, maximum));
+            }
+            Divider::Chat => {
+                let maximum = (viewport - WORKSPACE_HEADER_HEIGHT - 100.).max(MIN_CHAT_HEIGHT);
+                self.chat_height = Some(length.clamp(MIN_CHAT_HEIGHT, maximum));
             }
         }
     }
@@ -209,6 +225,18 @@ mod tests {
         assert_eq!(layout.editor_width(1440.), 300.);
         layout.sidebar_collapsed = true;
         assert_eq!(layout.sidebar_width(1440.), 56.);
+    }
+
+    #[test]
+    fn chat_height_tracks_history_and_compact_limits_until_resized() {
+        let mut layout = WorkspaceLayout::default();
+        assert_eq!(layout.chat_height(1440., 900., false), 280.);
+        assert_eq!(layout.chat_height(1440., 900., true), 380.);
+        layout.resize(Divider::Chat, 440., 900.);
+        assert_eq!(layout.chat_height(1440., 900., true), 440.);
+        assert!((layout.chat_height(900., 650., true) - 334.4).abs() < 0.001);
+        layout.resize(Divider::Chat, 40., 650.);
+        assert_eq!(layout.chat_height(900., 650., false), MIN_CHAT_HEIGHT);
     }
 
     #[test]

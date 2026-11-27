@@ -4,7 +4,7 @@ use crate::{
     project_management::{has_one_link, is_link},
     stage_file,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
     fs,
@@ -13,6 +13,12 @@ use std::{
 };
 
 const MAX_HISTORY_BYTES: u64 = 64 * 1024 * 1024;
+const CHATS_DIRECTORY: &str = ".refract-chats";
+
+mod attachments;
+pub use attachments::{
+    MAX_ATTACHMENTS, attach_conversation_files, attach_conversation_image, read_conversation_image,
+};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ConversationId(String);
@@ -78,7 +84,7 @@ pub enum Message {
     Unsupported,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Attachment {
     pub token: String,
     pub name: String,
@@ -134,7 +140,7 @@ pub fn list_conversations(
     let root = checked_project_directory(projects_dir, project)?;
     let default = ConversationId::default();
     let mut conversations = vec![load(&root, &default)?.summary(default)];
-    let dir = match conversations_dir(&root, false) {
+    let dir = match private_directory(&root, CHATS_DIRECTORY, false) {
         Ok(dir) => dir,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(conversations),
         Err(error) => return Err(error),
@@ -165,7 +171,7 @@ pub fn create_conversation(projects_dir: &Path, project: &Project) -> io::Result
     let parent = path.parent().expect("chat path has a parent directory");
     let mut staged = tempfile::NamedTempFile::new_in(parent)?;
     staged.write_all(br#"{"sessionId":null,"messages":[]}"#)?;
-    conversations_dir(&root, false)?;
+    private_directory(&root, CHATS_DIRECTORY, false)?;
     staged
         .persist_noclobber(path)
         .map_err(|error| error.error)?;
@@ -217,8 +223,8 @@ pub fn rename_conversation(
     Ok(())
 }
 
-fn conversations_dir(root: &Path, create: bool) -> io::Result<PathBuf> {
-    let dir = root.join(".refract-chats");
+fn private_directory(root: &Path, name: &str, create: bool) -> io::Result<PathBuf> {
+    let dir = root.join(name);
     if create {
         match fs::create_dir(&dir) {
             Ok(()) => {}
@@ -230,7 +236,7 @@ fn conversations_dir(root: &Path, create: bool) -> io::Result<PathBuf> {
     if !metadata.is_dir() || is_link(&metadata) || dir.canonicalize()? != dir {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Invalid private chat directory",
+            "Invalid private project directory",
         ));
     }
     Ok(dir)
@@ -240,7 +246,8 @@ fn conversation_file(root: &Path, id: &ConversationId, create_dir: bool) -> io::
     if id.is_default() {
         Ok(root.join(".refract-chat.json"))
     } else {
-        Ok(conversations_dir(root, create_dir)?.join(format!("{}.json", id.as_str())))
+        Ok(private_directory(root, CHATS_DIRECTORY, create_dir)?
+            .join(format!("{}.json", id.as_str())))
     }
 }
 

@@ -9,7 +9,7 @@ use refract_native::workspace_layout::{Divider, Pane, PaneVisibility, WorkspaceL
 pub(super) struct DividerDrag {
     divider: Divider,
     origin: Pixels,
-    width: f32,
+    length: f32,
 }
 
 struct DividerGhost;
@@ -233,23 +233,33 @@ impl Library {
     pub(super) fn workspace_divider(
         &self,
         divider: Divider,
-        width: f32,
+        length: f32,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let (id, label) = match divider {
             Divider::Sidebar => ("sidebar-resize", "Resize sidebar"),
             Divider::Editor => ("workspace-resize", "Resize editor and PDF"),
+            Divider::Chat => ("chat-resize", "Resize chat"),
         };
+        let horizontal = divider == Divider::Chat;
         div()
             .id(id)
             .debug_selector(|| id.to_owned())
             .tab_index(4)
-            .w(px(6.))
-            .h_full()
             .flex_none()
-            .mx(px(-3.))
-            .cursor_col_resize()
+            .when(horizontal, |handle| {
+                handle
+                    .absolute()
+                    .top(px(-3.))
+                    .left_0()
+                    .right_0()
+                    .h(px(6.))
+                    .cursor_row_resize()
+            })
+            .when(!horizontal, |handle| {
+                handle.w(px(6.)).h_full().mx(px(-3.)).cursor_col_resize()
+            })
             .hover(move |style| style.bg(rgb(palette.selection)))
             .focus(move |style| style.bg(rgb(palette.focus)))
             .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
@@ -258,8 +268,12 @@ impl Library {
                 cx.listener(move |view, event: &MouseDownEvent, _, _| {
                     view.divider_drag = Some(DividerDrag {
                         divider,
-                        origin: event.position.x,
-                        width,
+                        origin: if horizontal {
+                            event.position.y
+                        } else {
+                            event.position.x
+                        },
+                        length,
                     });
                 }),
             )
@@ -269,12 +283,15 @@ impl Library {
                     if let Some(drag) = &view.divider_drag
                         && drag.divider == divider
                     {
-                        let target = drag.width + f32::from(event.event.position.x - drag.origin);
-                        view.workspace_layout.resize(
-                            divider,
-                            target,
-                            f32::from(window.viewport_size().width),
-                        );
+                        let viewport = window.viewport_size();
+                        let (delta, extent) = if horizontal {
+                            (drag.origin - event.event.position.y, viewport.height)
+                        } else {
+                            (event.event.position.x - drag.origin, viewport.width)
+                        };
+                        let target = drag.length + f32::from(delta);
+                        view.workspace_layout
+                            .resize(divider, target, f32::from(extent));
                         cx.notify();
                     }
                 },
@@ -288,16 +305,19 @@ impl Library {
                 cx.listener(|view, _, _, _| view.divider_drag = None),
             )
             .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
-                let delta = match event.keystroke.key.as_str() {
-                    "left" => -10.,
-                    "right" => 10.,
+                let delta = match (horizontal, event.keystroke.key.as_str()) {
+                    (false, "left") | (true, "down") => -10.,
+                    (false, "right") | (true, "up") => 10.,
                     _ => return,
                 };
-                view.workspace_layout.resize(
-                    divider,
-                    width + delta,
-                    f32::from(window.viewport_size().width),
-                );
+                let viewport = window.viewport_size();
+                let extent = if horizontal {
+                    viewport.height
+                } else {
+                    viewport.width
+                };
+                view.workspace_layout
+                    .resize(divider, length + delta, f32::from(extent));
                 cx.stop_propagation();
                 cx.notify();
             }))
