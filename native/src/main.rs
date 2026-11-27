@@ -310,15 +310,11 @@ impl Library {
         self.entry_menu = None;
         self.project_open_sequence = self.project_open_sequence.wrapping_add(1);
         let file = project.root_file().replace('\\', "/");
-        let expanded_folders = file
-            .match_indices('/')
-            .map(|(index, _)| file[..index].to_owned())
-            .collect();
         self.selection = Some(Selection {
             project: project.clone(),
             tree: None,
             file_action_error: None,
-            expanded_folders,
+            expanded_folders: HashSet::new(),
             file_search: FileSearch::new(window, cx),
             conversation: ConversationPane::default(),
             file: None,
@@ -350,6 +346,9 @@ impl Library {
             let (tree, retained) = load.await;
             let _ = library.update(cx, |library, cx| {
                 if let Some(selection) = &mut library.selection {
+                    if let Ok(entries) = &tree {
+                        collect_expanded_folders(entries, &mut selection.expanded_folders);
+                    }
                     selection.tree = Some(tree);
                     selection.retained_restore_stages = retained;
                     cx.notify();
@@ -1848,6 +1847,7 @@ impl Library {
             .track_scroll(&self.outline.file_scroll)
             .flex_1()
             .min_h(px(48.))
+            .pt(px(10.))
             .overflow_y_scroll();
         match &selection.tree {
             None => tree.child(div().text_color(rgb(palette.muted)).child("Loading files…")),
@@ -1871,11 +1871,8 @@ impl Library {
         let keyboard_path = path.clone();
         let is_folder = entry.children.is_some();
         let expanded = selection.expanded_folders.contains(&entry.path);
-        let indicator = match (is_folder, expanded) {
-            (true, true) => "⌄",
-            (true, false) => "›",
-            (false, _) => "",
-        };
+        let active = selection.file.as_deref() == Some(entry.path.as_str());
+        let inset = if is_folder { 4. } else { 9. } + 12. * depth as f32;
         let row = div()
             .id(SharedString::from(format!("tree/{}", entry.path)))
             .debug_selector(|| format!("tree/{}", entry.path))
@@ -1883,18 +1880,76 @@ impl Library {
             .cursor_pointer()
             .flex()
             .items_center()
-            .gap_1()
-            .rounded_md()
-            .pl(px(6. + 14. * depth as f32))
-            .pr_1()
-            .py_1()
+            .relative()
+            .overflow_hidden()
+            .gap_2()
+            .rounded(px(5.))
+            .pl(px(inset))
+            .pr(px(32.))
+            .py(px(6.))
+            .min_h(px(33.))
+            .text_size(px(13.))
             .hover(move |style| style.bg(rgb(palette.selection)))
             .focus(move |style| style.text_color(rgb(palette.focus)))
-            .when(
-                selection.file.as_deref() == Some(entry.path.as_str()),
-                |row| row.bg(rgb(palette.selection)),
-            )
-            .child(div().w(px(12.)).flex_none().child(indicator))
+            .when(active, |row| {
+                row.bg(rgb(palette.selection))
+                    .font_weight(FontWeight(550.))
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(2.))
+                            .bg(rgb(palette.focus)),
+                    )
+            })
+            .when(is_folder, |row| {
+                row.text_color(rgb(palette.muted))
+                    .child(
+                        svg()
+                            .path(if expanded {
+                                "refract/chevron-down.svg"
+                            } else {
+                                "refract/chevron-right.svg"
+                            })
+                            .size(px(14.))
+                            .flex_none()
+                            .text_color(rgb(palette.muted)),
+                    )
+                    .child(
+                        svg()
+                            .path("refract/folder.svg")
+                            .size(px(15.))
+                            .flex_none()
+                            .text_color(rgb(palette.muted)),
+                    )
+            })
+            .when(!is_folder, |row| {
+                let extension: String = entry
+                    .name
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or("file")
+                    .chars()
+                    .take(4)
+                    .collect();
+                row.child(
+                    div()
+                        .flex_none()
+                        .rounded(px(3.))
+                        .px(px(3.))
+                        .py(px(1.))
+                        .border_1()
+                        .border_color(rgb(palette.input_border))
+                        .font_family(monospace_font())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_size(px(8.))
+                        .line_height(px(12.))
+                        .text_color(rgb(palette.muted))
+                        .child(extension.to_uppercase()),
+                )
+            })
             .child(div().min_w(px(0.)).truncate().child(entry.name.clone()))
             .on_click(cx.listener(move |library, _, window, cx| {
                 if is_folder {
@@ -1916,7 +1971,7 @@ impl Library {
                     }
                 }),
             );
-        let row = Self::entry_menu(row, entry.path.clone(), is_folder, cx);
+        let row = Self::entry_menu(row, entry.path.clone(), is_folder, active, palette, cx);
         let mut node = div()
             .id(SharedString::from(format!("entry/{}", entry.path)))
             .child(row);
@@ -2135,6 +2190,15 @@ fn monospace_font() -> &'static str {
         "Menlo"
     } else {
         "Liberation Mono"
+    }
+}
+
+fn collect_expanded_folders(entries: &[ProjectEntry], expanded: &mut HashSet<String>) {
+    for entry in entries {
+        if let Some(children) = &entry.children {
+            expanded.insert(entry.path.clone());
+            collect_expanded_folders(children, expanded);
+        }
     }
 }
 
@@ -2404,15 +2468,14 @@ mod tests {
         click(cx, "tree/sections");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
-            assert!(selection.expanded_folders.contains("sections"));
+            assert!(!selection.expanded_folders.contains("sections"));
         });
         cx.simulate_keystrokes("space");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
-            assert!(!selection.expanded_folders.contains("sections"));
+            assert!(selection.expanded_folders.contains("sections"));
         });
-        cx.simulate_keystrokes("enter");
-        cx.simulate_keystrokes("tab enter");
+        cx.simulate_keystrokes("tab tab enter");
         cx.update(|window, app| {
             let selection = library.read(app).selection.as_ref().unwrap();
             assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));

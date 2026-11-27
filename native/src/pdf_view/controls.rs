@@ -207,6 +207,7 @@ impl Library {
                 .child(
                     div()
                         .flex()
+                        .flex_none()
                         .items_center()
                         .gap(px(6.))
                         .when(show_labels, |group| group.child(pdf_label("Page", palette)))
@@ -245,6 +246,7 @@ impl Library {
                 .child(
                     div()
                         .flex()
+                        .flex_none()
                         .items_center()
                         .gap(px(6.))
                         .ml(px(group_margin))
@@ -276,6 +278,7 @@ impl Library {
                 .child(
                     div()
                         .flex()
+                        .flex_none()
                         .items_center()
                         .gap(px(6.))
                         .ml(px(group_margin))

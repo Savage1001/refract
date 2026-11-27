@@ -252,7 +252,10 @@ fn run_turn(
             }
         }
     };
-    let history = turn.finish(result.as_deref(), session.as_deref());
+    let history = turn.finish(
+        result.as_deref().map_err(String::as_str),
+        session.as_deref(),
+    );
     let tree = project_tree(&work.projects, &work.project);
     let versions = snapshot_project(&work.projects, &work.project)
         .and_then(|_| list_versions(&work.projects, &work.project));

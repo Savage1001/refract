@@ -1,12 +1,14 @@
 use super::{Library, Palette, ProjectEntry, Selection};
 use gpui::{
     Context, Div, Entity, FocusHandle, KeyDownEvent, Keystroke, MouseButton, Pixels, Point,
-    Stateful, Subscription, Window, anchored, canvas, deferred, div, point, prelude::*, px, rgb,
+    SharedString, Stateful, Subscription, Window, anchored, canvas, deferred, div, point,
+    prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     WindowExt,
     dialog::DialogButtonProps,
     input::{Input, InputEvent, InputState},
+    tooltip::Tooltip,
 };
 use refract_native::{
     Project, ProjectEntryKind, ProjectEntryMove, move_project_entry, project_tree,
@@ -70,22 +72,72 @@ impl Library {
         row: Stateful<Div>,
         path: String,
         is_folder: bool,
+        active: bool,
+        palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let keyboard_position = Rc::new(Cell::new(Point::default()));
         let row_position = keyboard_position.clone();
         let mouse_path = path.clone();
+        let button_path = path.clone();
+        let button_key_path = path.clone();
+        let label = format!("Actions for {path}");
+        let row_id = SharedString::from(format!("file-row/{path}"));
         let library = cx.weak_entity();
-        row.relative()
+        let row = row.child(
+            canvas(
+                move |bounds, _, _| {
+                    row_position.set(point(bounds.left(), bounds.bottom()));
+                },
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        );
+        div()
+            .id(row_id)
+            .relative()
+            .group("file-tree-row")
+            .child(row)
             .child(
-                canvas(
-                    move |bounds, _, _| {
-                        row_position.set(point(bounds.left(), bounds.bottom()));
-                    },
-                    |_, (), _, _| {},
-                )
-                .absolute()
-                .inset_0(),
+                div()
+                    .id("file-tree-actions")
+                    .debug_selector(move || format!("file-actions/{button_key_path}"))
+                    .tab_index(1)
+                    .absolute()
+                    .top(px(2.))
+                    .right(px(2.))
+                    .size(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .when(!active, |button| {
+                        button
+                            .opacity(0.)
+                            .group_hover("file-tree-row", |style| style.opacity(1.))
+                    })
+                    .hover(move |style| style.bg(rgb(palette.selection)))
+                    .focus(move |style| style.opacity(1.).bg(rgb(palette.selection)))
+                    .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+                    .child(
+                        svg()
+                            .path("refract/ellipsis.svg")
+                            .size(px(16.))
+                            .text_color(rgb(palette.muted)),
+                    )
+                    .on_click(
+                        cx.listener(move |library, event: &gpui::ClickEvent, window, cx| {
+                            library.open_entry_menu(
+                                &button_path,
+                                is_folder,
+                                event.position(),
+                                window,
+                                cx,
+                            );
+                        }),
+                    ),
             )
             .on_mouse_down(MouseButton::Right, move |event, window, app| {
                 let path = mouse_path.clone();
@@ -648,6 +700,14 @@ mod tests {
             assert!(view.entry_menu.is_none());
             assert_eq!(view.move_draft.as_ref().unwrap().source, "main.tex");
             assert!(window.has_active_dialog(app));
+        });
+        cx.simulate_keystrokes("escape");
+        let action = cx.debug_bounds("file-actions/main.tex").unwrap().center();
+        cx.simulate_click(action, Modifiers::none());
+        cx.update(|window, app| {
+            let menu = library.read(app).entry_menu.as_ref().unwrap();
+            assert_eq!(menu.path, "main.tex");
+            assert!(menu.actions[0].1.is_focused(window));
         });
     }
 

@@ -1,8 +1,8 @@
 use super::{PageRequest, PageSize, page_layout};
 use std::{io, ops::Range};
 
-pub const INSET: f32 = 16.;
-const PAGE_GAP: f32 = 14.;
+pub const INSET: f32 = 24.;
+const PAGE_GAP: f32 = 18.;
 pub const VIEWPORT_PIXEL_BUDGET: u32 = 16_000_000;
 
 #[derive(Default)]
@@ -99,7 +99,7 @@ mod tests {
                 width: 200.,
                 height: 300.,
             }; 5000],
-            232.,
+            248.,
             request,
         )
         .unwrap();
@@ -108,7 +108,7 @@ mod tests {
         assert_eq!(stack.nearest(top + 150.), Some(2500));
         assert_eq!(stack.nearest(top + 311.), Some(2501));
         assert_eq!(stack.visible(top, 0.), 0..0);
-        assert_eq!(stack.width, 232.);
+        assert_eq!(stack.width, 248.);
     }
 
     #[test]

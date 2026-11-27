@@ -411,8 +411,8 @@ impl Library {
             .when(self.can_rename_project(), |button| {
                 button
                     .cursor_pointer()
-                    .hover(move |style| style.bg(rgb(palette.selection)))
-                    .focus(move |style| style.bg(rgb(palette.selection)))
+                    .hover(move |style| style.text_color(rgb(palette.text)).underline())
+                    .focus(move |style| style.text_color(rgb(palette.text)).underline())
                     .on_click(
                         cx.listener(|library, _, window, cx| {
                             library.open_rename_dialog(window, cx)
