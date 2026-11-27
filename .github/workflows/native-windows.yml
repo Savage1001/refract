@@ -37,7 +37,7 @@ jobs:
         run: cargo +stable test --locked --no-default-features --lib assistant_tools::server::tests::serves_an_authenticated_turn_and_releases_its_listener -- --ignored
       - name: Install managed TeX and verify automatic discovery
         run: |
-          cargo +stable test --locked --no-default-features --features installer,windows-updater --lib
+          cargo +stable test --locked --no-default-features --features installer,windows-updater,codex-account --lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +stable build --locked --no-default-features --features installer --bin refract-install-dependencies
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -5294,6 +5294,7 @@ dependencies = [
  "markdown",
  "regex",
  "resvg",
+ "ring",
  "rustix 1.1.6",
  "semver",
  "serde",
@@ -5309,6 +5310,7 @@ dependencies = [
  "windows 0.61.3",
  "windows-sys 0.61.2",
  "zed-reqwest",
+ "zeroize",
  "zip",
 ]
 

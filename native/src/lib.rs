@@ -10,6 +10,9 @@ pub mod assistant_preferences;
 pub mod assistant_protocol;
 pub mod assistant_runtime;
 pub mod assistant_tools;
+#[cfg(all(windows, feature = "codex-account"))]
+pub mod codex_account;
+pub mod codex_connection;
 pub mod comments;
 pub mod conversation;
 pub mod editor_find;
@@ -17,6 +20,8 @@ pub mod file_preview;
 pub mod latex_commands;
 #[cfg(feature = "latex-syntax")]
 pub mod latex_syntax;
+#[cfg(any(feature = "desktop", feature = "codex-account", test))]
+pub mod managed_codex;
 #[cfg(any(feature = "installer", test))]
 pub mod managed_tex;
 pub mod outline;
