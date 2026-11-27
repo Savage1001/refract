@@ -1,6 +1,6 @@
 use hayro_interpret::{
     BlendMode, ClipPath, Context, Device, DrawMode, DrawProps, Image, ImageDrawProps,
-    InterpreterCache, InterpreterSettings, SoftMask, TransformExt,
+    InterpreterCache, InterpreterSettings, RenderContent, SoftMask, TransformExt,
     font::{Glyph, GlyphRun},
     hayro_cmap::BfString,
     hayro_syntax::Pdf,
@@ -119,7 +119,7 @@ fn extract(bytes: Vec<u8>, index: u32) -> io::Result<TextPage> {
     let (width, height) = (f64::from(width), f64::from(height));
     let cache = InterpreterCache::new();
     let settings = InterpreterSettings {
-        render_annotations: false,
+        render_content: RenderContent::PAGE,
         ..InterpreterSettings::default()
     };
     let mut context = Context::new(
