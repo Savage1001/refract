@@ -54,13 +54,9 @@ impl Library {
         else {
             return;
         };
-        if let Some(first) = preview.sizes.first() {
-            let width = f64::from(preview.page_width());
-            let first_height = width * first.height / first.width;
-            let available = f64::from((f32::from(preview.viewport.height) - 36.).max(1.));
-            let zoom = (100. * available / first_height).floor().clamp(25., 100.) as u16;
+        if let Some(zoom) = preview.fit_page_zoom() {
             let page = preview.page;
-            preview.resize_pages(Zoom::FitPage(zoom), window);
+            preview.resize_pages(zoom, window);
             preview.go_to_page(page, window);
             self.start_pdf_frame(window, cx);
             cx.notify();

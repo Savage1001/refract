@@ -19,6 +19,7 @@ mod project_management;
 pub mod project_search;
 pub mod tex;
 pub mod versions;
+pub mod workspace_layout;
 pub use project_entries::{
     DeletedEntry, ProjectEntryKind, ProjectEntryMove, create_project_entry, download_project_file,
     export_project_zip, list_deleted_entries, move_project_entry, restore_deleted_entry,

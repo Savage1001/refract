@@ -197,11 +197,12 @@ impl Library {
         let Some(offset) = offset else {
             return;
         };
+        self.reveal_workspace_pane(refract_native::workspace_layout::Pane::Editor, window, cx);
         let position = editor.read(cx).text().offset_to_position(offset);
         editor.update(cx, |editor, cx| {
             editor.set_cursor_position(position, window, cx)
         });
-        if window.viewport_size().width > px(1200.)
+        if self.pdf_is_visible(window)
             && self
                 .selection
                 .as_ref()

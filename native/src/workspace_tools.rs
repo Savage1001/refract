@@ -1,4 +1,4 @@
-use super::{Library, Palette, Selection, pdf_view::PDF_PANE_WIDTH};
+use super::{Library, Palette, Selection};
 use gpui::{Context, KeyDownEvent, Window, div, prelude::*, px, rgb};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,7 +30,7 @@ impl WorkspaceTool {
 }
 
 impl Selection {
-    fn expanded_tools(&self) -> bool {
+    pub(super) fn expanded_tools(&self) -> bool {
         self.tools_expanded.unwrap_or_else(|| {
             self.comparison.is_some()
                 || self.tool == Some(WorkspaceTool::Logs)
@@ -117,7 +117,6 @@ impl Library {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let expanded = selection.expanded_tools();
-        let width = if expanded { 560. } else { PDF_PANE_WIDTH };
         let tabs = [
             WorkspaceTool::ProjectInfo,
             WorkspaceTool::Versions,
@@ -140,8 +139,8 @@ impl Library {
         };
         div()
             .id("tools-panel")
-            .w(px(width))
-            .flex_none()
+            .flex_1()
+            .min_w(px(0.))
             .flex()
             .flex_col()
             .border_l_1()

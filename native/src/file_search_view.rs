@@ -30,6 +30,9 @@ impl AssetSource for RefractAssets {
             "refract/create-project.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3H5v18h14v-7 M9 16l1-4 8-8 3 3-8 8z"/></svg>"#,
             "refract/trash.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>"#,
             "refract/ellipsis.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h.1M12 12h.1M19 12h.1"/></svg>"#,
+            "refract/menu.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>"#,
+            "refract/editor.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8-4 4 4 4m10-8 4 4-4 4M14 5l-4 14"/></svg>"#,
+            "refract/preview.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H5v20h14V7Z M14 2v5h5M8 11h8M8 15h8M8 18h5"/></svg>"#,
             _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))
@@ -46,6 +49,9 @@ impl AssetSource for RefractAssets {
                 "refract/create-project.svg".into(),
                 "refract/trash.svg".into(),
                 "refract/ellipsis.svg".into(),
+                "refract/menu.svg".into(),
+                "refract/editor.svg".into(),
+                "refract/preview.svg".into(),
             ]
         } else {
             Vec::new()
@@ -145,6 +151,7 @@ impl Library {
         let Some(hit) = hit.cloned() else {
             return;
         };
+        self.reveal_workspace_pane(refract_native::workspace_layout::Pane::Editor, window, cx);
         self.open_file(hit.file.clone(), window, cx);
         let Some(selection) = &mut self.selection else {
             return;

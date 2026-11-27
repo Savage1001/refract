@@ -104,6 +104,7 @@ impl Library {
         if self.pdf_task.is_some() || self.build_task.is_some() {
             return;
         }
+        let visible = self.pdf_is_visible(window);
         let Some(selection) = &mut self.selection else {
             return;
         };
@@ -113,7 +114,8 @@ impl Library {
         let preview = &mut selection.build.preview;
         let work = if std::mem::take(&mut preview.request_document) {
             PdfWork::ReadDocument
-        } else if !preview.loading_document
+        } else if visible
+            && !preview.loading_document
             && let Some(index) = preview.next_visible_page()
         {
             PdfWork::RenderPage(preview.request(index, window.scale_factor()))
@@ -134,6 +136,7 @@ impl Library {
             let update = work.await;
             let _ = library.update_in(cx, |library, window, cx| {
                 library.pdf_task = None;
+                let visible = library.pdf_is_visible(window);
                 if let Some(selection) = &mut library.selection
                     && library.project_open_sequence == sequence
                     && selection.build.pdf().is_some()
@@ -142,7 +145,10 @@ impl Library {
                     let pane = &mut selection.build.preview;
                     match update {
                         PdfUpdate::Document(sizes) => pane.set_document(sizes, window),
-                        PdfUpdate::Page(request, frame) => pane.accept_page(request, frame),
+                        PdfUpdate::Page(request, frame) if visible => {
+                            pane.accept_page(request, frame)
+                        }
+                        PdfUpdate::Page(_, _) => {}
                     }
                 }
                 library.start_pdf_frame(window, cx);
@@ -168,7 +174,11 @@ impl Library {
             if preview.viewport != viewport {
                 preview.viewport = viewport;
                 if !preview.loading_document {
-                    preview.resize_pages(preview.zoom, window);
+                    let zoom = match preview.zoom {
+                        Zoom::FitPage(_) => preview.fit_page_zoom().unwrap_or(preview.zoom),
+                        zoom => zoom,
+                    };
+                    preview.resize_pages(zoom, window);
                 }
             }
             preview.update_visible(window);
@@ -179,6 +189,12 @@ impl Library {
 }
 
 impl PdfViewport {
+    pub(super) fn hide(&mut self, window: &mut Window) {
+        self.release(window);
+        self.measurement.set(None);
+        self.page_edit = None;
+    }
+
     pub(super) fn release(&mut self, window: &mut Window) {
         for frame in std::mem::take(&mut self.frames).into_values() {
             let _ = window.drop_image(frame.image);
@@ -187,6 +203,14 @@ impl PdfViewport {
 
     fn page_width(&self) -> f32 {
         (f32::from(self.viewport.width) - 2. * INSET).max(1.)
+    }
+
+    fn fit_page_zoom(&self) -> Option<Zoom> {
+        let first = self.sizes.first()?;
+        let first_height = f64::from(self.page_width()) * first.height / first.width;
+        let available = f64::from((f32::from(self.viewport.height) - 36.).max(1.));
+        let zoom = (100. * available / first_height).floor().clamp(25., 100.) as u16;
+        Some(Zoom::FitPage(zoom))
     }
 
     fn request(&self, index: u32, display_scale: f32) -> PageRequest {

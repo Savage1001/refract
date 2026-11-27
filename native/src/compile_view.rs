@@ -1,4 +1,4 @@
-use super::pdf_view::{PDF_PANE_WIDTH, PdfViewport};
+use super::pdf_view::PdfViewport;
 use super::{Library, Navigation, Palette};
 use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb};
 use gpui_component::WindowExt;
@@ -197,8 +197,8 @@ impl Library {
         };
         div()
             .id("preview-pane")
-            .w(px(PDF_PANE_WIDTH))
-            .flex_none()
+            .flex_1()
+            .min_w(px(0.))
             .flex()
             .flex_col()
             .bg(rgb(palette.surface))

@@ -199,6 +199,7 @@ impl Library {
             return;
         };
         let root = selection.project.root_file().replace('\\', "/");
+        self.reveal_workspace_pane(refract_native::workspace_layout::Pane::Editor, window, cx);
         self.open_file(root.clone(), window, cx);
         let Some(selection) = &mut self.selection else {
             return;

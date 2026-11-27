@@ -5,6 +5,7 @@ use refract_native::tex::{
     TexToolchain,
     synctex::{PdfPosition, SourcePosition, forward, reverse},
 };
+use refract_native::workspace_layout::Pane;
 use std::sync::{Arc, atomic::AtomicBool};
 
 pub(super) struct RunningSync {
@@ -147,7 +148,7 @@ impl Library {
                     match result {
                         Ok(SyncResult::Pdf(position)) => {
                             selection.build.preview.jump_to(position);
-                            library.close_workspace_tools(cx);
+                            library.reveal_workspace_pane(Pane::Preview, window, cx);
                             library.request_pdf_frame(window, cx);
                         }
                         Ok(SyncResult::Source(position)) => {
@@ -182,6 +183,7 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reveal_workspace_pane(Pane::Editor, window, cx);
         self.open_file(position.file.clone(), window, cx);
         let Some(selection) = &mut self.selection else {
             return;
@@ -218,7 +220,8 @@ impl Library {
         }
         let focus = editor.read(cx).focus_handle(cx);
         editor.update(cx, |editor, cx| {
-            editor.set_cursor_position(Position::new(line, 0), window, cx)
+            editor.set_cursor_position(Position::new(line, 0), window, cx);
+            editor.focus(window, cx);
         });
         window.defer(cx, move |window, app| {
             if focus.is_focused(window) {

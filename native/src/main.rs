@@ -14,6 +14,7 @@ use refract_native::versions::{
     Version, list_versions, recover_project_restore, restore_project_version, restore_version_file,
     retry_retained_restore_stages, snapshot_project,
 };
+use refract_native::workspace_layout::{Divider, Pane, PaneVisibility, WorkspaceLayout};
 use refract_native::{Project, ProjectEntry, list_projects, project_tree, save_source};
 use std::{
     cell::RefCell,
@@ -48,6 +49,7 @@ mod project_thumbnails;
 mod source_theme;
 mod synctex_view;
 mod version_view;
+mod workspace_layout_view;
 mod workspace_tools;
 use asset_view::{AssetPreview, LoadedFile, load_file};
 use build_log_view::BuildLogView;
@@ -68,6 +70,7 @@ use project_management_view::{ProjectFocus, RenameDraft};
 use project_thumbnails::ProjectThumbnails;
 use synctex_view::RunningSync;
 use version_view::Comparison;
+use workspace_layout_view::DividerDrag;
 use workspace_tools::WorkspaceTool;
 
 actions!(editor, [SaveSource]);
@@ -126,6 +129,10 @@ struct Library {
     logo: Arc<Image>,
     catalog: ProjectCatalogView,
     thumbnails: ProjectThumbnails,
+    workspace_layout: WorkspaceLayout,
+    divider_drag: Option<DividerDrag>,
+    preview_pane_focus: FocusHandle,
+    sidebar_collapse_focus: FocusHandle,
     last_tool: WorkspaceTool,
 }
 
@@ -217,6 +224,9 @@ impl Library {
             }
         });
         let catalog = ProjectCatalogView::new(&projects_dir, window, cx);
+        let workspace_layout = WorkspaceLayout::new(PaneVisibility::read(
+            &projects_dir.with_file_name(".refract-native-workspace.json"),
+        ));
         Self {
             projects_dir,
             projects: None,
@@ -274,6 +284,10 @@ impl Library {
             )),
             catalog,
             thumbnails: ProjectThumbnails::default(),
+            workspace_layout,
+            divider_drag: None,
+            preview_pane_focus: cx.focus_handle().tab_stop(true).tab_index(3),
+            sidebar_collapse_focus: cx.focus_handle().tab_stop(true).tab_index(1),
             last_tool: WorkspaceTool::Logs,
         }
     }
@@ -533,7 +547,11 @@ impl Library {
                         .find(|tab| tab.path == file)
                         .map(|tab| &tab.open_focus)
                 })
-                .unwrap_or(&self.home_focus);
+                .unwrap_or(if self.workspace_layout.sidebar_collapsed {
+                    &self.sidebar_collapse_focus
+                } else {
+                    &self.home_focus
+                });
             window.focus(focus);
         }
         cx.notify();
@@ -541,6 +559,7 @@ impl Library {
 
     fn return_to_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tree_task = None;
+        self.divider_drag = None;
         self.entry_menu = None;
         self.preview_task = None;
         self.editor_find.visible = false;
@@ -1060,6 +1079,7 @@ impl Library {
             return;
         };
         let file = comment.file.replace('\\', "/");
+        self.reveal_workspace_pane(Pane::Editor, window, cx);
         self.open_file(file.clone(), window, cx);
         let Some(selection) = &mut self.selection else {
             return;
@@ -1148,9 +1168,16 @@ impl Palette {
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.thumbnails.release_replaced(window);
+        if !self.pdf_is_visible(window)
+            && let Some(selection) = &mut self.selection
+        {
+            selection.build.preview.hide(window);
+        }
         let palette = Palette::for_window(window);
         let view = match &self.selection {
-            Some(selection) => self.workspace(selection, palette, cx).into_any_element(),
+            Some(selection) => self
+                .workspace(selection, window, palette, cx)
+                .into_any_element(),
             None => self.projects(window, palette, cx).into_any_element(),
         };
         let dialog = Root::render_dialog_layer(window, cx);
@@ -1562,9 +1589,16 @@ impl Library {
     fn workspace(
         &self,
         selection: &Selection,
+        window: &Window,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let width = f32::from(window.viewport_size().width);
+        let collapsed = self.workspace_layout.sidebar_collapsed;
+        let sidebar = self.workspace_layout.sidebar_width(width);
+        let editor_width = self.workspace_layout.editor_width(width);
+        let visible = self.displayed_panes(selection, width);
+        let split = visible.editor && (visible.preview || selection.tool.is_some());
         let home = div()
             .id("home")
             .track_focus(&self.home_focus)
@@ -1591,44 +1625,129 @@ impl Library {
             );
         div()
             .flex()
+            .flex_col()
             .size_full()
             .child(
                 div()
-                    .w(px(250.))
-                    .flex_none()
                     .flex()
-                    .flex_col()
-                    .gap_3()
-                    .p_4()
-                    .bg(rgb(palette.sidebar))
-                    .border_r_1()
+                    .h(px(42.))
+                    .flex_none()
+                    .items_center()
+                    .border_b_1()
                     .border_color(rgb(palette.border))
-                    .child(home)
-                    .child(self.project_name_control(&selection.project, palette, cx))
-                    .children(self.project_action_error.clone())
+                    .bg(rgb(palette.sidebar))
+                    .child(
+                        div()
+                            .w(px(sidebar))
+                            .flex_none()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .px_3()
+                            .when(collapsed, |bar| bar.justify_center())
+                            .when(!collapsed, |bar| bar.justify_between().child(home))
+                            .child(self.sidebar_collapse_button(palette, cx)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .overflow_hidden()
+                            .child(self.project_name_control(&selection.project, palette, cx)),
+                    )
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Files"))
-                            .child(self.add_items_button(palette, cx)),
-                    )
-                    .children(selection.file_action_error.clone())
-                    .child(self.file_search_panel(selection, palette, cx))
-                    .child(self.file_tree(selection, palette, cx))
-                    .child(self.outline_pane(selection, palette, cx))
-                    .child(self.deleted_files_button(palette, cx)),
+                            .gap_1()
+                            .px_2()
+                            .flex_none()
+                            .child(self.workspace_pane_buttons(
+                                visible,
+                                WorkspaceLayout::compact(width),
+                                palette,
+                                cx,
+                            ))
+                            .child(self.workspace_tools_button(selection, palette, cx))
+                            .child(self.export_project_button(palette, cx)),
+                    ),
             )
-            .child(self.source_pane(selection, palette, cx))
-            .child(match selection.tool {
-                Some(tool) => self
-                    .workspace_tools_pane(selection, tool, palette, cx)
-                    .into_any_element(),
-                None => self
-                    .compile_pane(&selection.build, palette, cx)
-                    .into_any_element(),
+            .when(!visible.preview, |workspace| {
+                workspace.children(selection.build.sync_error.clone().map(|error| {
+                    div()
+                        .px_3()
+                        .py_1()
+                        .text_color(rgb(palette.warning))
+                        .child(error)
+                }))
             })
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(
+                        div()
+                            .w(px(sidebar))
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .bg(rgb(palette.sidebar))
+                            .border_r_1()
+                            .border_color(rgb(palette.border))
+                            .when(!collapsed, |panel| {
+                                panel
+                                    .gap_3()
+                                    .p_4()
+                                    .children(self.project_action_error.clone())
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .child("Files"),
+                                            )
+                                            .child(self.add_items_button(palette, cx)),
+                                    )
+                                    .children(selection.file_action_error.clone())
+                                    .child(self.file_search_panel(selection, palette, cx))
+                                    .child(self.file_tree(selection, palette, cx))
+                                    .child(self.outline_pane(selection, palette, cx))
+                                    .child(self.deleted_files_button(palette, cx))
+                            }),
+                    )
+                    .when(!collapsed, |body| {
+                        body.child(self.workspace_divider(Divider::Sidebar, sidebar, palette, cx))
+                    })
+                    .when(visible.editor, |body| {
+                        body.child(
+                            div()
+                                .flex()
+                                .min_w(px(0.))
+                                .min_h(px(0.))
+                                .when(split, |pane| pane.w(px(editor_width)).flex_none())
+                                .when(!split, |pane| pane.flex_1())
+                                .child(self.source_pane(selection, palette, cx)),
+                        )
+                    })
+                    .when(split, |body| {
+                        body.child(self.workspace_divider(
+                            Divider::Editor,
+                            editor_width,
+                            palette,
+                            cx,
+                        ))
+                    })
+                    .when_some(selection.tool, |body, tool| {
+                        body.child(self.workspace_tools_pane(selection, tool, palette, cx))
+                    })
+                    .when(visible.preview, |body| {
+                        body.child(self.compile_pane(&selection.build, palette, cx))
+                    }),
+            )
     }
 
     fn versions_pane(
@@ -1736,6 +1855,7 @@ impl Library {
                 if is_folder {
                     library.toggle_folder(&path, cx);
                 } else {
+                    library.reveal_workspace_pane(Pane::Editor, window, cx);
                     library.open_file(path.clone(), window, cx);
                 }
             }))
@@ -1745,6 +1865,7 @@ impl Library {
                         if is_folder {
                             library.toggle_folder(&keyboard_path, cx);
                         } else {
+                            library.reveal_workspace_pane(Pane::Editor, window, cx);
                             library.open_file(keyboard_path.clone(), window, cx);
                         }
                     }
@@ -1881,15 +2002,6 @@ impl Library {
                     ),
                 )
             });
-        let pane = pane.child(
-            div()
-                .flex()
-                .items_center()
-                .justify_end()
-                .gap_1()
-                .child(self.workspace_tools_button(selection, palette, cx))
-                .child(self.export_project_button(palette, cx)),
-        );
         let Some(path) = &selection.file else {
             return pane.child(
                 div()
