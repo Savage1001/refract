@@ -18,7 +18,26 @@ pub(super) fn init(cx: &mut App) {
     );
     LanguageRegistry::singleton().register(latex_syntax::NAME, &config);
 
+    #[cfg(not(target_os = "macos"))]
+    let inter_loaded = {
+        let data: &[u8] = include_bytes!("../fonts/Inter-Variable.ttf");
+        match cx
+            .text_system()
+            .add_fonts(vec![std::borrow::Cow::Borrowed(data)])
+        {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("Couldn’t load the bundled Inter font. {error}");
+                false
+            }
+        }
+    };
     let theme = Theme::global_mut(cx);
+    #[cfg(not(target_os = "macos"))]
+    if inter_loaded {
+        Rc::make_mut(&mut theme.light_theme).font_family = Some("Inter".into());
+        Rc::make_mut(&mut theme.dark_theme).font_family = Some("Inter".into());
+    }
     configure(
         Rc::make_mut(&mut theme.light_theme),
         &HighlightTheme::default_light(),
