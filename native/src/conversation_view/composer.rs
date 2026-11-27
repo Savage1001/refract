@@ -1,10 +1,10 @@
 use super::{ConversationPane, Library, Palette, attachment_preview, chat_button};
 use gpui::{
-    ClipboardEntry, Context, Entity, ImageFormat, PathPromptOptions, SharedString, Subscription,
-    Task, Window, div, prelude::*, px, rgb, svg,
+    App, ClipboardEntry, Context, Entity, ImageFormat, KeyBinding, PathPromptOptions, SharedString,
+    Subscription, Task, Window, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
-    input::{Input, InputEvent, InputState, Paste},
+    input::{Enter, Input, InputEvent, InputState, Paste},
     tooltip::Tooltip,
 };
 use refract_native::conversation::{
@@ -14,11 +14,19 @@ use refract_native::conversation::{
 use std::time::Duration;
 
 pub(super) struct Composer {
-    input: Entity<InputState>,
-    attachments: Vec<Attachment>,
-    dirty: bool,
+    pub(super) input: Entity<InputState>,
+    pub(super) attachments: Vec<Attachment>,
+    pub(super) dirty: bool,
     save_timer: Option<Task<()>>,
     _events: Subscription,
+}
+
+pub(crate) fn init(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new(
+        "shift-enter",
+        Enter { secondary: true },
+        Some("RefractChat > Input"),
+    )]);
 }
 
 impl Composer {
@@ -41,6 +49,7 @@ impl Composer {
                 .is_some_and(|composer| composer.input == input);
             if is_current && matches!(event, InputEvent::Change) {
                 library.schedule_chat_draft_save(cx);
+                cx.notify();
             }
         });
         Self {
@@ -58,7 +67,7 @@ impl Composer {
 }
 
 impl Library {
-    fn schedule_chat_draft_save(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn schedule_chat_draft_save(&mut self, cx: &mut Context<Self>) {
         let Some(composer) = self
             .selection
             .as_mut()
@@ -89,6 +98,7 @@ impl Library {
         let draft = ConversationDraft {
             text: composer.input.read(cx).value().to_string(),
             attachments: composer.attachments.clone(),
+            provider: pane.provider.map(|provider| provider.as_str().into()),
         };
         match save_conversation_draft(&self.projects_dir, &selection.project, &pane.active, &draft)
         {
@@ -216,6 +226,7 @@ impl Library {
     ) -> impl IntoElement {
         let remaining = composer.attachments.len() < MAX_ATTACHMENTS;
         let disabled = pane.load_task.is_some() || self.entry_write_task.is_some() || !remaining;
+        let can_send = !composer.input.read(cx).value().trim().is_empty();
         let tooltip = if remaining {
             "Upload files & photos"
         } else {
@@ -259,6 +270,13 @@ impl Library {
                 div()
                     .id("chat-input")
                     .debug_selector(|| "chat-input".into())
+                    .key_context("RefractChat")
+                    .capture_action(cx.listener(|library, action: &Enter, window, cx| {
+                        if !action.secondary {
+                            cx.stop_propagation();
+                            library.send_assistant_turn(window, cx);
+                        }
+                    }))
                     .capture_action(cx.listener(|library, _: &Paste, window, cx| {
                         if let Some(item) = cx.read_from_clipboard()
                             && let Some(ClipboardEntry::Image(image)) = item.entries().iter().find(
@@ -269,7 +287,7 @@ impl Library {
                             library.attach_to_conversation(Some(image.bytes.clone()), window, cx);
                         }
                     }))
-                    .child(Input::new(&composer.input).appearance(false).bordered(false)),
+                    .child(Input::new(&composer.input).appearance(false).bordered(false).disabled(pane.running.is_some())),
             )
             .child(
                 div().flex().items_center().child(
@@ -286,7 +304,9 @@ impl Library {
                     .when(disabled, |button| button.cursor_default().opacity(0.5))
                     .tooltip(move |window, cx| Tooltip::new(tooltip).build(window, cx))
                     .child(svg().path("refract/attach.svg").size(px(18.)).text_color(rgb(palette.muted))),
-                ),
+                )
+                .child(div().flex_1())
+                .child(self.assistant_controls(pane, can_send, palette, cx)),
             )
     }
 }

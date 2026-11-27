@@ -62,6 +62,7 @@ pub struct ConversationSummary {
 #[derive(Debug, Default, Deserialize)]
 pub struct Conversation {
     pub title: Option<String>,
+    pub provider: Option<String>,
     #[serde(default)]
     pub messages: Vec<Message>,
 }

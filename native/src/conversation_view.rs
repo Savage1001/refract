@@ -10,14 +10,18 @@ use gpui_component::{
 };
 use refract_native::conversation::{
     Attachment, Conversation, ConversationDraft, ConversationId, ConversationSummary, Message,
-    create_conversation, list_conversations, load_conversation, load_conversation_draft,
+    Provider, create_conversation, list_conversations, load_conversation, load_conversation_draft,
     read_conversation_image, rename_conversation,
 };
 use refract_native::workspace_layout::Divider;
 use std::{collections::HashMap, io};
 
+mod assistant;
 mod composer;
+mod markdown;
+use assistant::{InstalledProvider, ProviderPicker, RunningTurn, installed_providers};
 use composer::Composer;
+pub(super) use composer::init;
 
 #[derive(Default)]
 pub(super) struct ConversationPane {
@@ -32,6 +36,11 @@ pub(super) struct ConversationPane {
     welcome_dismissed: bool,
     draft: Option<NameDraft>,
     composer: Option<Composer>,
+    providers: Vec<InstalledProvider>,
+    providers_loaded: bool,
+    provider: Option<Provider>,
+    picker: Option<ProviderPicker>,
+    running: Option<RunningTurn>,
     error: Option<String>,
 }
 
@@ -64,6 +73,31 @@ impl ConversationPane {
     ) {
         self.active = id;
         self.image_task = None;
+        let draft = draft.unwrap_or_else(|error| {
+            self.error = Some(format!("Couldn’t load chat draft. {error}"));
+            ConversationDraft::default()
+        });
+        let saved = history
+            .provider
+            .as_deref()
+            .and_then(|name| Provider::parse(name).ok());
+        self.provider = draft
+            .provider
+            .as_deref()
+            .and_then(|name| Provider::parse(name).ok())
+            .or(saved)
+            .filter(|kind| {
+                self.providers
+                    .iter()
+                    .any(|provider| provider.kind() == *kind)
+            })
+            .or_else(|| self.providers.first().map(InstalledProvider::kind));
+        self.picker = ProviderPicker::new(&self.providers, self.provider, window, cx);
+        self.show_history(history);
+        self.composer = Some(Composer::new(draft, window, cx));
+    }
+
+    fn show_history(&mut self, history: Conversation) {
         self.scroll = ScrollHandle::new();
         if let Some(index) = history
             .messages
@@ -75,11 +109,6 @@ impl ConversationPane {
             self.scroll.scroll_to_bottom();
         }
         self.history = Some(history);
-        let draft = draft.unwrap_or_else(|error| {
-            self.error = Some(format!("Couldn’t load chat draft. {error}"));
-            ConversationDraft::default()
-        });
-        self.composer = Some(Composer::new(draft, window, cx));
     }
 
     fn set_rows(
@@ -180,13 +209,19 @@ impl Library {
         let project = selection.project.clone();
         let path = self.projects_dir.clone();
         selection.conversation.error = None;
+        let needs_providers = !selection.conversation.providers_loaded;
         let load = cx.background_executor().spawn(async move {
             let history = load_conversation(&path, &project, &id);
             let draft = load_conversation_draft(&path, &project, &id);
-            (id, history, draft)
+            (
+                id,
+                history,
+                draft,
+                needs_providers.then(installed_providers),
+            )
         });
         selection.conversation.load_task = Some(cx.spawn_in(window, async move |library, cx| {
-            let (id, result, draft) = load.await;
+            let (id, result, draft, providers) = load.await;
             let _ = library.update_in(cx, |library, window, cx| {
                 if library.project_open_sequence == sequence {
                     library.flush_chat_draft(cx);
@@ -196,6 +231,10 @@ impl Library {
                 {
                     let pane = &mut selection.conversation;
                     pane.load_task = None;
+                    if let Some(providers) = providers {
+                        pane.providers = providers;
+                        pane.providers_loaded = true;
+                    }
                     match result {
                         Ok(history) => pane.display(id, history, draft, window, cx),
                         Err(error) => pane.error = Some(format!("Couldn’t open chat. {error}")),
@@ -664,6 +703,7 @@ impl Library {
                     .map(|error| div().text_color(rgb(palette.warning)).child(error)),
             )
             .child(history)
+            .children(self.assistant_progress(pane, palette))
             .children(
                 pane.composer
                     .as_ref()
@@ -732,7 +772,9 @@ fn message_content(
                         )
                     }),
             ),
-        Message::Assistant { text } => block.pr_3().child(text.clone()),
+        Message::Assistant { text } => block
+            .pr_3()
+            .child(markdown::assistant_reply(index, text, palette)),
         Message::Error { text } => block
             .px_3()
             .bg(rgb(palette.warning_surface))

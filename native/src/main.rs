@@ -2173,6 +2173,7 @@ fn projects_dir() -> Option<PathBuf> {
 fn initialize_app(cx: &mut App) {
     gpui_component::init(cx);
     source_theme::init(cx);
+    conversation_view::init(cx);
     commands_view::init(cx);
     editor_find_view::init(cx);
     pdf_view::init(cx);
@@ -2215,6 +2216,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     library.update(cx, |library, cx| {
                         library.flush_chat_draft(cx);
+                        library.cancel_assistant_turn();
                         let close = Navigation::CloseWindow;
                         if library.save_task.is_none()
                             && library.save_queue.is_empty()

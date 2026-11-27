@@ -5,6 +5,9 @@ use crate::{
     },
     tex::process::{ProcessTree, configure_process},
 };
+
+pub mod codex_catalog;
+pub mod opencode;
 use std::{
     fmt,
     io::{self, BufReader, Write},

@@ -5276,6 +5276,7 @@ dependencies = [
 name = "refract-native"
 version = "0.1.0"
 dependencies = [
+ "async-channel 2.5.0",
  "base64",
  "cc",
  "chrono",
@@ -5288,6 +5289,7 @@ dependencies = [
  "icu_locale_core",
  "image",
  "katex-native",
+ "markdown",
  "regex",
  "resvg",
  "rustix 1.1.6",
@@ -5298,6 +5300,7 @@ dependencies = [
  "tempfile",
  "tree-sitter",
  "tree-sitter-language",
+ "url",
  "uuid",
  "windows 0.61.3",
  "windows-sys 0.61.2",

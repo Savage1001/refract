@@ -17,6 +17,8 @@ const DRAFT_LIMIT: u64 = 6 * 1024 * 1024;
 pub struct ConversationDraft {
     pub text: String,
     pub attachments: Vec<Attachment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 pub fn load_conversation_draft(
@@ -99,11 +101,13 @@ mod tests {
                 token: "28a08ee7-40a1-4ca9-9b12-877bc839e95c.png".into(),
                 name: "Screenshot.png".into(),
             }],
+            provider: Some("opencode".into()),
         };
         save_conversation_draft(root.path(), &project, &id, &draft).unwrap();
         let restored = load_conversation_draft(root.path(), &project, &id).unwrap();
         assert_eq!(restored.text, draft.text);
         assert_eq!(restored.attachments, draft.attachments);
+        assert_eq!(restored.provider, draft.provider);
         let default = ConversationId::default();
         assert!(
             load_conversation_draft(root.path(), &project, &default)

@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:resvg", "dep:sys-locale", "dep:windows", "latex-syntax", "portable-pdf"]
+desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "latex-syntax", "portable-pdf"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 portable-pdf = ["dep:hayro"]
 ui-tests = ["desktop", "gpui/test-support"]
@@ -18,6 +18,7 @@ path = "src/main.rs"
 required-features = ["desktop"]
 
 [dependencies]
+async-channel = { version = "=2.5.0", optional = true }
 base64 = { version = "=0.22.1", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = { version = "=1.1.11", default-features = false, features = ["zlib-rs"] }
@@ -27,6 +28,7 @@ icu_collator = { version = "=2.4.0", optional = true }
 icu_locale_core = { version = "=2.4.0", optional = true }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"], optional = true }
 katex-native = { version = "=0.1.1", features = ["raster"], optional = true }
+markdown = { version = "=1.0.0", optional = true }
 regex = "1"
 resvg = { version = "=0.45.1", optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -36,6 +38,7 @@ sys-locale = { version = "=0.3.2", optional = true }
 tempfile = "3"
 tree-sitter = { version = "=0.25.10", optional = true }
 tree-sitter-language = { version = "0.1", optional = true }
+url = { version = "=2.5.9", optional = true }
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "=9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
