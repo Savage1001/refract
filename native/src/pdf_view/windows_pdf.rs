@@ -4,7 +4,7 @@ use refract_native::{
     file_preview::ImageKind,
     pdf_raster::{PageSize, page_layout},
 };
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, thread};
 use windows::{
     Data::Pdf::{PdfDocument, PdfPageRenderOptions},
     Graphics::Imaging::BitmapEncoder,
@@ -13,17 +13,17 @@ use windows::{
         Streams::{DataReader, DataWriter, InMemoryRandomAccessStream},
     },
     Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize},
-    core::HSTRING,
+    core::{HRESULT, HSTRING},
 };
 
-pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<RasterizedPage> {
-    render(path, request)
-        .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
-}
+const RPC_E_CHANGED_MODE: HRESULT = HRESULT(0x8001_0106u32 as i32);
 
-fn render(path: &Path, request: PageRequest) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
-    let _apartment = Apartment::initialize()?;
-    render_document(&open_file(path)?, request)
+pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<RasterizedPage> {
+    with_mta(|| {
+        let document = open_file(path).map_err(io::Error::other)?;
+        render_document(&document, request)
+            .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
+    })
 }
 
 fn open_file(path: &Path) -> windows::core::Result<PdfDocument> {
@@ -34,7 +34,6 @@ fn open_file(path: &Path) -> windows::core::Result<PdfDocument> {
 
 pub(super) fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
     let read = || -> windows::core::Result<Vec<PageSize>> {
-        let _apartment = Apartment::initialize()?;
         let pdf = open_file(path)?;
         (0..pdf.PageCount()?)
             .map(|index| {
@@ -46,16 +45,17 @@ pub(super) fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
             })
             .collect()
     };
-    read().map_err(io::Error::other)
+    with_mta(|| read().map_err(io::Error::other))
 }
 
 pub(crate) fn render_asset_page(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<RasterizedPage> {
-    render_asset(&bytes, index)
-        .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
+    with_mta(|| {
+        render_asset(&bytes, index)
+            .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
+    })
 }
 
 fn render_asset(bytes: &[u8], index: u32) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
-    let _apartment = Apartment::initialize()?;
     let stream = InMemoryRandomAccessStream::new()?;
     let writer = DataWriter::CreateDataWriter(&stream.GetOutputStreamAt(0)?)?;
     writer.WriteBytes(bytes)?;
@@ -116,6 +116,24 @@ fn render_document(
 }
 
 struct Apartment;
+
+fn with_mta<T: Send>(operation: impl FnOnce() -> io::Result<T> + Send) -> io::Result<T> {
+    match Apartment::initialize() {
+        Ok(_apartment) => operation(),
+        // WinRT's synchronous waits require an MTA. Leave an existing apartment intact.
+        Err(error) if error.code() == RPC_E_CHANGED_MODE => thread::scope(|scope| {
+            thread::Builder::new()
+                .name("refract-pdf".into())
+                .spawn_scoped(scope, move || {
+                    let _apartment = Apartment::initialize().map_err(io::Error::other)?;
+                    operation()
+                })?
+                .join()
+                .map_err(|_| io::Error::other("The Windows PDF worker stopped unexpectedly."))?
+        }),
+        Err(error) => Err(io::Error::other(error)),
+    }
+}
 
 impl Apartment {
     fn initialize() -> windows::core::Result<Self> {
