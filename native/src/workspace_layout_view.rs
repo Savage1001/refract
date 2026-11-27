@@ -27,6 +27,7 @@ impl Library {
             visible.preview = false;
             if WorkspaceLayout::compact(width) || selection.expanded_tools() {
                 visible.editor = false;
+                visible.agent = false;
             }
         }
         visible
@@ -76,11 +77,7 @@ impl Library {
         };
         let width = f32::from(window.viewport_size().width);
         let displayed = self.displayed_panes(selection, width);
-        let hidden = match pane {
-            Pane::Editor => !displayed.editor,
-            Pane::Preview => !displayed.preview,
-        };
-        if hidden {
+        if !displayed.contains(pane) {
             let previous = self.workspace_layout.panes;
             self.close_workspace_tools(cx);
             self.workspace_layout.reveal(pane, width);
@@ -90,6 +87,14 @@ impl Library {
             }
             cx.notify();
         }
+    }
+
+    pub(super) fn expand_workspace_chat(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        let previous = self.workspace_layout.panes;
+        self.close_workspace_tools(cx);
+        self.workspace_layout.expand_chat(expanded);
+        self.save_panes(previous);
+        cx.notify();
     }
 
     pub(super) fn workspace_pane_buttons(
@@ -110,6 +115,13 @@ impl Library {
             .children(
                 [
                     (
+                        Pane::Agent,
+                        "pane-agent",
+                        "Agent",
+                        "refract/agent.svg",
+                        visible.agent,
+                    ),
+                    (
                         Pane::Editor,
                         "pane-editor",
                         "Editor",
@@ -127,6 +139,8 @@ impl Library {
                 .into_iter()
                 .map(|(pane, id, label, icon, active)| {
                     let tip = match (pane, active, compact) {
+                        (Pane::Agent, true, _) => "Hide agent",
+                        (Pane::Agent, false, _) => "Show agent",
                         (Pane::Editor, true, _) => "Hide editor",
                         (Pane::Editor, false, _) => "Show editor",
                         (Pane::Preview, true, true) => "Return to writing",

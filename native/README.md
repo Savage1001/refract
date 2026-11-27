@@ -49,11 +49,11 @@ The workspace builds LaTeX from saved project files using the installed TeX tool
 
 Open **Tools** for **Project Info**, **Versions**, **Comments**, and **Logs**. Use **Expand panel** for more room or **Tools** to return to the PDF. In Project Info, select the root file to open it, choose the LaTeX engine, or turn on draft mode to compile with image placeholders.
 
-Use **Editor** and **Preview** in the workspace header to switch panes. At widths up to 1,200 pixels, switch between them in the same space. On wider windows, drag the divider between them or focus it and press the arrow keys. The sidebar has its own divider and collapse control.
+Use **Agent**, **Editor**, and **Preview** in the workspace header to switch panes. At widths up to 1,200 pixels, the PDF and writing panes share the same space. On wider windows, drag the divider between them or focus it and press the arrow keys. The sidebar has its own divider and collapse control.
 
 Logs shows build errors and warnings and links file diagnostics to the reported source line. Open **Full build output** to filter the compiler messages or change line wrapping.
 
-Use the Electron app for assistants and updates.
+Select **Chats** in the sidebar to open or rename conversations saved by Electron. Use **New chat** in the Conversation pane to create a conversation. Use **Expand chat** and **Show editor** to change how much space the pane takes. Use the Electron app to send messages and install updates.
 
 ## Parity before replacing Electron
 

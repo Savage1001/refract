@@ -31,6 +31,7 @@ impl AssetSource for RefractAssets {
             "refract/trash.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>"#,
             "refract/ellipsis.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h.1M12 12h.1M19 12h.1"/></svg>"#,
             "refract/menu.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>"#,
+            "refract/agent.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14H7l-4 3V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2Z M10 14v2a2 2 0 0 0 2 2h5l4 3v-8a2 2 0 0 0-2-2h-2"/></svg>"#,
             "refract/editor.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8-4 4 4 4m10-8 4 4-4 4M14 5l-4 14"/></svg>"#,
             "refract/preview.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H5v20h14V7Z M14 2v5h5M8 11h8M8 15h8M8 18h5"/></svg>"#,
             _ => return Ok(None),
@@ -50,6 +51,7 @@ impl AssetSource for RefractAssets {
                 "refract/trash.svg".into(),
                 "refract/ellipsis.svg".into(),
                 "refract/menu.svg".into(),
+                "refract/agent.svg".into(),
                 "refract/editor.svg".into(),
                 "refract/preview.svg".into(),
             ]

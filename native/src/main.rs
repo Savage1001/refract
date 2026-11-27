@@ -32,6 +32,7 @@ mod build_log_view;
 mod commands_view;
 mod comments_view;
 mod compile_view;
+mod conversation_view;
 mod deleted_projects_view;
 mod editor_find_view;
 mod file_creation_view;
@@ -56,6 +57,7 @@ use build_log_view::BuildLogView;
 use commands_view::Commands;
 use comments_view::CommentDrafts;
 use compile_view::{RunningBuild, WorkspaceBuild};
+use conversation_view::ConversationPane;
 use deleted_projects_view::DeletedProjectsDialog;
 use editor_find_view::EditorFind;
 use file_creation_view::EntryDraft;
@@ -142,6 +144,7 @@ struct Selection {
     file_action_error: Option<String>,
     expanded_folders: HashSet<String>,
     file_search: FileSearch,
+    conversation: ConversationPane,
     file: Option<String>,
     asset_preview: Option<AssetPreview>,
     tabs: Vec<FileTab>,
@@ -315,6 +318,7 @@ impl Library {
             file_action_error: None,
             expanded_folders,
             file_search: FileSearch::new(window, cx),
+            conversation: ConversationPane::default(),
             file: None,
             asset_preview: None,
             tabs: Vec::new(),
@@ -350,6 +354,7 @@ impl Library {
                 }
             });
         }));
+        self.load_project_conversation(Default::default(), cx);
         self.open_file(file, window, cx);
         self.snapshot_needed = true;
         self.start_snapshot(window, cx);
@@ -1598,7 +1603,8 @@ impl Library {
         let sidebar = self.workspace_layout.sidebar_width(width);
         let editor_width = self.workspace_layout.editor_width(width);
         let visible = self.displayed_panes(selection, width);
-        let split = visible.editor && (visible.preview || selection.tool.is_some());
+        let left = visible.editor || visible.agent;
+        let split = left && (visible.preview || selection.tool.is_some());
         let home = div()
             .id("home")
             .track_focus(&self.home_focus)
@@ -1700,37 +1706,44 @@ impl Library {
                                     .gap_3()
                                     .p_4()
                                     .children(self.project_action_error.clone())
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .child("Files"),
-                                            )
-                                            .child(self.add_items_button(palette, cx)),
-                                    )
-                                    .children(selection.file_action_error.clone())
-                                    .child(self.file_search_panel(selection, palette, cx))
-                                    .child(self.file_tree(selection, palette, cx))
-                                    .child(self.outline_pane(selection, palette, cx))
+                                    .child(self.project_sidebar_tabs(selection, palette, cx))
+                                    .when(!selection.conversation.sidebar_open, |sidebar| {
+                                        sidebar
+                                            .children(selection.file_action_error.clone())
+                                            .child(self.file_search_panel(selection, palette, cx))
+                                            .child(self.file_tree(selection, palette, cx))
+                                            .child(self.outline_pane(selection, palette, cx))
+                                    })
+                                    .when(selection.conversation.sidebar_open, |sidebar| {
+                                        sidebar
+                                            .child(self.conversation_list(selection, palette, cx))
+                                    })
                                     .child(self.deleted_files_button(palette, cx))
                             }),
                     )
                     .when(!collapsed, |body| {
                         body.child(self.workspace_divider(Divider::Sidebar, sidebar, palette, cx))
                     })
-                    .when(visible.editor, |body| {
+                    .when(left, |body| {
                         body.child(
                             div()
                                 .flex()
+                                .flex_col()
                                 .min_w(px(0.))
                                 .min_h(px(0.))
                                 .when(split, |pane| pane.w(px(editor_width)).flex_none())
                                 .when(!split, |pane| pane.flex_1())
-                                .child(self.source_pane(selection, palette, cx)),
+                                .when(visible.editor, |pane| {
+                                    pane.child(self.source_pane(selection, palette, cx))
+                                })
+                                .when(visible.agent, |pane| {
+                                    pane.child(self.conversation_pane(
+                                        selection,
+                                        visible.editor,
+                                        palette,
+                                        cx,
+                                    ))
+                                }),
                         )
                     })
                     .when(split, |body| {
@@ -1991,6 +2004,7 @@ impl Library {
             .relative()
             .flex_1()
             .min_w(px(0.))
+            .min_h(px(0.))
             .flex()
             .flex_col()
             .p_4()

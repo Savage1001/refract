@@ -6,6 +6,7 @@ use std::{
 };
 
 pub mod comments;
+pub mod conversation;
 pub mod editor_find;
 pub mod file_preview;
 pub mod latex_commands;

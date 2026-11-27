@@ -11,6 +11,7 @@ const PDF_CLEARANCE: f32 = 292.;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pane {
+    Agent,
     Editor,
     Preview,
 }
@@ -22,7 +23,9 @@ pub enum Divider {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default)]
 pub struct PaneVisibility {
+    pub agent: bool,
     pub editor: bool,
     pub preview: bool,
 }
@@ -30,6 +33,7 @@ pub struct PaneVisibility {
 impl Default for PaneVisibility {
     fn default() -> Self {
         Self {
+            agent: true,
             editor: true,
             preview: true,
         }
@@ -37,14 +41,34 @@ impl Default for PaneVisibility {
 }
 
 impl PaneVisibility {
+    fn set(&mut self, pane: Pane, visible: bool) {
+        match pane {
+            Pane::Agent => self.agent = visible,
+            Pane::Editor => self.editor = visible,
+            Pane::Preview => self.preview = visible,
+        }
+    }
+
+    pub fn contains(self, pane: Pane) -> bool {
+        match pane {
+            Pane::Agent => self.agent,
+            Pane::Editor => self.editor,
+            Pane::Preview => self.preview,
+        }
+    }
+
+    fn restore_editor_if_empty(&mut self) {
+        if !self.agent && !self.editor && !self.preview {
+            self.editor = true;
+        }
+    }
+
     pub fn read(path: &Path) -> Self {
         let mut panes: Self = File::open(path)
             .ok()
             .and_then(|file| serde_json::from_reader(file.take(1024)).ok())
             .unwrap_or_default();
-        if !panes.editor && !panes.preview {
-            panes.editor = true;
-        }
+        panes.restore_editor_if_empty();
         panes
     }
 
@@ -82,45 +106,51 @@ impl WorkspaceLayout {
     }
 
     pub fn visible(&self, width: f32) -> PaneVisibility {
-        if Self::compact(width) {
-            let preview = self.compact_preview || (self.panes.preview && !self.panes.editor);
+        if !Self::compact(width) {
+            self.panes
+        } else if self.compact_preview {
             PaneVisibility {
-                editor: !preview,
-                preview,
+                agent: false,
+                editor: false,
+                preview: true,
             }
         } else {
-            self.panes
+            PaneVisibility {
+                preview: self.panes.preview && !self.panes.editor && !self.panes.agent,
+                ..self.panes
+            }
         }
     }
 
     pub fn toggle(&mut self, pane: Pane, width: f32, displayed: PaneVisibility) {
         if Self::compact(width)
-            && (self.compact_preview || (pane == Pane::Preview && self.panes.editor))
+            && (self.compact_preview
+                || (pane == Pane::Preview && (self.panes.editor || self.panes.agent)))
         {
             self.compact_preview = pane == Pane::Preview && !displayed.preview;
-            if pane == Pane::Editor && !self.compact_preview {
-                self.panes.editor = true;
+            if pane != Pane::Preview {
+                self.panes.set(pane, true);
             }
         } else {
-            match pane {
-                Pane::Editor => self.panes.editor = !displayed.editor,
-                Pane::Preview => self.panes.preview = !displayed.preview,
-            }
-            if !self.panes.editor && !self.panes.preview {
-                self.panes.editor = true;
-            }
+            self.panes.set(pane, !displayed.contains(pane));
+            self.panes.restore_editor_if_empty();
         }
     }
 
     pub fn reveal(&mut self, pane: Pane, width: f32) {
         match pane {
-            Pane::Editor => {
-                self.compact_preview = false;
-                self.panes.editor = true;
-            }
             Pane::Preview if Self::compact(width) => self.compact_preview = true,
             Pane::Preview => self.panes.preview = true,
+            Pane::Agent | Pane::Editor => {
+                self.compact_preview = false;
+                self.panes.set(pane, true);
+            }
         }
+    }
+
+    pub fn expand_chat(&mut self, expanded: bool) {
+        self.panes.agent = true;
+        self.panes.editor = !expanded;
     }
 
     pub fn sidebar_width(&self, viewport: f32) -> f32 {
@@ -185,10 +215,12 @@ mod tests {
     fn compact_preview_switches_without_overwriting_the_desktop_choices() {
         let mut layout = WorkspaceLayout::default();
         let editor = PaneVisibility {
+            agent: true,
             editor: true,
             preview: false,
         };
         let preview = PaneVisibility {
+            agent: false,
             editor: false,
             preview: true,
         };
@@ -199,11 +231,36 @@ mod tests {
         layout.toggle(Pane::Preview, 1200., preview);
         assert_eq!(layout.visible(1200.), editor);
         layout.toggle(Pane::Preview, 1440., PaneVisibility::default());
-        layout.toggle(Pane::Editor, 1440., editor);
+        layout.toggle(Pane::Agent, 1440., editor);
+        layout.toggle(Pane::Editor, 1440., layout.visible(1440.));
+        let editor = PaneVisibility {
+            agent: false,
+            ..editor
+        };
         assert_eq!(layout.visible(1440.), editor);
         layout.reveal(Pane::Preview, 900.);
         layout.reveal(Pane::Editor, 900.);
         assert_eq!(layout.visible(900.), editor);
         assert_eq!(layout.panes, editor);
+    }
+
+    #[test]
+    fn agent_pane_preserves_legacy_preferences_and_returns_from_compact_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join("workspace.json");
+        fs::write(&settings, br#"{"editor":true,"preview":true}"#).unwrap();
+        let mut layout = WorkspaceLayout::new(PaneVisibility::read(&settings));
+        assert!(layout.panes.agent);
+        layout.expand_chat(true);
+        assert!(!layout.visible(1000.).editor);
+        assert!(layout.visible(1000.).agent);
+        assert!(!layout.visible(1000.).preview);
+        layout.reveal(Pane::Preview, 1000.);
+        assert!(!layout.visible(1000.).agent);
+        layout.toggle(Pane::Agent, 1000., layout.visible(1000.));
+        assert!(layout.visible(1000.).agent);
+        assert!(!layout.visible(1000.).editor);
+        layout.panes.save(&settings).unwrap();
+        assert_eq!(PaneVisibility::read(&settings), layout.panes);
     }
 }
