@@ -388,12 +388,15 @@ mod tests {
     ) -> io::Result<BuildResult> {
         let path = projects.join(&project.id).join(".refract-build/main.pdf");
         let mut bytes = b"%PDF-1.4\n".to_vec();
+        let page = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 900] /Resources << >> /Contents 6 0 R >>";
+        let stream = "0.2 0.4 0.7 rg\n10 30 170 100 re f\n";
         let objects = [
-            "<< /Type /Catalog /Pages 2 0 R >>",
-            "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 /MediaBox [0 0 200 900] /Resources << >> >>",
-            "<< /Type /Page /Parent 2 0 R >>",
-            "<< /Type /Page /Parent 2 0 R >>",
-            "<< /Type /Page /Parent 2 0 R >>",
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+            "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".into(),
+            page.into(),
+            page.into(),
+            page.into(),
+            format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len()),
         ];
         let mut offsets = Vec::new();
         for (index, object) in objects.iter().enumerate() {
@@ -401,13 +404,13 @@ mod tests {
             writeln!(bytes, "{} 0 obj\n{object}\nendobj", index + 1)?;
         }
         let xref = bytes.len();
-        write!(bytes, "xref\n0 6\n0000000000 65535 f \n")?;
+        write!(bytes, "xref\n0 7\n0000000000 65535 f \n")?;
         for offset in offsets {
             writeln!(bytes, "{offset:010} 00000 n ")?;
         }
         write!(
             bytes,
-            "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+            "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
         )?;
         fs::create_dir_all(path.parent().unwrap())?;
         fs::write(&path, bytes)?;
@@ -440,6 +443,16 @@ mod tests {
         });
         cx.run_until_parked();
         cx.refresh().unwrap();
+        cx.update(|_, app| {
+            let build = &library.read(app).selection.as_ref().unwrap().build;
+            assert_eq!(
+                build.preview.layout.pages.len(),
+                3,
+                "PDF error: {:?}, build output: {:?}",
+                build.preview.error,
+                build.log()
+            );
+        });
         let page_button = cx.debug_bounds("pdf-current-page").unwrap().center();
         cx.simulate_click(page_button, Modifiers::none());
         cx.simulate_input("0");
