@@ -97,10 +97,10 @@ jobs:
       - name: Build for visual verification
         if: runner.os == 'Linux'
         run: cargo +stable build --locked --bin refract-native
-      - name: Capture the native project library offscreen
+      - name: Capture the native library and workspace offscreen
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y imagemagick mesa-vulkan-drivers xauth xdotool xvfb
+          sudo apt-get install -y --no-install-recommends imagemagick mesa-vulkan-drivers texlive-latex-base texlive-latex-recommended xauth xdotool xvfb
           profile=$(mktemp -d "$RUNNER_TEMP/refract-native-profile.XXXXXX")
           output="$RUNNER_TEMP/refract-native-reference"
           mkdir -p "$output"
@@ -110,7 +110,20 @@ jobs:
             folder="$profile/projects/$id"
             mkdir -p "$folder"
             printf '{"id":"%s","name":"%s","created":"2026-01-01T12:00:00.000Z","rootFile":"main.tex"}\n' "$id" "${names[$i]}" > "$folder/.refract.json"
-            printf '%% Visual test fixture\n' > "$folder/main.tex"
+            mkdir -p "$folder/sections"
+            cat > "$folder/main.tex" <<'TEX'
+          \documentclass[11pt]{article}
+          \usepackage[margin=1in]{geometry}
+          \title{Spectral methods}
+          \author{Research notes}
+          \date{Working draft}
+          \begin{document}
+          \maketitle
+          \section{Introduction}
+          A stable spectral approximation for fluid dynamics.
+          \end{document}
+          TEX
+            printf '%% Research notes\nA stable spectral approximation.\n' > "$folder/sections/abstract.tex"
           done
           export REFRACT_DATA_DIR="$profile"
           export WAYLAND_DISPLAY= ZED_ALLOW_EMULATED_GPU=1
@@ -123,17 +136,37 @@ jobs:
           timeout 10s xdotool windowmove --sync "$client" 0 0
           timeout 10s xdotool windowsize --sync "$client" 1440 900
           xdotool mousemove --sync 0 0
-          shot="$output/light-library-list.png"
-          for attempt in {1..12}; do
-            import -window "$client" "$shot"
-            read -r width height colors < <(identify -format '%w %h %k\n' "$shot")
-            if (( width == 1440 && height == 900 && colors > 32 )); then
-              exit 0
+          capture() {
+            local screen=$1 expected_width=$2 expected_height=$3 width height colors
+            local shot="$output/light-$screen.png"
+            for attempt in {1..12}; do
+              import -window "$client" "$shot"
+              read -r width height colors < <(identify -format '%w %h %k\n' "$shot")
+              if (( width == expected_width && height == expected_height && colors > 32 )); then
+                return 0
+              fi
+              sleep 0.2
+            done
+            echo "The Refract $screen did not render at ${expected_width}×${expected_height}" >&2
+            return 1
+          }
+          capture library-list 1440 900
+          xdotool mousemove --window "$client" 340 615 click 1
+          xdotool mousemove --sync 0 0
+          for attempt in {1..40}; do
+            if compgen -G "$REFRACT_DATA_DIR/projects/*/.refract-build/main.pdf" > /dev/null; then
+              sleep 1
+              break
             fi
-            sleep 0.2
+            sleep 0.25
           done
-          echo 'The Refract project library did not render at 1440×900' >&2
-          exit 1
+          capture workspace 1440 900
+          if ! compgen -G "$REFRACT_DATA_DIR/projects/*/.refract-build/main.pdf" > /dev/null; then
+            echo 'The workspace fixture did not compile' >&2
+            exit 1
+          fi
+          timeout 10s xdotool windowsize --sync "$client" 900 650
+          capture workspace-compact 900 650
           CAPTURE
       - name: Upload native visual verification artifacts
         if: always() && runner.os == 'Linux'
