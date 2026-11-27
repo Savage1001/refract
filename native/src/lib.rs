@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod assistant_preferences;
+pub mod assistant_protocol;
 pub mod comments;
 pub mod conversation;
 pub mod editor_find;
