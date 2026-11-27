@@ -7,11 +7,12 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf"]
+desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf", "windows-updater"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 portable-pdf = ["dep:hayro"]
 ui-tests = ["desktop", "gpui/test-support"]
 installer = ["dep:zed-reqwest", "zed-reqwest/rustls-tls-native-roots"]
+windows-updater = ["dep:zed-reqwest", "zed-reqwest/rustls-tls-native-roots"]
 
 [[bin]]
 name = "refract-native"
@@ -39,6 +40,7 @@ katex-native = { version = "=0.1.1", features = ["raster"], optional = true }
 markdown = { version = "=1.0.0", optional = true }
 regex = "1"
 resvg = { version = "=0.45.1", optional = true }
+semver = "=1.0.28"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"

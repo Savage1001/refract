@@ -37,7 +37,7 @@ jobs:
         run: cargo +stable test --locked --no-default-features --lib assistant_tools::server::tests::serves_an_authenticated_turn_and_releases_its_listener -- --ignored
       - name: Install managed TeX and verify automatic discovery
         run: |
-          cargo +stable test --locked --no-default-features --features installer --lib managed_tex
+          cargo +stable test --locked --no-default-features --features installer,windows-updater --lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +stable build --locked --no-default-features --features installer --bin refract-install-dependencies
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -135,7 +135,7 @@ jobs:
           trap 'kill "$app" 2>/dev/null || true; wait "$app" 2>/dev/null || true' EXIT
           client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
           timeout 10s xdotool windowmove --sync "$client" 0 0
-          timeout 10s xdotool windowsize --sync "$client" 1440 900
+          xdotool windowsize "$client" 1440 900
           xdotool mousemove --sync 0 0
           capture() {
             local screen=$1 expected_width=$2 expected_height=$3 width height colors

@@ -26,6 +26,7 @@ mod project_entries;
 mod project_management;
 pub mod project_search;
 pub mod tex;
+pub mod updates;
 pub mod versions;
 pub mod workspace_layout;
 pub use project_entries::{

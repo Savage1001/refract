@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 use gpui::{
     AnyElement, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight, Image,
     ImageFormat, KeyBinding, PromptLevel, SharedString, Subscription, Task, Window,
@@ -49,6 +51,7 @@ mod project_import_view;
 mod project_info_view;
 mod project_management_view;
 mod project_thumbnails;
+mod settings_view;
 mod source_theme;
 mod synctex_view;
 mod version_view;
@@ -72,6 +75,7 @@ use project_import_view::ImportDraft;
 use project_info_view::ProjectInfoState;
 use project_management_view::{ProjectFocus, RenameDraft};
 use project_thumbnails::ProjectThumbnails;
+use settings_view::SettingsView;
 use synctex_view::RunningSync;
 use version_view::Comparison;
 use workspace_layout_view::DividerDrag;
@@ -132,6 +136,7 @@ struct Library {
     home_focus: FocusHandle,
     logo: Arc<Image>,
     catalog: ProjectCatalogView,
+    settings: SettingsView,
     thumbnails: ProjectThumbnails,
     workspace_layout: WorkspaceLayout,
     divider_drag: Option<DividerDrag>,
@@ -229,6 +234,7 @@ impl Library {
             }
         });
         let catalog = ProjectCatalogView::new(&projects_dir, window, cx);
+        let settings = SettingsView::new(&projects_dir, window, cx);
         let workspace_layout = WorkspaceLayout::new(PaneVisibility::read(
             &projects_dir.with_file_name(".refract-native-workspace.json"),
         ));
@@ -288,6 +294,7 @@ impl Library {
                 include_bytes!("../../resources/logo.png").to_vec(),
             )),
             catalog,
+            settings,
             thumbnails: ProjectThumbnails::default(),
             workspace_layout,
             divider_drag: None,
@@ -1189,6 +1196,7 @@ impl Render for Library {
                 .into_any_element(),
             None => self.projects(window, palette, cx).into_any_element(),
         };
+        self.settings.refresh_dialog();
         let dialog = Root::render_dialog_layer(window, cx);
         Self::find_shortcuts(cx)
             .id("library")
@@ -2264,15 +2272,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         })
         .detach();
-        let bounds = Bounds::centered(None, size(px(1000.), px(680.)), cx);
+        let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
         let window = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                #[cfg(target_os = "linux")]
+                app_id: Some("refract".into()),
                 ..Default::default()
             },
             |window, cx| {
-                window.set_window_title("Refract · Native Preview");
+                window.set_window_title("Refract");
                 let library = cx.new(|cx| Library::new(projects_dir, window, cx));
+                library.update(cx, |library, cx| library.start_update_checks(window, cx));
                 let close_guard = library.downgrade();
                 window.on_window_should_close(cx, move |window, cx| {
                     let Some(library) = close_guard.upgrade() else {

@@ -28,7 +28,7 @@ Open an image from the file tree to view it in its tab. Open a project PDF in a 
 
 Use **More file options** in the New file dialog to upload files or a folder into the selected project folder. Existing files at the destination are preserved.
 
-Use **Import ZIP** in the project library to open a LaTeX project archive. Select a root document when the archive has multiple candidates. **Import all** creates a separate project for each root in its own top-level folder.
+Use **Import** in the project library to open a ZIP archive. Select a root document when the archive has multiple candidates. **Import all** creates a separate project for each root in its own top-level folder.
 
 Open Comments to search discussions, add a file comment or comment on selected source, write replies, and resolve or reopen threads. Selecting a reference opens the file and moves the caret to the quoted source when the anchor can be located.
 
@@ -53,7 +53,11 @@ Use **Agent**, **Editor**, and **Preview** in the workspace header to switch pan
 
 Logs shows build errors and warnings and links file diagnostics to the reported source line. Open **Full build output** to filter the compiler messages or change line wrapping.
 
-Select **Chats** in the sidebar to open or rename conversations saved by Electron. Use **New chat** in the Conversation pane to create a conversation. Drag its top border or use **Expand chat** and **Show editor** to resize it. Draft text and attachments are saved per conversation in the native preview. To send messages, install and authenticate the Codex or OpenCode CLI. Select the model name to search models, manage favorites, and change reasoning or the OpenCode variant. Connected Codex accounts and application updates are available in Electron.
+Select **Chats** in the sidebar to open or rename conversations saved by Electron. Use **New chat** in the Conversation pane to create a conversation. Drag its top border or use **Expand chat** and **Show editor** to resize it. Draft text and attachments are saved per conversation in the native preview. To send messages, install and authenticate the Codex or OpenCode CLI. Select the model name to search models, manage favorites, and change reasoning or the OpenCode variant. Connected Codex accounts are available in Electron.
+
+**Settings** reads and writes the existing Stable or Pre-release update track. Installed Windows x64 packages check for native Refract releases every ten minutes and verify the installer size and SHA-256 from GitHub before offering **Restart to update**.
+
+The native package workflows build Windows x64, macOS Intel and Apple Silicon, Debian and Ubuntu, and Arch installers as pull request artifacts. Verification installs packages in disposable runners or containers. Windows and macOS packages bundle the dependency setup helper. Linux packages declare TeX and SyncTeX dependencies for the system package manager.
 
 ## Parity before replacing Electron
 

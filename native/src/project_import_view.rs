@@ -47,6 +47,7 @@ impl Library {
             .flex()
             .items_center()
             .gap(px(6.))
+            .child(self.settings_button(palette, cx))
             .child(self.import_project_button(palette, cx))
             .child(self.create_project_button("new-project", "New project", palette, cx))
     }
@@ -59,19 +60,16 @@ impl Library {
             .rounded_md()
             .flex()
             .items_center()
-            .gap(px(6.))
-            .h(px(36.))
-            .px(px(9.))
-            .mr(px(9.))
-            .text_size(px(13.))
-            .text_color(rgb(palette.muted))
+            .justify_center()
+            .size(px(36.))
+            .text_color(rgb(palette.text))
+            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Import").build(window, cx))
             .child(
                 svg()
                     .path("refract/import.svg")
-                    .size(px(18.))
-                    .text_color(rgb(palette.muted)),
+                    .size(px(20.))
+                    .text_color(rgb(palette.text)),
             )
-            .child("Import ZIP")
             .when(!enabled, |button| button.opacity(0.5))
             .when(enabled, |button| {
                 button
