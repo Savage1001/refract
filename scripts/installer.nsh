@@ -21,6 +21,9 @@
     SetErrorLevel 2
     Quit
   ${EndIf}
+  !ifmacrodef refractBeforeInstall
+    !insertmacro refractBeforeInstall
+  !endif
 !macroend
 
 ; electron-builder's default uninstall failure handler displays a message box

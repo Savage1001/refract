@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+umask 022
+
+if [ "${3:-}" != "/" ]; then
+  echo "Refract must be installed on the startup disk." >&2
+  exit 1
+fi
+
+exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/var/root \
+  /Applications/Refract.app/Contents/MacOS/refract-install-dependencies
