@@ -17,10 +17,12 @@ const CHATS_DIRECTORY: &str = ".refract-chats";
 
 mod attachments;
 mod draft;
+mod turn;
 pub use attachments::{
     MAX_ATTACHMENTS, attach_conversation_files, attach_conversation_image, read_conversation_image,
 };
 pub use draft::{ConversationDraft, load_conversation_draft, save_conversation_draft};
+pub use turn::{ConversationTurn, Provider, StartTurn, TurnContext, begin_conversation_turn};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ConversationId(String);
@@ -198,31 +200,51 @@ pub fn rename_conversation(
     let original = read_conversation(&root, &path, id)?;
     let mut document: Map<String, Value> = match &original {
         Some(bytes) => serde_json::from_slice(bytes)?,
-        None => Map::from_iter([
-            ("sessionId".into(), Value::Null),
-            ("messages".into(), json!([])),
-        ]),
+        None => empty_conversation(),
     };
     document.insert("title".into(), json!(title));
     let content = serde_json::to_vec(&document)?;
-    if original.is_some() {
-        let staged = stage_file(&path, &content)?;
-        conversation_file(&root, id, false)?;
-        if read_conversation(&root, &path, id)? != original {
+    write_conversation(&root, &path, id, original.as_deref(), &content)
+}
+
+fn write_conversation(
+    root: &Path,
+    path: &Path,
+    id: &ConversationId,
+    original: Option<&[u8]>,
+    content: &[u8],
+) -> io::Result<()> {
+    if content.len() as u64 > MAX_HISTORY_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "The conversation file is too large",
+        ));
+    }
+    if let Some(original) = original {
+        let staged = stage_file(path, content)?;
+        conversation_file(root, id, false)?;
+        if read_conversation(root, path, id)?.as_deref() != Some(original) {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
-                "The conversation changed during the rename",
+                "The conversation changed before it could be saved",
             ));
         }
         staged.persist(path).map_err(|error| error.error)?;
     } else {
-        let mut staged = tempfile::NamedTempFile::new_in(&root)?;
-        staged.write_all(&content)?;
+        let mut staged = tempfile::NamedTempFile::new_in(root)?;
+        staged.write_all(content)?;
         staged
             .persist_noclobber(path)
             .map_err(|error| error.error)?;
     }
     Ok(())
+}
+
+fn empty_conversation() -> Map<String, Value> {
+    Map::from_iter([
+        ("sessionId".into(), Value::Null),
+        ("messages".into(), json!([])),
+    ])
 }
 
 fn private_directory(root: &Path, name: &str, create: bool) -> io::Result<PathBuf> {

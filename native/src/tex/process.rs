@@ -154,7 +154,7 @@ fn read_tail(reader: &mut impl Read, limit: usize) -> io::Result<CapturedOutput>
 }
 
 #[cfg(windows)]
-fn configure_process(command: &mut Command) {
+pub(crate) fn configure_process(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
@@ -162,18 +162,18 @@ fn configure_process(command: &mut Command) {
 }
 
 #[cfg(unix)]
-fn configure_process(command: &mut Command) {
+pub(crate) fn configure_process(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
     command.process_group(0);
 }
 
 #[cfg(windows)]
-struct ProcessTree(std::os::windows::io::OwnedHandle);
+pub(crate) struct ProcessTree(std::os::windows::io::OwnedHandle);
 
 #[cfg(windows)]
 impl ProcessTree {
-    fn attach(child: &Child) -> io::Result<Self> {
+    pub(crate) fn attach(child: &Child) -> io::Result<Self> {
         use std::{
             mem::size_of_val,
             os::windows::io::{AsRawHandle, FromRawHandle},
@@ -209,7 +209,7 @@ impl ProcessTree {
         Ok(Self(job))
     }
 
-    fn stop(&self, child: &mut Child) {
+    pub(crate) fn stop(&self, child: &mut Child) {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::TerminateJobObject;
 
@@ -221,15 +221,15 @@ impl ProcessTree {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct ProcessTree;
+pub(crate) struct ProcessTree;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl ProcessTree {
-    fn attach(_: &Child) -> io::Result<Self> {
+    pub(crate) fn attach(_: &Child) -> io::Result<Self> {
         Ok(Self)
     }
 
-    fn stop(&self, child: &mut Child) {
+    pub(crate) fn stop(&self, child: &mut Child) {
         use rustix::process::{Pid, Signal, kill_process_group};
 
         if let Some(group) = Pid::from_raw(child.id() as i32) {

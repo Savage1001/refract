@@ -16,7 +16,7 @@ use std::{
 };
 
 pub mod diagnostics;
-mod process;
+pub(crate) mod process;
 pub mod synctex;
 #[cfg(test)]
 mod tests;

@@ -15,7 +15,7 @@ use std::{
 
 pub const MAX_ATTACHMENTS: usize = 10;
 const MAX_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
-const ATTACHMENTS_DIRECTORY: &str = ".refract-attachments";
+pub(super) const ATTACHMENTS_DIRECTORY: &str = ".refract-attachments";
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 pub fn attach_conversation_files(
@@ -143,27 +143,14 @@ pub fn read_conversation_image(
     project: &Project,
     token: &str,
 ) -> io::Result<(ImageKind, Vec<u8>)> {
-    let (id, extension) = token
-        .split_once('.')
-        .filter(|(id, _)| is_project_id(id))
-        .ok_or_else(|| invalid("Invalid image attachment"))?;
-    let kind = match extension {
-        "png" => ImageKind::Png,
-        "jpg" | "jpeg" => ImageKind::Jpeg,
-        "webp" => ImageKind::WebP,
+    let kind = match attachment_extension(token) {
+        Some("png") => ImageKind::Png,
+        Some("jpg" | "jpeg") => ImageKind::Jpeg,
+        Some("webp") => ImageKind::WebP,
         _ => return Err(invalid("Invalid image attachment")),
     };
     let root = checked_project_directory(projects_dir, project)?;
-    let dir = private_directory(&root, ATTACHMENTS_DIRECTORY, false)?;
-    let path = dir.join(format!("{id}.{extension}"));
-    let metadata = path.symlink_metadata()?;
-    if !metadata.is_file() || is_link(&metadata) {
-        return Err(invalid("Invalid image attachment"));
-    }
-    let file = open_local_file(&dir, &path)?;
-    if !has_one_link(&file)? || file.metadata()?.len() > MAX_ATTACHMENT_BYTES {
-        return Err(invalid("Invalid image attachment"));
-    }
+    let (_, file) = open_attachment(&root, token)?;
     let mut bytes = Vec::new();
     file.take(MAX_ATTACHMENT_BYTES + 1)
         .read_to_end(&mut bytes)?;
@@ -171,6 +158,31 @@ pub fn read_conversation_image(
         return Err(invalid("Image is too large"));
     }
     Ok((kind, bytes))
+}
+
+pub(super) fn attachment_extension(token: &str) -> Option<&str> {
+    let (id, extension) = token.split_once('.')?;
+    (is_project_id(id)
+        && matches!(
+            extension,
+            "png" | "jpg" | "jpeg" | "webp" | "pdf" | "txt" | "md" | "tex" | "bib" | "csv" | "docx"
+        ))
+    .then_some(extension)
+}
+
+pub(super) fn open_attachment(root: &Path, token: &str) -> io::Result<(PathBuf, File)> {
+    attachment_extension(token).ok_or_else(|| invalid("Invalid attachment"))?;
+    let dir = private_directory(&root, ATTACHMENTS_DIRECTORY, false)?;
+    let path = dir.join(token);
+    let metadata = path.symlink_metadata()?;
+    if !metadata.is_file() || is_link(&metadata) {
+        return Err(invalid("Invalid attachment"));
+    }
+    let file = open_local_file(&dir, &path)?;
+    if !has_one_link(&file)? || file.metadata()?.len() > MAX_ATTACHMENT_BYTES {
+        return Err(invalid("Invalid or oversized attachment"));
+    }
+    Ok((path, file))
 }
 
 fn commit_attachment(
