@@ -579,12 +579,12 @@ mod windows_pdf;
 use windows_pdf::{read_page_sizes, render_page};
 
 #[cfg(windows)]
-pub(super) use windows_pdf::render_asset_page;
+pub(super) use windows_pdf::{raster_pdf_bytes, render_asset_page};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod portable_pdf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(super) use portable_pdf::render_asset_page;
+pub(super) use portable_pdf::{raster_pdf_bytes, render_asset_page};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use portable_pdf::{read_page_sizes, render_page};
 
@@ -593,6 +593,14 @@ pub(super) fn render_asset_page(_: Arc<Vec<u8>>, _: u32) -> io::Result<Rasterize
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Inline project PDF preview is unavailable on this platform.",
+    ))
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+pub(super) fn raster_pdf_bytes(_: Arc<Vec<u8>>, _: PageRequest) -> io::Result<RasterizedPage> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "PDF thumbnails are unavailable on this platform.",
     ))
 }
 

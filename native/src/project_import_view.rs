@@ -1,6 +1,7 @@
 use super::{Library, Navigation, Palette};
 use gpui::{
-    Context, Entity, KeyDownEvent, PathPromptOptions, SharedString, Window, div, prelude::*, rgb,
+    Context, Entity, KeyDownEvent, PathPromptOptions, SharedString, Window, div, prelude::*, px,
+    rgb, svg,
 };
 use gpui_component::{
     WindowExt,
@@ -44,9 +45,10 @@ impl Library {
     ) -> impl IntoElement {
         div()
             .flex()
-            .gap_2()
-            .child(self.create_project_button("new-project", "New project", palette, cx))
+            .items_center()
+            .gap(px(6.))
             .child(self.import_project_button(palette, cx))
+            .child(self.create_project_button("new-project", "New project", palette, cx))
     }
 
     fn import_project_button(&self, palette: Palette, cx: &Context<Self>) -> impl IntoElement {
@@ -55,10 +57,20 @@ impl Library {
             .id("import-zip")
             .track_focus(&self.import_focus)
             .rounded_md()
-            .border_1()
-            .border_color(rgb(palette.border))
-            .px_3()
-            .py_2()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .h(px(36.))
+            .px(px(9.))
+            .mr(px(9.))
+            .text_size(px(13.))
+            .text_color(rgb(palette.muted))
+            .child(
+                svg()
+                    .path("refract/import.svg")
+                    .size(px(18.))
+                    .text_color(rgb(palette.muted)),
+            )
             .child("Import ZIP")
             .when(!enabled, |button| button.opacity(0.5))
             .when(enabled, |button| {

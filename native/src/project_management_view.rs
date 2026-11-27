@@ -1,7 +1,7 @@
 use super::{Library, Navigation, Palette};
 use gpui::{
     Context, Entity, FocusHandle, FontWeight, KeyDownEvent, Keystroke, PromptLevel, Window, div,
-    prelude::*, px, rgb,
+    prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     WindowExt,
@@ -61,6 +61,7 @@ impl Library {
         }
         self.projects = Some(projects);
         self.refresh_project_edits(cx);
+        self.refresh_project_thumbnails(cx);
     }
 
     pub(super) fn can_create_project(&self) -> bool {
@@ -257,12 +258,19 @@ impl Library {
                     .id("project-actions-toggle")
                     .track_focus(&self.project_focus[&project.id].actions)
                     .rounded_md()
-                    .px_2()
-                    .py_1()
+                    .size(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .cursor_pointer()
                     .hover(move |style| style.bg(rgb(palette.selection)))
                     .focus(move |style| style.bg(rgb(palette.selection)))
-                    .child("⋯")
+                    .child(
+                        svg()
+                            .path("refract/ellipsis.svg")
+                            .size(px(18.))
+                            .text_color(rgb(palette.muted)),
+                    )
                     .on_click(cx.listener(move |library, _, _, cx| {
                         cx.stop_propagation();
                         library.toggle_project_menu(&click_id, cx);
@@ -347,11 +355,24 @@ impl Library {
         div()
             .id(id)
             .rounded_md()
-            .px_3()
-            .py_2()
+            .h(px(40.))
+            .px_4()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .text_size(px(13.))
             .font_weight(FontWeight::SEMIBOLD)
             .bg(rgb(palette.focus))
             .text_color(rgb(0xffffff))
+            .when(id == "new-project", |button| {
+                button.w(px(136.)).child(
+                    svg()
+                        .path("refract/create-project.svg")
+                        .size(px(18.))
+                        .text_color(rgb(0xffffff)),
+                )
+            })
             .child(label)
             .when(!enabled, |button| button.opacity(0.5))
             .when(enabled, |button| {

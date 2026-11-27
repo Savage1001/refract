@@ -32,6 +32,7 @@ const SYNC_FILES: [&str; 4] = [
     "main.synctex.gz(busy)",
 ];
 const BUILD_LOG_LIMIT: usize = 250_000;
+const THUMBNAIL_PDF_LIMIT: u64 = 64 * 1024 * 1024;
 
 const DRAFT_WRAPPER: &str = r"\PassOptionsToPackage{draft}{graphics}
 \PassOptionsToPackage{draft}{graphicx}
@@ -102,6 +103,37 @@ pub fn save_compiled_pdf(source: &Path, destination: &Path) -> io::Result<()> {
         io::copy(&mut pdf, file)?;
         Ok(())
     })
+}
+
+pub fn compiled_pdf_for_thumbnail(
+    projects_dir: &Path,
+    project: &Project,
+) -> io::Result<Option<Vec<u8>>> {
+    let directory = checked_project_directory(projects_dir, project)?.join(".refract-build");
+    let info = match directory.symlink_metadata() {
+        Ok(info) => info,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !info.is_dir() || is_link(&info) {
+        return Err(invalid("Invalid compilation directory"));
+    }
+    let file = match build_file(&directory.join("main.pdf")) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if file.metadata()?.len() > THUMBNAIL_PDF_LIMIT {
+        return Err(invalid(
+            "The compiled PDF is too large for a library thumbnail",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(THUMBNAIL_PDF_LIMIT + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > THUMBNAIL_PDF_LIMIT || !bytes.starts_with(b"%PDF-") {
+        return Err(invalid("Invalid thumbnail PDF data"));
+    }
+    Ok(Some(bytes))
 }
 
 fn read_build_settings(dir: &Path, project: &Project) -> io::Result<BuildSettings> {

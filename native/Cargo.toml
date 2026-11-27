@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:resvg", "dep:sys-locale", "dep:windows", "latex-syntax", "portable-pdf"]
+desktop = ["dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:resvg", "dep:sys-locale", "dep:windows", "latex-syntax", "portable-pdf"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 portable-pdf = ["dep:hayro"]
 ui-tests = ["desktop", "gpui/test-support"]
@@ -18,6 +18,7 @@ path = "src/main.rs"
 required-features = ["desktop"]
 
 [dependencies]
+base64 = { version = "=0.22.1", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = { version = "=1.1.11", default-features = false, features = ["zlib-rs"] }
 gpui = { version = "=0.2.2", optional = true }

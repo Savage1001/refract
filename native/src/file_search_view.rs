@@ -26,6 +26,10 @@ impl AssetSource for RefractAssets {
             "refract/close.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>"#,
             "refract/chevron-right.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>"#,
             "refract/chevron-down.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#,
+            "refract/import.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11V6h6l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2M1 14h16m-3-3 3 3-3 3"/></svg>"#,
+            "refract/create-project.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3H5v18h14v-7 M9 16l1-4 8-8 3 3-8 8z"/></svg>"#,
+            "refract/trash.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>"#,
+            "refract/ellipsis.svg" => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h.1M12 12h.1M19 12h.1"/></svg>"#,
             _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))
@@ -38,6 +42,10 @@ impl AssetSource for RefractAssets {
                 "refract/close.svg".into(),
                 "refract/chevron-right.svg".into(),
                 "refract/chevron-down.svg".into(),
+                "refract/import.svg".into(),
+                "refract/create-project.svg".into(),
+                "refract/trash.svg".into(),
+                "refract/ellipsis.svg".into(),
             ]
         } else {
             Vec::new()

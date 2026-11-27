@@ -11,10 +11,14 @@ pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<Raste
 }
 
 pub(crate) fn render_asset_page(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<RasterizedPage> {
-    build_frame(portable::render_bytes(
-        bytes,
-        PageRequest::project_file(index),
-    )?)
+    raster_pdf_bytes(bytes, PageRequest::project_file(index))
+}
+
+pub(crate) fn raster_pdf_bytes(
+    bytes: Arc<Vec<u8>>,
+    request: PageRequest,
+) -> io::Result<RasterizedPage> {
+    build_frame(portable::render_bytes(bytes, request)?)
 }
 
 fn build_frame(page: portable::Page) -> io::Result<RasterizedPage> {

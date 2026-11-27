@@ -4,6 +4,8 @@ This opt-in Rust and GPUI app opens the existing Refract project library in list
 
 Use **Search** to filter project names in either library view. **Sort** offers newest first, oldest first, name, and recently edited. Refract remembers the selected order and library view across native launches. Use **Duplicate** in a project’s library menu to open a copy with its files, comments, version history, and LaTeX settings. **Delete** moves the project to **Deleted projects**, where it can be restored for up to 30 days.
 
+The library shows a first-page thumbnail after a project compiles. It reuses cached images when the PDF is unchanged. Documents over 64 MiB keep their existing thumbnail or use the TeX icon.
+
 Use **+** in Files to create a file at the project root or in a selected folder. Open **More file options** to create a folder. A folder’s **Add items** menu preselects that destination.
 
 Right-click a file or folder or focus its row and press `Shift+F10` to open its actions. Open tabs, the root document, and comment references follow a renamed or moved path. Use **Deleted files** in the sidebar to restore files and folders to their original paths.

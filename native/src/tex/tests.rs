@@ -55,6 +55,22 @@ fn success(log: &str) -> ProcessOutput {
 }
 
 #[test]
+fn reads_only_the_compiled_pdf_for_the_library_thumbnail() {
+    let fixture = Fixture::new();
+    let read = || compiled_pdf_for_thumbnail(&fixture.projects, &fixture.project);
+    assert!(read().unwrap().is_none());
+    fs::create_dir(&fixture.output).unwrap();
+    let pdf = fixture.output.join("main.pdf");
+    fs::write(&pdf, b"incomplete build").unwrap();
+    assert!(read().is_err());
+    let bytes = b"%PDF-1.4\n";
+    fs::write(&pdf, bytes).unwrap();
+    assert_eq!(read().unwrap().as_deref(), Some(bytes.as_slice()));
+    fs::hard_link(&pdf, fixture.dir.join("linked.pdf")).unwrap();
+    assert!(read().is_err());
+}
+
+#[test]
 fn loads_engine_root_and_draft_mode_from_current_metadata() {
     let project = Fixture::new();
     let metadata = project.dir.join(".refract.json");

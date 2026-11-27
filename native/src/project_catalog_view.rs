@@ -1,7 +1,7 @@
 use super::{Library, Palette};
 use gpui::{Context, Entity, SharedString, Subscription, Task, Window, div, prelude::*, px, rgb};
 use gpui_component::{
-    Sizable, Size,
+    Icon, Sizable, Size,
     select::{Select, SelectEvent, SelectItem, SelectState},
 };
 use icu_collator::{Collator, CollatorBorrowed};
@@ -154,7 +154,14 @@ impl ProjectCatalogView {
                     } else {
                         108.
                     }))
-                    .child(Select::new(&self.sort).with_size(Size::Small)),
+                    .child(
+                        Select::new(&self.sort)
+                            .with_size(Size::Small)
+                            .icon(Icon::empty().path("refract/chevron-down.svg"))
+                            .h(px(36.))
+                            .text_size(px(12.))
+                            .border_color(rgb(palette.input_border)),
+                    ),
             )
     }
 }

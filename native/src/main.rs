@@ -44,6 +44,7 @@ mod project_catalog_view;
 mod project_import_view;
 mod project_info_view;
 mod project_management_view;
+mod project_thumbnails;
 mod source_theme;
 mod synctex_view;
 mod version_view;
@@ -64,6 +65,7 @@ use project_catalog_view::ProjectCatalogView;
 use project_import_view::ImportDraft;
 use project_info_view::ProjectInfoState;
 use project_management_view::{ProjectFocus, RenameDraft};
+use project_thumbnails::ProjectThumbnails;
 use synctex_view::RunningSync;
 use version_view::Comparison;
 use workspace_tools::WorkspaceTool;
@@ -123,6 +125,7 @@ struct Library {
     home_focus: FocusHandle,
     logo: Arc<Image>,
     catalog: ProjectCatalogView,
+    thumbnails: ProjectThumbnails,
     last_tool: WorkspaceTool,
 }
 
@@ -270,6 +273,7 @@ impl Library {
                 include_bytes!("../../resources/logo.png").to_vec(),
             )),
             catalog,
+            thumbnails: ProjectThumbnails::default(),
             last_tool: WorkspaceTool::Logs,
         }
     }
@@ -282,6 +286,7 @@ impl Library {
             return;
         }
         self.catalog.cancel_edit_scan();
+        self.thumbnails.cancel();
         self.project_menu = None;
         self.entry_menu = None;
         self.project_open_sequence = self.project_open_sequence.wrapping_add(1);
@@ -561,6 +566,7 @@ impl Library {
             }
         }
         self.refresh_project_edits(cx);
+        self.refresh_project_thumbnails(cx);
         cx.notify();
     }
 
@@ -1141,6 +1147,7 @@ impl Palette {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.thumbnails.release_replaced(window);
         let palette = Palette::for_window(window);
         let view = match &self.selection {
             Some(selection) => self.workspace(selection, palette, cx).into_any_element(),
@@ -1182,7 +1189,9 @@ impl Library {
             .id("projects")
             .overflow_y_scroll()
             .px(px(padding))
-            .py(px(44.))
+            .pt(px(86.))
+            .pb(px(44.))
+            .text_size(px(13.))
             .on_click(cx.listener(|library, _, _, cx| library.dismiss_project_menu(cx)));
         let content = div()
             .w_full()
@@ -1198,6 +1207,7 @@ impl Library {
                     .child(
                         div()
                             .text_size(px(32.))
+                            .line_height(px(48.))
                             .font_weight(FontWeight::BOLD)
                             .child("Refract"),
                     ),
@@ -1207,10 +1217,12 @@ impl Library {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .mb(px(40.))
+                    .mb(px(32.))
                     .child(
                         div()
                             .text_size(px(28.))
+                            .line_height(px(42.))
+                            .mb(px(19.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Your projects"),
                     )
@@ -1231,6 +1243,7 @@ impl Library {
                     .child(
                         div()
                             .flex()
+                            .gap(px(2.))
                             .p(px(2.))
                             .border_1()
                             .border_color(rgb(palette.border))
@@ -1260,6 +1273,7 @@ impl Library {
                                         .pt(px(20.))
                                         .pb(px(8.))
                                         .text_size(px(12.))
+                                        .line_height(px(18.))
                                         .text_color(rgb(palette.muted))
                                         .child(count),
                                 )
@@ -1272,6 +1286,7 @@ impl Library {
                                             .border_b_1()
                                             .border_color(rgb(palette.border))
                                             .text_size(px(11.))
+                                            .line_height(px(16.5))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(rgb(palette.muted))
                                             .child(div().flex_1().child("NAME"))
@@ -1392,12 +1407,23 @@ impl Library {
             .tab_index(1)
             .cursor_pointer()
             .rounded_md()
-            .px_3()
-            .py(px(6.))
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .w(px(42.))
+            .h(px(30.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(12.))
+            .text_color(rgb(palette.muted))
             .focus(move |style| style.bg(rgb(palette.selection)))
             .hover(move |style| style.bg(rgb(palette.selection)))
             .when(self.catalog.is_grid() == grid, |button| {
-                button.bg(rgb(palette.surface)).shadow_sm()
+                button
+                    .bg(rgb(palette.surface))
+                    .border_color(rgb(palette.input_border))
+                    .text_color(rgb(palette.text))
+                    .shadow_sm()
             })
             .child(label)
             .on_click(cx.listener(move |library, _, _, cx| {
@@ -1430,6 +1456,30 @@ impl Library {
                     .with_timezone(&chrono::Local)
                     .format("%-m/%-d/%Y")
                     .to_string()
+            });
+
+        let project_icon = self
+            .thumbnails
+            .image(&project.id, grid, palette)
+            .map(IntoElement::into_any_element)
+            .unwrap_or_else(|| {
+                div()
+                    .flex()
+                    .flex_none()
+                    .justify_center()
+                    .items_center()
+                    .w(px(40.))
+                    .h(px(50.))
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(rgb(palette.input_border))
+                    .bg(rgb(palette.surface))
+                    .text_color(rgb(palette.muted))
+                    .font_family(monospace_font())
+                    .text_size(px(9.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("TEX")
+                    .into_any_element()
             });
 
         div()
@@ -1467,24 +1517,7 @@ impl Library {
                     .when(grid, |body| body.pr(px(24.)))
                     .items_center()
                     .gap(px(14.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .justify_center()
-                            .items_center()
-                            .w(px(40.))
-                            .h(px(50.))
-                            .rounded(px(4.))
-                            .border_1()
-                            .border_color(rgb(palette.input_border))
-                            .bg(rgb(palette.surface))
-                            .text_color(rgb(palette.muted))
-                            .font_family(monospace_font())
-                            .text_size(px(9.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("TEX"),
-                    )
+                    .child(project_icon)
                     .child(
                         div()
                             .min_w(px(0.))
@@ -1508,7 +1541,7 @@ impl Library {
             )
             .child(
                 div()
-                    .when(!grid, |date| date.w(px(188.)).flex_none())
+                    .when(!grid, |date| date.w(px(140.)).flex_none())
                     .text_size(px(12.))
                     .text_color(rgb(palette.muted))
                     .children(date),

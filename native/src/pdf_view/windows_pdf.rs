@@ -20,42 +20,59 @@ const RPC_E_CHANGED_MODE: HRESULT = HRESULT(0x8001_0106u32 as i32);
 
 pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<RasterizedPage> {
     with_mta(|| {
-        let document = open_file(path).map_err(io::Error::other)?;
+        let document = open_file(path)?;
         render_document(&document, request)
             .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
     })
 }
 
-fn open_file(path: &Path) -> windows::core::Result<PdfDocument> {
-    let path = HSTRING::from(dunce::simplified(path).as_os_str());
-    let file = StorageFile::GetFileFromPathAsync(&path)?.get()?;
-    PdfDocument::LoadFromFileAsync(&file)?.get()
+fn open_file(path: &Path) -> io::Result<PdfDocument> {
+    // WinRT requires an absolute Windows path with backslashes.
+    let path = dunce::canonicalize(path)?;
+    let path = HSTRING::from(path.as_os_str());
+    let load = || -> windows::core::Result<PdfDocument> {
+        let file = StorageFile::GetFileFromPathAsync(&path)?.get()?;
+        PdfDocument::LoadFromFileAsync(&file)?.get()
+    };
+    load().map_err(io::Error::other)
 }
 
 pub(super) fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
-    let read = || -> windows::core::Result<Vec<PageSize>> {
+    with_mta(|| {
         let pdf = open_file(path)?;
-        (0..pdf.PageCount()?)
-            .map(|index| {
-                let size = pdf.GetPage(index)?.Size()?;
-                Ok(PageSize {
-                    width: f64::from(size.Width) * 72. / 96.,
-                    height: f64::from(size.Height) * 72. / 96.,
+        let read = || -> windows::core::Result<Vec<PageSize>> {
+            (0..pdf.PageCount()?)
+                .map(|index| {
+                    let size = pdf.GetPage(index)?.Size()?;
+                    Ok(PageSize {
+                        width: f64::from(size.Width) * 72. / 96.,
+                        height: f64::from(size.Height) * 72. / 96.,
+                    })
                 })
-            })
-            .collect()
-    };
-    with_mta(|| read().map_err(io::Error::other))
+                .collect()
+        };
+        read().map_err(io::Error::other)
+    })
 }
 
 pub(crate) fn render_asset_page(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<RasterizedPage> {
+    raster_pdf_bytes(bytes, PageRequest::project_file(index))
+}
+
+pub(crate) fn raster_pdf_bytes(
+    bytes: Arc<Vec<u8>>,
+    request: PageRequest,
+) -> io::Result<RasterizedPage> {
     with_mta(|| {
-        render_asset(&bytes, index)
+        render_asset(&bytes, request)
             .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
     })
 }
 
-fn render_asset(bytes: &[u8], index: u32) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
+fn render_asset(
+    bytes: &[u8],
+    request: PageRequest,
+) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
     let stream = InMemoryRandomAccessStream::new()?;
     let writer = DataWriter::CreateDataWriter(&stream.GetOutputStreamAt(0)?)?;
     writer.WriteBytes(bytes)?;
@@ -65,7 +82,7 @@ fn render_asset(bytes: &[u8], index: u32) -> Result<RasterizedPage, Box<dyn std:
     writer.DetachStream()?;
     stream.Seek(0)?;
     let document = PdfDocument::LoadFromStreamAsync(&stream)?.get()?;
-    render_document(&document, PageRequest::project_file(index))
+    render_document(&document, request)
 }
 
 fn render_document(

@@ -2,9 +2,9 @@ use super::{Library, Palette};
 use chrono::{Local, Utc};
 use gpui::{
     App, Context, FocusHandle, FontWeight, KeyBinding, KeyDownEvent, WeakEntity, Window, actions,
-    div, prelude::*, px, rgb,
+    div, prelude::*, px, rgb, svg,
 };
-use gpui_component::WindowExt;
+use gpui_component::{WindowExt, tooltip::Tooltip};
 use refract_native::{
     DeletedProject, list_deleted_projects, list_projects, restore_deleted_project,
 };
@@ -90,12 +90,20 @@ impl Library {
             .id("deleted-projects")
             .track_focus(&self.deleted_projects_focus)
             .rounded_md()
-            .px_3()
-            .py_2()
+            .size(px(32.))
+            .flex()
+            .items_center()
+            .justify_center()
             .cursor_pointer()
             .hover(move |style| style.bg(rgb(palette.selection)))
             .focus(move |style| style.bg(rgb(palette.selection)))
-            .child("Deleted projects")
+            .child(
+                svg()
+                    .path("refract/trash.svg")
+                    .size(px(18.))
+                    .text_color(rgb(palette.muted)),
+            )
+            .tooltip(|window, cx| Tooltip::new("Deleted projects").build(window, cx))
             .on_click(
                 cx.listener(|library, _, window, cx| library.open_deleted_projects(window, cx)),
             )

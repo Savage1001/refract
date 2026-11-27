@@ -122,6 +122,7 @@ jobs:
           client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
           timeout 10s xdotool windowmove --sync "$client" 0 0
           timeout 10s xdotool windowsize --sync "$client" 1440 900
+          xdotool mousemove --sync 0 0
           shot="$output/light-library-list.png"
           for attempt in {1..12}; do
             import -window "$client" "$shot"
