@@ -657,7 +657,7 @@ mod tests {
         let cx = cx.add_empty_window();
         cx.update(|window, _| {
             let mut view = PdfViewport {
-                viewport: size(px(352.), px(100.)),
+                viewport: size(px(320. + 2. * INSET), px(100.)),
                 ..PdfViewport::default()
             };
             let size = PageSize {

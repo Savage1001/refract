@@ -593,7 +593,6 @@ mod tests {
         });
         cx.run_until_parked();
         let folder = cx.debug_bounds("tree/sections").unwrap();
-        cx.simulate_click(folder.center(), Modifiers::none());
         let file = cx.debug_bounds("tree/sections/intro.tex").unwrap();
         cx.simulate_click(file.center(), Modifiers::none());
         cx.update(|_, app| {

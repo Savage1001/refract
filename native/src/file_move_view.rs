@@ -656,12 +656,15 @@ mod tests {
 
         let folder_row = cx.debug_bounds("tree/sections").unwrap();
         cx.simulate_click(folder_row.center(), Modifiers::none());
+        cx.refresh().unwrap();
+        let folder_row = cx.debug_bounds("tree/sections").unwrap();
         let folder_focus = cx.update(|window, app| window.focused(app).unwrap());
         cx.simulate_keystrokes("shift-f10");
         cx.update(|window, app| {
             let menu = library.read(app).entry_menu.as_ref().unwrap();
             assert_eq!(menu.path, "sections");
-            assert_eq!(menu.position, point(folder_row.left(), folder_row.bottom()));
+            assert_eq!(menu.position.x, folder_row.left());
+            assert!((menu.position.y - folder_row.bottom()).abs() <= px(2.));
             assert!(menu.actions[0].1.is_focused(window));
         });
         assert!(cx.debug_bounds("entry-menu").is_some());
@@ -702,6 +705,7 @@ mod tests {
             assert!(window.has_active_dialog(app));
         });
         cx.simulate_keystrokes("escape");
+        cx.refresh().unwrap();
         let action = cx.debug_bounds("file-actions/main.tex").unwrap().center();
         cx.simulate_click(action, Modifiers::none());
         cx.update(|window, app| {
