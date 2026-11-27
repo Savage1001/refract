@@ -38,7 +38,7 @@ impl Composer {
                 .selection
                 .as_ref()
                 .and_then(|selection| selection.conversation.composer.as_ref())
-                .is_some_and(|composer| composer.input == *input);
+                .is_some_and(|composer| composer.input == input);
             if is_current && matches!(event, InputEvent::Change) {
                 library.schedule_chat_draft_save(cx);
             }
