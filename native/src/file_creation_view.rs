@@ -1,13 +1,14 @@
 use super::{Library, Palette};
 use gpui::{
     App, Context, Entity, KeyBinding, KeyDownEvent, PathPromptOptions, SharedString, Subscription,
-    WeakEntity, Window, actions, div, prelude::*, rgb,
+    WeakEntity, Window, actions, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     WindowExt,
     dialog::DialogButtonProps,
     input::{Input, InputEvent, InputState},
     select::{Select, SelectItem, SelectState},
+    tooltip::Tooltip,
 };
 use refract_native::{
     Project, ProjectEntry, ProjectEntryKind, create_project_entry, project_tree,
@@ -115,11 +116,21 @@ impl Library {
             .tab_index(1)
             .cursor_pointer()
             .rounded_md()
-            .px_2()
-            .py_1()
+            .w(px(28.))
+            .h(px(32.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
             .hover(move |style| style.bg(rgb(palette.selection)))
             .focus(move |style| style.bg(rgb(palette.selection)))
-            .child("+")
+            .tooltip(|window, cx| Tooltip::new("Add file or folder").build(window, cx))
+            .child(
+                svg()
+                    .path("refract/plus.svg")
+                    .size(px(18.))
+                    .text_color(rgb(palette.muted)),
+            )
             .on_click(cx.listener(|library, _, window, cx| {
                 library.open_create_entry_dialog("", window, cx)
             }))

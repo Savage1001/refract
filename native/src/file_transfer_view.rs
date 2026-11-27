@@ -1,6 +1,6 @@
 use super::{Library, Navigation, Palette};
-use gpui::{Context, KeyDownEvent, Window, div, prelude::*, rgb};
-use gpui_component::WindowExt;
+use gpui::{Context, KeyDownEvent, Window, div, prelude::*, px, rgb, svg};
+use gpui_component::{WindowExt, tooltip::Tooltip};
 use refract_native::{Project, download_project_file, export_project_zip, tex::save_compiled_pdf};
 use std::{
     io,
@@ -50,12 +50,23 @@ impl Library {
             .debug_selector(|| "export-project".to_owned())
             .tab_index(5)
             .cursor_pointer()
-            .rounded_md()
-            .px_2()
-            .py_1()
+            .w(px(26.))
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(5.))
+            .border_1()
+            .border_color(rgb(palette.input_border))
             .focus(move |style| style.bg(rgb(palette.selection)))
             .hover(move |style| style.bg(rgb(palette.selection)))
-            .child("Export project ZIP")
+            .tooltip(|window, cx| Tooltip::new("Export project").build(window, cx))
+            .child(
+                svg()
+                    .path("refract/export.svg")
+                    .size(px(18.))
+                    .text_color(rgb(palette.muted)),
+            )
             .on_click(cx.listener(|library, _, window, cx| {
                 library.start_file_transfer(Transfer::Zip, window, cx)
             }))

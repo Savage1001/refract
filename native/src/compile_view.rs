@@ -1,7 +1,7 @@
 use super::pdf_view::PdfViewport;
 use super::{Library, Navigation, Palette};
-use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb};
-use gpui_component::WindowExt;
+use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb, svg};
+use gpui_component::{WindowExt, tooltip::Tooltip};
 #[cfg(not(all(test, feature = "ui-tests")))]
 use refract_native::tex::{TexToolchain, compile_project};
 use refract_native::{Project, tex::BuildResult};
@@ -148,11 +148,20 @@ impl Library {
     pub(super) fn compile_pane(
         &self,
         build: &WorkspaceBuild,
+        pane_width: f32,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let compiling = self.build_task.is_some();
-        let compile_label = if compiling { "Compiling…" } else { "Compile" };
+        let compile_label = if compiling {
+            "Compiling…"
+        } else if build.pdf().is_some() {
+            "Compiled"
+        } else if build.outcome.is_some() {
+            "Errors"
+        } else {
+            "Compile"
+        };
         let status = if compiling {
             "Compiling…"
         } else if build.queued {
@@ -201,35 +210,64 @@ impl Library {
             .min_w(px(0.))
             .flex()
             .flex_col()
-            .bg(rgb(palette.surface))
+            .bg(rgb(palette.selection))
             .border_l_1()
             .border_color(rgb(palette.border))
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
+                    .flex_none()
                     .items_center()
-                    .gap_1()
-                    .p_2()
+                    .gap(px(6.))
+                    .px(px(if pane_width <= 651. { 8. } else { 16. }))
+                    .py(px(12.))
+                    .bg(rgb(palette.canvas))
                     .border_b_1()
                     .border_color(rgb(palette.border))
-                    .child(preview_button(
-                        "compile",
-                        compile_label,
-                        !compiling,
+                    .child(
+                        preview_button("compile", !compiling, palette, cx, Self::request_build)
+                            .px(px(10.))
+                            .gap(px(7.))
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .tooltip(|window, cx| {
+                                Tooltip::new("Compile document").build(window, cx)
+                            })
+                            .child(
+                                svg()
+                                    .path("refract/compile.svg")
+                                    .size(px(16.))
+                                    .text_color(rgb(palette.muted)),
+                            )
+                            .child(compile_label),
+                    )
+                    .children(self.pdf_controls(
+                        &build.preview,
+                        build.pdf().is_some(),
+                        pane_width - 1.,
                         palette,
                         cx,
-                        Self::request_build,
                     ))
-                    .child(preview_button(
-                        "download-pdf",
-                        "Download PDF",
-                        build.pdf().is_some() && self.entry_write_task.is_none(),
-                        palette,
-                        cx,
-                        Self::download_built_pdf,
-                    )),
+                    .child(
+                        preview_button(
+                            "download-pdf",
+                            build.pdf().is_some() && self.entry_write_task.is_none(),
+                            palette,
+                            cx,
+                            Self::download_built_pdf,
+                        )
+                        .ml_auto()
+                        .w(px(30.))
+                        .tooltip(|window, cx| Tooltip::new("Download PDF").build(window, cx))
+                        .child(
+                            svg()
+                                .path("refract/download.svg")
+                                .size(px(18.))
+                                .text_color(rgb(palette.muted)),
+                        ),
+                    ),
             )
-            .child(self.pdf_controls(&build.preview, build.pdf().is_some(), palette, cx))
             .children(build.sync_error.clone().map(|error| {
                 div()
                     .px_3()
@@ -243,20 +281,21 @@ impl Library {
 
 fn preview_button(
     id: &'static str,
-    label: &'static str,
     enabled: bool,
     palette: Palette,
     cx: &Context<Library>,
     activate: fn(&mut Library, &mut Window, &mut Context<Library>),
-) -> impl IntoElement {
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .debug_selector(|| id.to_owned())
-        .rounded_md()
-        .px_2()
-        .py_1()
-        .child(label)
-        .when(!enabled, |button| button.text_color(rgb(palette.muted)))
+        .h(px(30.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.))
+        .when(!enabled && id != "compile", |button| button.opacity(0.45))
         .when(enabled, |button| {
             button
                 .tab_index(5)

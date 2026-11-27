@@ -16,9 +16,11 @@ const MAX_HISTORY_BYTES: u64 = 64 * 1024 * 1024;
 const CHATS_DIRECTORY: &str = ".refract-chats";
 
 mod attachments;
+mod draft;
 pub use attachments::{
     MAX_ATTACHMENTS, attach_conversation_files, attach_conversation_image, read_conversation_image,
 };
+pub use draft::{ConversationDraft, load_conversation_draft, save_conversation_draft};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ConversationId(String);

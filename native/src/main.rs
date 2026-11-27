@@ -356,7 +356,7 @@ impl Library {
                 }
             });
         }));
-        self.load_project_conversation(Default::default(), cx);
+        self.load_project_conversation(Default::default(), window, cx);
         self.open_file(file, window, cx);
         self.snapshot_needed = true;
         self.start_snapshot(window, cx);
@@ -1068,6 +1068,9 @@ impl Library {
     }
 
     fn navigate(&mut self, navigation: Navigation, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(&navigation, Navigation::CloseFile(_)) {
+            self.flush_chat_draft(cx);
+        }
         match navigation {
             Navigation::CloseFile(file) => self.close_file(&file, window, cx),
             Navigation::Projects => self.return_to_projects(window, cx),
@@ -1613,13 +1616,14 @@ impl Library {
             .cursor_pointer()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(10.))
             .rounded_md()
-            .px_2()
             .py_1()
+            .text_size(px(15.))
+            .font_weight(FontWeight(650.))
             .focus(move |style| style.bg(rgb(palette.selection)))
             .hover(move |style| style.bg(rgb(palette.selection)))
-            .child(img(self.logo.clone()).size(px(24.)))
+            .child(img(self.logo.clone()).size(px(28.)).rounded(px(7.)))
             .child("Refract")
             .on_click(cx.listener(|library, _, window, cx| {
                 library.request_navigation(Navigation::Projects, window, cx)
@@ -1641,8 +1645,6 @@ impl Library {
                     .h(px(WORKSPACE_HEADER_HEIGHT))
                     .flex_none()
                     .items_center()
-                    .border_b_1()
-                    .border_color(rgb(palette.border))
                     .bg(rgb(palette.sidebar))
                     .child(
                         div()
@@ -1651,7 +1653,9 @@ impl Library {
                             .h_full()
                             .flex()
                             .items_center()
-                            .px_3()
+                            .relative()
+                            .top(px(11.))
+                            .px(px(18.))
                             .when(collapsed, |bar| bar.justify_center())
                             .when(!collapsed, |bar| bar.justify_between().child(home))
                             .child(self.sidebar_collapse_button(palette, cx)),
@@ -1660,16 +1664,25 @@ impl Library {
                         div()
                             .flex_1()
                             .min_w(px(0.))
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .pl_3()
                             .overflow_hidden()
+                            .border_b_1()
+                            .border_color(rgb(palette.border))
                             .child(self.project_name_control(&selection.project, palette, cx)),
                     )
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_1()
-                            .px_2()
+                            .h_full()
+                            .gap(px(6.))
+                            .pr_3()
                             .flex_none()
+                            .border_b_1()
+                            .border_color(rgb(palette.border))
                             .child(self.workspace_pane_buttons(
                                 visible,
                                 WorkspaceLayout::compact(width),
@@ -1705,8 +1718,20 @@ impl Library {
                             .border_color(rgb(palette.border))
                             .when(!collapsed, |panel| {
                                 panel
-                                    .gap_3()
-                                    .p_4()
+                                    .px_3()
+                                    .pb_3()
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .pt(px(59.))
+                                            .pb_2()
+                                            .px(px(10.))
+                                            .text_size(px(11.))
+                                            .line_height(px(16.))
+                                            .font_weight(FontWeight(650.))
+                                            .text_color(rgb(palette.muted))
+                                            .child("PROJECT"),
+                                    )
                                     .children(self.project_action_error.clone())
                                     .child(self.project_sidebar_tabs(selection, palette, cx))
                                     .when(!selection.conversation.sidebar_open, |sidebar| {
@@ -1720,7 +1745,6 @@ impl Library {
                                         sidebar
                                             .child(self.conversation_list(selection, palette, cx))
                                     })
-                                    .child(self.deleted_files_button(palette, cx))
                             }),
                     )
                     .when(!collapsed, |body| {
@@ -1736,7 +1760,7 @@ impl Library {
                                 .when(split, |pane| pane.w(px(editor_width)).flex_none())
                                 .when(!split, |pane| pane.flex_1())
                                 .when(visible.editor, |pane| {
-                                    pane.child(self.source_pane(selection, palette, cx))
+                                    pane.child(self.source_pane(selection, width, palette, cx))
                                 })
                                 .when(visible.agent, |pane| {
                                     pane.child(self.conversation_pane(
@@ -1761,7 +1785,12 @@ impl Library {
                         body.child(self.workspace_tools_pane(selection, tool, palette, cx))
                     })
                     .when(visible.preview, |body| {
-                        body.child(self.compile_pane(&selection.build, palette, cx))
+                        let pane_width = if split {
+                            width - sidebar - editor_width
+                        } else {
+                            width - sidebar
+                        };
+                        body.child(self.compile_pane(&selection.build, pane_width, palette, cx))
                     }),
             )
     }
@@ -2000,6 +2029,7 @@ impl Library {
     fn source_pane(
         &self,
         selection: &Selection,
+        viewport_width: f32,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -2010,8 +2040,7 @@ impl Library {
             .min_h(px(0.))
             .flex()
             .flex_col()
-            .p_4()
-            .gap_2()
+            .overflow_hidden()
             .when(selection.retained_restore_stages, |pane| {
                 pane.child(
                     div().p_2().bg(rgb(palette.warning_surface)).child(
@@ -2026,11 +2055,6 @@ impl Library {
                     .child("Choose a file from the sidebar."),
             );
         };
-        let pane = pane.child(self.file_tabs(selection, palette, cx));
-        let file = div()
-            .truncate()
-            .text_color(rgb(palette.muted))
-            .child(path.clone());
         let editor = selection
             .tabs
             .iter()
@@ -2038,42 +2062,30 @@ impl Library {
             .and_then(|tab| tab.editor.as_ref());
         let mut header = div()
             .flex()
+            .flex_wrap()
             .items_center()
-            .justify_between()
-            .gap_2()
-            .child(file)
+            .min_h(px(40.))
+            .gap(px(6.))
+            .py(px(5.))
+            .border_t_1()
+            .border_color(rgb(palette.border))
+            .text_size(px(12.))
+            .text_color(rgb(palette.muted))
             .child(self.show_in_pdf_button(selection, palette, cx));
-        if editor.is_some_and(Result::is_ok) {
-            let saving = self.save_task.is_some();
+        if let Some(Ok(editor)) = editor {
             header = header
                 .child(self.commands_button(palette, cx))
-                .child(self.source_find_button(palette, cx))
-                .child(
-                    div()
-                        .id("save-file")
-                        .tab_index(3)
-                        .rounded_md()
-                        .px_2()
-                        .py_1()
-                        .focus(move |style| style.bg(rgb(palette.selection)))
-                        .when(!saving, |button| {
-                            button
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(rgb(palette.selection)))
-                        })
-                        .child(if saving { "Saving…" } else { "Save" })
-                        .on_click(cx.listener(|library, _, window, cx| {
-                            library.save_active_file(window, cx)
-                        }))
-                        .on_key_down(cx.listener(
-                            |library, event: &gpui::KeyDownEvent, window, cx| {
-                                if event.keystroke.key == "enter" || event.keystroke.key == "space"
-                                {
-                                    library.save_active_file(window, cx);
-                                }
-                            },
-                        )),
-                );
+                .child(self.source_find_button(palette, cx));
+            if editor.save_error.is_some() {
+                header = header.child(workspace_tools::tool_button(
+                    "save-file",
+                    "Retry save",
+                    false,
+                    palette,
+                    cx,
+                    |library, window, cx| library.save_active_file(window, cx),
+                ));
+            }
         }
         let preview = match (&selection.asset_preview, editor) {
             (Some(asset), _) => self.asset_preview(asset, palette, cx).into_any_element(),
@@ -2083,19 +2095,36 @@ impl Library {
                 .into_any_element(),
             (_, Some(Ok(editor))) => self.source_editor(editor, cx).into_any_element(),
         };
-        pane.child(header)
-            .when(
-                self.editor_find.visible && editor.is_some_and(Result::is_ok),
-                |pane| pane.child(self.source_find_panel(palette, cx)),
-            )
-            .children(
-                editor
-                    .and_then(|editor| editor.as_ref().ok()?.save_error.clone())
-                    .map(|error| format!("Couldn’t save source: {error}")),
-            )
-            .children(selection.comment_status)
-            .children(self.commands_popup(palette, cx))
-            .child(preview)
+        let header_inset = if viewport_width <= 800. { 10. } else { 16. };
+        pane.child(
+            div()
+                .flex_none()
+                .px(px(header_inset))
+                .border_b_1()
+                .border_color(rgb(palette.border))
+                .child(self.file_tabs(selection, palette, cx))
+                .child(header),
+        )
+        .when(
+            self.editor_find.visible && editor.is_some_and(Result::is_ok),
+            |pane| pane.child(self.source_find_panel(palette, cx)),
+        )
+        .children(
+            editor
+                .and_then(|editor| editor.as_ref().ok()?.save_error.clone())
+                .map(|error| format!("Couldn’t save source: {error}")),
+        )
+        .children(selection.comment_status)
+        .children(self.commands_popup(palette, cx))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.))
+                .pt(px(20.))
+                .child(preview),
+        )
     }
 }
 
@@ -2105,7 +2134,7 @@ fn monospace_font() -> &'static str {
     } else if cfg!(target_os = "macos") {
         "Menlo"
     } else {
-        "monospace"
+        "Liberation Mono"
     }
 }
 
@@ -2185,6 +2214,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return true;
                     };
                     library.update(cx, |library, cx| {
+                        library.flush_chat_draft(cx);
                         let close = Navigation::CloseWindow;
                         if library.save_task.is_none()
                             && library.save_queue.is_empty()

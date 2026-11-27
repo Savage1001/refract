@@ -1,5 +1,6 @@
 use super::{Library, Palette, Selection};
-use gpui::{Context, KeyDownEvent, Window, div, prelude::*, px, rgb};
+use gpui::{Context, KeyDownEvent, Window, div, prelude::*, px, rgb, svg};
+use gpui_component::tooltip::Tooltip;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum WorkspaceTool {
@@ -101,12 +102,24 @@ impl Library {
     ) -> impl IntoElement {
         tool_button(
             "project-tools",
-            "Tools",
+            svg()
+                .path("refract/wrench.svg")
+                .size(px(18.))
+                .text_color(rgb(palette.muted)),
             selection.tool.is_some(),
             palette,
             cx,
             Self::toggle_workspace_tools,
         )
+        .w(px(26.))
+        .h(px(24.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .border_1()
+        .border_color(rgb(palette.input_border))
+        .tooltip(|window, cx| Tooltip::new("Tools").build(window, cx))
     }
 
     pub(super) fn workspace_tools_pane(
@@ -191,12 +204,12 @@ impl Library {
 
 pub(super) fn tool_button<F>(
     id: &'static str,
-    label: impl Into<gpui::SharedString>,
+    label: impl IntoElement,
     selected: bool,
     palette: Palette,
     cx: &Context<Library>,
     activate: F,
-) -> impl IntoElement
+) -> gpui::Stateful<gpui::Div>
 where
     F: Fn(&mut Library, &mut Window, &mut Context<Library>) + Clone + 'static,
 {
@@ -212,7 +225,7 @@ where
         .when(selected, |button| button.bg(rgb(palette.selection)))
         .hover(move |style| style.bg(rgb(palette.selection)))
         .focus(move |style| style.text_color(rgb(palette.focus)))
-        .child(label.into())
+        .child(label)
         .on_click(cx.listener(move |library, _, window, cx| activate(library, window, cx)))
         .on_key_down(
             cx.listener(move |library, event: &KeyDownEvent, window, cx| {

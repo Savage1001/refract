@@ -1,9 +1,12 @@
 use super::{Library, Palette, PdfViewport, Zoom};
 use gpui::{
     App, Context, Entity, Focusable, KeyBinding, KeyDownEvent, Subscription, Window, actions, div,
-    prelude::*, px, rgb,
+    prelude::*, px, rgb, svg,
 };
-use gpui_component::input::{Input, InputEvent, InputState, SelectAll};
+use gpui_component::{
+    input::{Input, InputEvent, InputState, SelectAll},
+    tooltip::Tooltip,
+};
 
 actions!(refract_pdf, [SubmitPage, CancelPage]);
 
@@ -173,109 +176,139 @@ impl Library {
         &self,
         view: &PdfViewport,
         ready: bool,
+        pane_width: f32,
         palette: Palette,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Option<impl IntoElement> {
+        let count = view.layout.pages.len() as u32;
+        if count == 0 {
+            return None;
+        }
+        let ready = ready && !view.loading_document;
+        let narrow = pane_width <= 650.;
+        let show_labels = pane_width > 575.;
+        let group_margin = if narrow { 6. } else { 12. };
         let zoom = view.zoom.percentage();
         let label = if view.zoom == Zoom::FitWidth {
             "Fit".to_owned()
         } else {
             format!("{zoom}%")
         };
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(6.))
-            .px(px(2.))
-            .text_size(px(12.))
-            .when(!view.layout.pages.is_empty(), |controls| {
-                let count = view.layout.pages.len() as u32;
-                let ready = ready && !view.loading_document;
-                controls
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(pdf_button(
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .flex_wrap()
+                .items_center()
+                .max_w_full()
+                .gap(px(6.))
+                .mx(px(if narrow { 2. } else { 8. }))
+                .text_size(px(12.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .when(show_labels, |group| group.child(pdf_label("Page", palette)))
+                        .child(
+                            pdf_button(
                                 "pdf-prev",
-                                "‹",
+                                "Previous page",
                                 ready && view.page > 0,
                                 palette,
                                 cx,
                                 |library, window, cx| library.change_pdf_page(-1, window, cx),
-                            ))
-                            .child(self.pdf_page_number(view, ready, palette, cx))
-                            .child(format!("/ {count}"))
-                            .child(pdf_button(
+                            )
+                            .child(pdf_icon("refract/chevron-left.svg", palette)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .min_w(px(40.))
+                                .child(self.pdf_page_number(view, ready, palette, cx))
+                                .child(format!(" / {count}")),
+                        )
+                        .child(
+                            pdf_button(
                                 "pdf-next",
-                                "›",
+                                "Next page",
                                 ready && view.page < count - 1,
                                 palette,
                                 cx,
                                 |library, window, cx| library.change_pdf_page(1, window, cx),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(pdf_button(
+                            )
+                            .child(pdf_icon("refract/chevron-right.svg", palette)),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .ml(px(group_margin))
+                        .when(show_labels, |group| group.child(pdf_label("Zoom", palette)))
+                        .child(
+                            pdf_button(
                                 "pdf-zoom-out",
-                                "−",
+                                "Zoom out",
                                 ready && zoom > 25,
                                 palette,
                                 cx,
                                 |library, window, cx| library.step_pdf_zoom(-25, window, cx),
-                            ))
-                            .child(label)
-                            .child(pdf_button(
+                            )
+                            .child(pdf_icon("refract/minus.svg", palette)),
+                        )
+                        .child(div().flex_none().px(px(2.)).mx(px(-3.)).child(label))
+                        .child(
+                            pdf_button(
                                 "pdf-zoom-in",
-                                "+",
+                                "Zoom in",
                                 ready && zoom < 250,
                                 palette,
                                 cx,
                                 |library, window, cx| library.step_pdf_zoom(25, window, cx),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .text_size(px(11.))
-                            .child(
-                                pdf_button(
-                                    "pdf-fit-width",
-                                    "Fit width",
-                                    ready,
-                                    palette,
-                                    cx,
-                                    |library, window, cx| {
-                                        library.change_pdf_zoom(Zoom::FitWidth, window, cx)
-                                    },
-                                )
-                                .when(view.zoom == Zoom::FitWidth, |button| {
-                                    button.bg(rgb(palette.selection))
-                                }),
                             )
-                            .child(
-                                pdf_button(
-                                    "pdf-fit-page",
-                                    "Fit page",
-                                    ready,
-                                    palette,
-                                    cx,
-                                    Self::fit_pdf_page,
-                                )
-                                .when(matches!(view.zoom, Zoom::FitPage(_)), |button| {
-                                    button.bg(rgb(palette.selection))
-                                }),
+                            .child(pdf_icon("refract/plus.svg", palette)),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .ml(px(group_margin))
+                        .child(fit_button(
+                            pdf_button(
+                                "pdf-fit-width",
+                                "Fit PDF to width",
+                                ready,
+                                palette,
+                                cx,
+                                |library, window, cx| {
+                                    library.change_pdf_zoom(Zoom::FitWidth, window, cx)
+                                },
                             ),
-                    )
-            })
+                            "Fit width",
+                            view.zoom == Zoom::FitWidth,
+                            palette,
+                        ))
+                        .child(fit_button(
+                            pdf_button(
+                                "pdf-fit-page",
+                                "Fit PDF page to view",
+                                ready,
+                                palette,
+                                cx,
+                                Self::fit_pdf_page,
+                            ),
+                            "Fit page",
+                            matches!(view.zoom, Zoom::FitPage(_)),
+                            palette,
+                        )),
+                ),
+        )
     }
 
     fn pdf_page_number(
@@ -312,7 +345,7 @@ impl Library {
         }
         pdf_button(
             "pdf-current-page",
-            (view.page + 1).to_string(),
+            "Go to page",
             ready,
             palette,
             cx,
@@ -321,6 +354,7 @@ impl Library {
         .min_w(px(28.))
         .text_center()
         .text_size(px(12.))
+        .child((view.page + 1).to_string())
         .when_some(
             view.page_focus.as_ref().filter(|_| ready),
             |button, focus| button.track_focus(focus),
@@ -331,12 +365,12 @@ impl Library {
 
 fn pdf_button(
     id: &'static str,
-    label: impl Into<gpui::SharedString>,
+    title: &'static str,
     enabled: bool,
     palette: Palette,
     cx: &Context<Library>,
     activate: fn(&mut Library, &mut Window, &mut Context<Library>),
-) -> impl IntoElement + Styled + InteractiveElement {
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .debug_selector(|| id.to_owned())
@@ -346,11 +380,11 @@ fn pdf_button(
         .flex()
         .items_center()
         .justify_center()
-        .px_1()
-        .py_1()
-        .rounded_md()
-        .child(label.into())
-        .when(!enabled, |button| button.text_color(rgb(palette.muted)))
+        .px(px(5.))
+        .py(px(3.))
+        .rounded(px(6.))
+        .tooltip(move |window, cx| Tooltip::new(title).build(window, cx))
+        .when(!enabled, |button| button.opacity(0.45))
         .when(enabled, |button| {
             button
                 .tab_index(5)
@@ -366,6 +400,40 @@ fn pdf_button(
                     }),
                 )
         })
+}
+
+fn pdf_label(label: &'static str, palette: Palette) -> impl IntoElement {
+    div()
+        .text_size(px(11.))
+        .text_color(rgb(palette.muted))
+        .child(label)
+}
+
+fn pdf_icon(path: &'static str, palette: Palette) -> impl IntoElement {
+    svg()
+        .path(path)
+        .size(px(18.))
+        .text_color(rgb(palette.muted))
+}
+
+fn fit_button(
+    button: gpui::Stateful<gpui::Div>,
+    label: &'static str,
+    active: bool,
+    palette: Palette,
+) -> impl IntoElement {
+    button
+        .px(px(6.))
+        .text_size(px(11.))
+        .border_1()
+        .border_color(if active {
+            rgb(palette.input_border)
+        } else {
+            gpui::rgba(0)
+        })
+        .text_color(rgb(if active { palette.text } else { palette.muted }))
+        .when(active, |button| button.bg(rgb(palette.selection)))
+        .child(label)
 }
 
 #[cfg(all(test, feature = "ui-tests", windows))]

@@ -9,11 +9,15 @@ use gpui_component::{
     tooltip::Tooltip,
 };
 use refract_native::conversation::{
-    Attachment, Conversation, ConversationId, ConversationSummary, Message, create_conversation,
-    list_conversations, load_conversation, read_conversation_image, rename_conversation,
+    Attachment, Conversation, ConversationDraft, ConversationId, ConversationSummary, Message,
+    create_conversation, list_conversations, load_conversation, load_conversation_draft,
+    read_conversation_image, rename_conversation,
 };
 use refract_native::workspace_layout::Divider;
 use std::{collections::HashMap, io};
+
+mod composer;
+use composer::Composer;
 
 #[derive(Default)]
 pub(super) struct ConversationPane {
@@ -27,6 +31,7 @@ pub(super) struct ConversationPane {
     scroll: ScrollHandle,
     welcome_dismissed: bool,
     draft: Option<NameDraft>,
+    composer: Option<Composer>,
     error: Option<String>,
 }
 
@@ -49,7 +54,14 @@ enum Change {
 }
 
 impl ConversationPane {
-    fn display(&mut self, id: ConversationId, history: Conversation) {
+    fn display(
+        &mut self,
+        id: ConversationId,
+        history: Conversation,
+        draft: io::Result<ConversationDraft>,
+        window: &mut Window,
+        cx: &mut Context<Library>,
+    ) {
         self.active = id;
         self.image_task = None;
         self.scroll = ScrollHandle::new();
@@ -63,6 +75,11 @@ impl ConversationPane {
             self.scroll.scroll_to_bottom();
         }
         self.history = Some(history);
+        let draft = draft.unwrap_or_else(|error| {
+            self.error = Some(format!("Couldn’t load chat draft. {error}"));
+            ConversationDraft::default()
+        });
+        self.composer = Some(Composer::new(draft, window, cx));
     }
 
     fn set_rows(
@@ -149,7 +166,13 @@ impl Library {
         }));
     }
 
-    pub(super) fn load_project_conversation(&mut self, id: ConversationId, cx: &mut Context<Self>) {
+    pub(super) fn load_project_conversation(
+        &mut self,
+        id: ConversationId,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.flush_chat_draft(cx);
         let Some(selection) = &mut self.selection else {
             return;
         };
@@ -159,18 +182,22 @@ impl Library {
         selection.conversation.error = None;
         let load = cx.background_executor().spawn(async move {
             let history = load_conversation(&path, &project, &id);
-            (id, history)
+            let draft = load_conversation_draft(&path, &project, &id);
+            (id, history, draft)
         });
-        selection.conversation.load_task = Some(cx.spawn(async move |library, cx| {
-            let (id, result) = load.await;
-            let _ = library.update(cx, |library, cx| {
+        selection.conversation.load_task = Some(cx.spawn_in(window, async move |library, cx| {
+            let (id, result, draft) = load.await;
+            let _ = library.update_in(cx, |library, window, cx| {
+                if library.project_open_sequence == sequence {
+                    library.flush_chat_draft(cx);
+                }
                 if library.project_open_sequence == sequence
                     && let Some(selection) = &mut library.selection
                 {
                     let pane = &mut selection.conversation;
                     pane.load_task = None;
                     match result {
-                        Ok(history) => pane.display(id, history),
+                        Ok(history) => pane.display(id, history, draft, window, cx),
                         Err(error) => pane.error = Some(format!("Couldn’t open chat. {error}")),
                     }
                     cx.notify();
@@ -246,13 +273,22 @@ impl Library {
             let result = operation.await;
             let _ = library.update_in(cx, |library, window, cx| {
                 library.entry_write_task = None;
+                if creating && library.project_open_sequence == sequence {
+                    library.flush_chat_draft(cx);
+                }
                 if library.project_open_sequence == sequence
                     && let Some(selection) = &mut library.selection
                 {
                     match result {
                         Ok(id) => {
                             if let Some(id) = id {
-                                selection.conversation.display(id, Conversation::default());
+                                selection.conversation.display(
+                                    id,
+                                    Conversation::default(),
+                                    Ok(ConversationDraft::default()),
+                                    window,
+                                    cx,
+                                );
                             }
                             if selection.conversation.sidebar_open {
                                 library.refresh_conversation_list(cx);
@@ -398,6 +434,7 @@ impl Library {
             )
             .child(div().flex_1())
             .child(self.add_items_button(palette, cx))
+            .child(self.deleted_files_button(palette, cx))
     }
 
     pub(super) fn conversation_list(
@@ -435,9 +472,9 @@ impl Library {
                 let rename = id.clone();
                 row_div
                     .child(
-                        chat_button("open-chat", palette, cx, move |library, _, cx| {
+                        chat_button("open-chat", palette, cx, move |library, window, cx| {
                             if library.entry_write_task.is_none() {
-                                library.load_project_conversation(open.clone(), cx);
+                                library.load_project_conversation(open.clone(), window, cx);
                             }
                         })
                         .debug_selector({
@@ -573,9 +610,12 @@ impl Library {
                                 .child("Ask about your LaTeX, research, or writing."),
                         )
                         .child(
-                            chat_button("dismiss-welcome", palette, cx, |library, _, cx| {
+                            chat_button("dismiss-welcome", palette, cx, |library, window, cx| {
                                 if let Some(selection) = &mut library.selection {
                                     selection.conversation.welcome_dismissed = true;
+                                    if let Some(composer) = &selection.conversation.composer {
+                                        composer.focus(window, cx);
+                                    }
                                     cx.notify();
                                 }
                             })
@@ -624,6 +664,11 @@ impl Library {
                     .map(|error| div().text_color(rgb(palette.warning)).child(error)),
             )
             .child(history)
+            .children(
+                pane.composer
+                    .as_ref()
+                    .map(|composer| self.conversation_composer(pane, composer, palette, cx)),
+            )
             .when(editor_shown, |panel| {
                 panel.child(self.workspace_divider(Divider::Chat, height, palette, cx))
             })

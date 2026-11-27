@@ -403,10 +403,9 @@ impl Library {
         div()
             .id("project-name")
             .track_focus(&self.project_name_focus)
+            .min_w(px(0.))
             .truncate()
-            .rounded_md()
-            .px_2()
-            .py_1()
+            .text_size(px(16.))
             .font_weight(FontWeight::SEMIBOLD)
             .child(project.name.clone())
             .when(self.can_rename_project(), |button| {

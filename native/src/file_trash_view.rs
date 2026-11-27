@@ -3,9 +3,9 @@ use crate::deleted_projects_view::recovery_button;
 use chrono::Local;
 use gpui::{
     App, Context, FocusHandle, KeyBinding, KeyDownEvent, PromptLevel, SharedString, WeakEntity,
-    Window, actions, div, prelude::*, px, rgb,
+    Window, actions, div, prelude::*, px, rgb, svg,
 };
-use gpui_component::WindowExt;
+use gpui_component::{WindowExt, tooltip::Tooltip};
 use refract_native::{
     DeletedEntry, ProjectEntryKind, list_deleted_entries, project_tree, restore_deleted_entry,
     trash_project_entry,
@@ -223,12 +223,22 @@ impl Library {
             .id("deleted-files")
             .track_focus(&self.deleted_files_focus)
             .rounded_md()
-            .px_3()
-            .py_2()
+            .w(px(28.))
+            .h(px(32.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
             .cursor_pointer()
             .hover(move |style| style.bg(rgb(palette.selection)))
             .focus(move |style| style.bg(rgb(palette.selection)))
-            .child("Deleted files")
+            .tooltip(|window, cx| Tooltip::new("Deleted files").build(window, cx))
+            .child(
+                svg()
+                    .path("refract/trash.svg")
+                    .size(px(18.))
+                    .text_color(rgb(palette.muted)),
+            )
             .on_click(cx.listener(|library, _, window, cx| library.open_deleted_files(window, cx)))
             .on_key_down(cx.listener(|library, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "enter" || event.keystroke.key == "space" {
