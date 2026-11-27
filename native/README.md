@@ -73,6 +73,8 @@ Add `--features latex-syntax` to include the native lexer tests. To regenerate t
 
 On macOS and Linux, add `--features portable-pdf` to exercise PDF rasterization without opening a window.
 
+The Windows job runs the native dependency helper on a fresh CI profile and verifies that the compiler finds the checksum-verified TinyTeX and SyncTeX install automatically. It runs the helper again to check reuse of the existing installation. The macOS job builds the helper and runs its fixture tests.
+
 The Windows CI job also exercises keyboard navigation through GPUI's simulated platform, using a temporary profile.
 
 ```sh

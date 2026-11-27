@@ -17,6 +17,8 @@ pub mod file_preview;
 pub mod latex_commands;
 #[cfg(feature = "latex-syntax")]
 pub mod latex_syntax;
+#[cfg(any(feature = "installer", test))]
+pub mod managed_tex;
 pub mod outline;
 pub mod pdf_raster;
 pub mod project_catalog;

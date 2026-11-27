@@ -11,11 +11,17 @@ desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", 
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 portable-pdf = ["dep:hayro"]
 ui-tests = ["desktop", "gpui/test-support"]
+installer = ["dep:zed-reqwest", "zed-reqwest/rustls-tls-native-roots"]
 
 [[bin]]
 name = "refract-native"
 path = "src/main.rs"
 required-features = ["desktop"]
+
+[[bin]]
+name = "refract-install-dependencies"
+path = "src/bin/install_dependencies.rs"
+required-features = ["installer"]
 
 [dependencies]
 async-channel = { version = "=2.5.0", optional = true }

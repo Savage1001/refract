@@ -35,35 +35,21 @@ jobs:
         run: cargo +stable test --locked --no-default-features --features latex-syntax
       - name: Test the assistant tool server over loopback
         run: cargo +stable test --locked --no-default-features --lib assistant_tools::server::tests::serves_an_authenticated_turn_and_releases_its_listener -- --ignored
-      - name: Verify LaTeX and SyncTeX with TinyTeX
+      - name: Install managed TeX and verify automatic discovery
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'TinyTeX-v2026.10.zip'
-          Invoke-WebRequest 'https://github.com/rstudio/tinytex-releases/releases/download/v2026.10/TinyTeX-v2026.10.zip' -OutFile $archive
-          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'dc1d6e63b21af62130ede1dcc4113bffdc184544690a23e3f489d75340f4ff61') {
-            throw 'TinyTeX archive checksum mismatch'
-          }
-          tar -xf $archive -C $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to extract TinyTeX' }
-          $tools = Join-Path $env:RUNNER_TEMP 'TinyTeX'
-          $syncArchive = Join-Path $env:RUNNER_TEMP 'synctex.windows.r78097.tar.xz'
-          $syncHash = '09ff70bf3a0de6b1c81c5aa3eb136473fce83314dc407a9ad6c4592376a6a83c'
-          $syncVerified = $false
-          foreach ($mirror in @('https://mirrors.ctan.org', 'https://mirrors.mit.edu/CTAN', 'https://ctan.math.illinois.edu')) {
-            try {
-              Invoke-WebRequest "$mirror/systems/texlive/tlnet/archive/synctex.windows.r78097.tar.xz" -TimeoutSec 25 -OutFile $syncArchive
-              if ((Get-FileHash -LiteralPath $syncArchive -Algorithm SHA256).Hash -ne $syncHash) {
-                throw 'Archive checksum mismatch'
-              }
-              $syncVerified = $true
-              break
-            } catch {
-              Write-Warning "SyncTeX archive from $mirror failed: $($_.Exception.Message)"
-            }
-          }
-          if (!$syncVerified) { throw 'Could not download the verified SyncTeX archive' }
-          tar -xf $syncArchive -C $tools 'bin/windows/synctex.exe'
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to extract SyncTeX' }
-          $env:REFRACT_TEX_BIN = Join-Path $tools 'bin/windows'
+          cargo +stable test --locked --no-default-features --features installer --lib managed_tex
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +stable build --locked --no-default-features --features installer --bin refract-install-dependencies
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tools = Join-Path $env:LOCALAPPDATA 'Refract/dependencies/TinyTeX/bin/windows'
+          if (Test-Path -LiteralPath $tools) { throw 'Expected a fresh dependency directory' }
+          & ./target/debug/refract-install-dependencies.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $marker = Join-Path $tools 'refract-ci-reuse-marker.txt'
+          Set-Content -LiteralPath $marker -Value 'Existing TeX setup' -ErrorAction Stop
+          & ./target/debug/refract-install-dependencies.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path -LiteralPath $marker)) { throw 'Expected to reuse the complete TeX setup' }
           cargo +stable test --locked --no-default-features --lib tex::tests::compiles_with_the_configured_toolchain -- --ignored
       - name: Build GPUI preview
         run: cargo +stable build --locked
@@ -97,6 +83,11 @@ jobs:
           sudo apt-get install -y libfontconfig1-dev libwayland-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev
       - name: Check the native application
         run: cargo +stable check --locked --bin refract-native
+      - name: Check the macOS dependency installer
+        if: runner.os == 'macOS'
+        run: |
+          cargo +stable build --locked --no-default-features --features installer --bin refract-install-dependencies
+          cargo +stable test --locked --no-default-features --features installer --lib managed_tex
       - name: Build for visual verification
         if: runner.os == 'Linux'
         run: cargo +stable build --locked --bin refract-native
