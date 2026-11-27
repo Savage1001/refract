@@ -104,9 +104,14 @@ jobs:
             pacman -Qd texlive-bin
           fi
 
-          for tool in pdflatex xelatex lualatex synctex kpsewhich bibtex biber; do
+          for tool in pdflatex xelatex lualatex synctex kpsewhich bibtex; do
             command -v "$tool"
           done
+          if [[ "$PACKAGE_MANAGER" = pacman ]]; then
+            test -x /usr/bin/vendor_perl/biber
+          else
+            command -v biber
+          fi
           test "$(readlink -f /usr/bin/refract)" = /opt/Refract/refract
           desktop-file-validate /usr/share/applications/refract.desktop
           libraries=$(ldd /opt/Refract/refract)
@@ -135,9 +140,18 @@ jobs:
           geometry=$(xdotool getwindowgeometry --shell "$client")
           grep -Fx 'WIDTH=1440' <<< "$geometry"
           grep -Fx 'HEIGHT=900' <<< "$geometry"
-          xdotool mousemove --window "$client" 340 615 click 1
           project="$XDG_CONFIG_HOME/Refract/projects/2b98e215-1a9f-4f24-972b-000000000000"
           output="$project/.refract-build/main"
+          # X11 maps the window before GPUI paints the asynchronously loaded project library.
+          xdotool windowfocus "$client"
+          for attempt in {1..20}; do
+            if [[ -d "$project/.refract-build" ]]; then
+              break
+            fi
+            kill -0 "$app"
+            xdotool mousemove --window "$client" 340 615 click 1
+            sleep 0.25
+          done
           for attempt in {1..240}; do
             if [[ -s "$output.pdf" && -s "$output.synctex.gz" ]]; then
               break
@@ -145,6 +159,12 @@ jobs:
             kill -0 "$app"
             sleep 0.25
           done
+          if [[ ! -s "$output.pdf" || ! -s "$output.synctex.gz" ]]; then
+            find "$XDG_CONFIG_HOME/Refract/projects" -maxdepth 3 -type f -print
+            if [[ -f "$output.log" ]]; then tail -n 60 "$output.log"; fi
+            echo 'The installed app did not generate its PDF and SyncTeX files' >&2
+            exit 1
+          fi
           test "$(head -c 5 "$output.pdf")" = '%PDF-'
           forward=$(synctex view -i "9:1:$project/main.tex" -o "$output.pdf")
           grep -Fx 'Page:1' <<< "$forward"

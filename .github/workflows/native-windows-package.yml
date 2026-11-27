@@ -32,11 +32,11 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Install package build dependencies and check TypeScript
+      - name: Install package build dependencies and compile the distribution hooks
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx --no-install tsc --noEmit
+          npm run build
       - name: Build native application and dependency installer
         run: |
           cargo +stable build --locked --manifest-path native/Cargo.toml --bin refract-native

@@ -34,6 +34,8 @@ impl LatexEngine {
 
 pub struct TexToolchain {
     bin: PathBuf,
+    #[cfg(target_os = "linux")]
+    system_biber: Option<PathBuf>,
 }
 
 impl TexToolchain {
@@ -41,16 +43,25 @@ impl TexToolchain {
         if let Some(explicit) = env::var_os("REFRACT_TEX_BIN").filter(|path| !path.is_empty()) {
             return Self::from_bin(PathBuf::from(explicit));
         }
-        platform_toolchain()
-            .map(|bin| Self { bin })
-            .ok_or_else(missing_toolchain)
+        let bin = platform_toolchain().ok_or_else(missing_toolchain)?;
+        Ok(Self {
+            #[cfg(target_os = "linux")]
+            system_biber: (bin == Path::new("/usr/bin") || bin == Path::new("/usr/sbin"))
+                .then(|| PathBuf::from("/usr/bin/vendor_perl/biber"))
+                .filter(|biber| biber.is_file() && !bin.join("biber").is_file()),
+            bin,
+        })
     }
 
     pub fn from_bin(bin: PathBuf) -> io::Result<Self> {
         if !bin.is_absolute() {
             return Err(missing_toolchain());
         }
-        Ok(Self { bin })
+        Ok(Self {
+            bin,
+            #[cfg(target_os = "linux")]
+            system_biber: None,
+        })
     }
 
     pub fn bin(&self) -> &Path {
@@ -62,6 +73,12 @@ impl TexToolchain {
     }
 
     pub(crate) fn executable(&self, name: &str) -> PathBuf {
+        #[cfg(target_os = "linux")]
+        if name == "biber"
+            && let Some(biber) = &self.system_biber
+        {
+            return biber.clone();
+        }
         tex_executable(&self.bin, name)
     }
 }
