@@ -46,10 +46,17 @@ impl InstalledProvider {
         }
     }
 
-    fn label(&self) -> &'static str {
+    pub(super) fn label(&self) -> &'static str {
         match self {
             Self::Codex(_) => "Codex",
             Self::OpenCode(_) => "OpenCode",
+        }
+    }
+
+    pub(super) fn mode(&self) -> AssistantConnection {
+        match self {
+            Self::Codex(_) => AssistantConnection::CodexCli,
+            Self::OpenCode(_) => AssistantConnection::OpenCode,
         }
     }
 }
@@ -117,9 +124,10 @@ impl ProviderPicker {
             }
             state
         });
-        let selected = cx.subscribe(
+        let selected = cx.subscribe_in(
             &state,
-            |library, source, event: &SelectEvent<Vec<ProviderOption>>, cx| {
+            window,
+            |library, source, event: &SelectEvent<Vec<ProviderOption>>, window, cx| {
                 let SelectEvent::Confirm(Some(provider)) = event else {
                     return;
                 };
@@ -133,10 +141,13 @@ impl ProviderPicker {
                 if pane
                     .picker
                     .as_ref()
-                    .is_some_and(|picker| picker.state == source)
+                    .is_some_and(|picker| picker.state == *source)
                 {
                     pane.provider = Some(*provider);
                     library.schedule_chat_draft_save(cx);
+                    if cfg!(not(all(test, feature = "ui-tests"))) {
+                        library.prepare_model_picker(window, cx);
+                    }
                 }
                 cx.notify();
             },
@@ -175,10 +186,7 @@ fn run_turn(
     cancel: &Arc<AtomicBool>,
     notices: async_channel::Sender<TurnNotice>,
 ) -> io::Result<CompletedTurn> {
-    let mode = match work.provider.kind() {
-        Provider::Codex => AssistantConnection::CodexCli,
-        Provider::OpenCode => AssistantConnection::OpenCode,
-    };
+    let mode = work.provider.mode();
     let profile = work.projects.parent().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -344,6 +352,13 @@ impl Library {
         }) else {
             return;
         };
+        if pane
+            .models
+            .get(&provider.kind())
+            .is_some_and(|picker| !picker.read(cx).ready_to_send())
+        {
+            return;
+        }
         let prompt = composer.input.read(cx).value().to_string();
         if prompt.trim().is_empty() || pane.load_task.is_some() {
             return;
@@ -506,9 +521,8 @@ impl Library {
                     .small()
                     .disabled(pane.running.is_some()),
             );
-        } else if let Some(provider) = provider {
-            actions = actions.child(div().px_2().text_size(px(12.)).child(provider.label()));
         }
+        actions = actions.children(self.model_picker_button(pane, cx));
         if pane.running.is_some() {
             actions.child(
                 chat_button("stop-chat", palette, cx, |library, _, _| {
@@ -525,6 +539,10 @@ impl Library {
             let enabled = can_send
                 && provider.is_some()
                 && pane.load_task.is_none()
+                && pane
+                    .provider
+                    .and_then(|kind| pane.models.get(&kind))
+                    .is_none_or(|picker| picker.read(cx).ready_to_send())
                 && self.project_writes_idle();
             actions.child(
                 chat_button("send", palette, cx, move |library, window, cx| {

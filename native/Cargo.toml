@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "latex-syntax", "portable-pdf"]
+desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 portable-pdf = ["dep:hayro"]
 ui-tests = ["desktop", "gpui/test-support"]
@@ -43,6 +43,7 @@ tree-sitter = { version = "=0.25.10", optional = true }
 tree-sitter-language = { version = "0.1", optional = true }
 url = { version = "=2.5.9", optional = true }
 uuid = { version = "1", features = ["v4"] }
+zed-reqwest = { version = "=0.12.15-zed", default-features = false, features = ["blocking"], optional = true }
 zip = { version = "=9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [build-dependencies]

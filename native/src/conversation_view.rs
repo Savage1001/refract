@@ -1,6 +1,6 @@
 use super::{Library, Palette, Selection, asset_image};
 use gpui::{
-    Context, FocusHandle, Focusable, FontWeight, KeyDownEvent, ObjectFit, ScrollHandle,
+    Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, ObjectFit, ScrollHandle,
     SharedString, Subscription, Task, Window, div, img, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
@@ -19,6 +19,7 @@ use std::{collections::HashMap, io};
 mod assistant;
 mod composer;
 mod markdown;
+mod models;
 use assistant::{InstalledProvider, ProviderPicker, RunningTurn, installed_providers};
 use composer::Composer;
 pub(super) use composer::init;
@@ -40,6 +41,7 @@ pub(super) struct ConversationPane {
     providers_loaded: bool,
     provider: Option<Provider>,
     picker: Option<ProviderPicker>,
+    models: HashMap<Provider, Entity<models::ModelPicker>>,
     running: Option<RunningTurn>,
     error: Option<String>,
 }
@@ -236,7 +238,12 @@ impl Library {
                         pane.providers_loaded = true;
                     }
                     match result {
-                        Ok(history) => pane.display(id, history, draft, window, cx),
+                        Ok(history) => {
+                            pane.display(id, history, draft, window, cx);
+                            if cfg!(not(all(test, feature = "ui-tests"))) {
+                                library.prepare_model_picker(window, cx);
+                            }
+                        }
                         Err(error) => pane.error = Some(format!("Couldn’t open chat. {error}")),
                     }
                     cx.notify();
@@ -329,8 +336,12 @@ impl Library {
                                     cx,
                                 );
                             }
-                            if selection.conversation.sidebar_open {
+                            let sidebar_open = selection.conversation.sidebar_open;
+                            if sidebar_open {
                                 library.refresh_conversation_list(cx);
+                            }
+                            if creating && cfg!(not(all(test, feature = "ui-tests"))) {
+                                library.prepare_model_picker(window, cx);
                             }
                         }
                         Err(error) => {

@@ -53,7 +53,7 @@ Use **Agent**, **Editor**, and **Preview** in the workspace header to switch pan
 
 Logs shows build errors and warnings and links file diagnostics to the reported source line. Open **Full build output** to filter the compiler messages or change line wrapping.
 
-Select **Chats** in the sidebar to open or rename conversations saved by Electron. Use **New chat** in the Conversation pane to create a conversation. Drag its top border or use **Expand chat** and **Show editor** to resize it. Draft text and attachments are saved per conversation in the native preview. To send messages, install and authenticate the Codex or OpenCode CLI. Connected Codex accounts and application updates are available in Electron.
+Select **Chats** in the sidebar to open or rename conversations saved by Electron. Use **New chat** in the Conversation pane to create a conversation. Drag its top border or use **Expand chat** and **Show editor** to resize it. Draft text and attachments are saved per conversation in the native preview. To send messages, install and authenticate the Codex or OpenCode CLI. Select the model name to search models, manage favorites, and change reasoning or the OpenCode variant. Connected Codex accounts and application updates are available in Electron.
 
 ## Parity before replacing Electron
 

@@ -14,7 +14,7 @@ use std::{
 const TEXT_PREVIEW_SIZE: usize = 16 * 1024;
 const TEXT_PREVIEW_TOTAL: usize = 32 * 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum Provider {
     Codex,
     OpenCode,

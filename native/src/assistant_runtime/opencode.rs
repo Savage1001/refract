@@ -24,6 +24,9 @@ use std::{
 
 pub use super::CodexUpdate as OpenCodeUpdate;
 
+#[cfg(feature = "desktop")]
+pub mod catalog;
+
 const HELP_TIMEOUT: Duration = Duration::from_secs(10);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(20);
 const HELP_LIMIT: usize = 64_000;

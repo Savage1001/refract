@@ -5307,6 +5307,7 @@ dependencies = [
  "uuid",
  "windows 0.61.3",
  "windows-sys 0.61.2",
+ "zed-reqwest",
  "zip",
 ]
 
@@ -8270,6 +8271,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
