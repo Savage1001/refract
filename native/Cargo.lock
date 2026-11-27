@@ -5286,6 +5286,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "hayro",
+ "hayro-interpret",
  "hayro-syntax",
  "httparse",
  "icu_collator",

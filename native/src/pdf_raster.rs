@@ -92,6 +92,8 @@ pub mod links;
 ))]
 pub mod portable;
 pub mod stack;
+#[cfg(feature = "pdf-text")]
+pub mod text;
 
 #[cfg(test)]
 mod tests {

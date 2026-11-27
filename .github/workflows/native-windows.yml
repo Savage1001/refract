@@ -38,7 +38,7 @@ jobs:
         run: cargo +stable test --locked --no-default-features --lib assistant_tools::server::tests::serves_an_authenticated_turn_and_releases_its_listener -- --ignored
       - name: Install managed TeX and verify automatic discovery
         run: |
-          cargo +stable test --locked --no-default-features --features installer,windows-updater,codex-account,pdf-links --lib
+          cargo +stable test --locked --no-default-features --features installer,windows-updater,codex-account,pdf-links,pdf-text --lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +stable build --locked --no-default-features --features installer --bin refract-install-dependencies
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -91,7 +91,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Test project library and PDF rendering
-        run: cargo +stable test --locked --no-default-features --features latex-syntax,portable-pdf,pdf-links
+        run: cargo +stable test --locked --no-default-features --features latex-syntax,portable-pdf,pdf-links,pdf-text
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |

@@ -9,14 +9,17 @@ use refract_native::{
         MAX_RASTER_PIXELS, PageRequest, PageSize,
         links::{LinkTarget, PdfLink, read_document_links},
         stack::{INSET, PageSlot, PageStack, per_page_budget},
+        text::{TextPage, read_page_text},
     },
     tex::synctex::PdfPosition,
 };
 use std::{cell::Cell, collections::BTreeMap, io, ops::Range, path::Path, rc::Rc, sync::Arc};
 
 mod controls;
+mod selection;
 use controls::PageEdit;
 pub(super) use controls::init;
+use selection::TextSelection;
 
 pub(super) const PDF_PANE_WIDTH: f32 = 352.;
 
@@ -43,6 +46,8 @@ pub(super) struct PdfViewport {
     zoom: Zoom,
     sizes: Vec<PageSize>,
     links: Vec<Vec<PdfLink>>,
+    text_pages: BTreeMap<u32, TextPage>,
+    text_selection: Option<TextSelection>,
     layout: PageStack,
     frames: BTreeMap<u32, RasterizedPage>,
     failed_pages: BTreeMap<u32, String>,
@@ -70,12 +75,12 @@ pub(super) struct RasterizedPage {
 
 enum PdfWork {
     ReadDocument,
-    RenderPage(PageRequest),
+    RenderPage(PageRequest, bool),
 }
 
 enum PdfUpdate {
     Document(io::Result<Vec<PageSize>>, Vec<Vec<PdfLink>>),
-    Page(PageRequest, io::Result<RasterizedPage>),
+    Page(PageRequest, io::Result<RasterizedPage>, Option<TextPage>),
 }
 
 impl Library {
@@ -121,7 +126,8 @@ impl Library {
             && !preview.loading_document
             && let Some(index) = preview.next_visible_page()
         {
-            PdfWork::RenderPage(preview.request(index, window.scale_factor()))
+            let needs_text = !preview.text_pages.contains_key(&index);
+            PdfWork::RenderPage(preview.request(index, window.scale_factor()), needs_text)
         } else {
             return;
         };
@@ -138,8 +144,11 @@ impl Library {
                     };
                     PdfUpdate::Document(sizes, links)
                 }
-                PdfWork::RenderPage(request) => {
-                    PdfUpdate::Page(request, render_page(&path, request))
+                PdfWork::RenderPage(request, needs_text) => {
+                    let image = render_page(&path, request);
+                    let text = (needs_text && image.is_ok())
+                        .then(|| read_page_text(&path, request.index).unwrap_or_default());
+                    PdfUpdate::Page(request, image, text)
                 }
             }
         });
@@ -159,10 +168,15 @@ impl Library {
                             pane.set_document(sizes, window);
                             pane.links = links;
                         }
-                        PdfUpdate::Page(request, frame) if visible => {
-                            pane.accept_page(request, frame)
+                        PdfUpdate::Page(request, frame, text) if visible => {
+                            if let Some(text) = text
+                                && pane.visible.contains(&(request.index as usize))
+                            {
+                                pane.text_pages.insert(request.index, text);
+                            }
+                            pane.accept_page(request, frame);
                         }
-                        PdfUpdate::Page(_, _) => {}
+                        PdfUpdate::Page(..) => {}
                     }
                 }
                 library.start_pdf_frame(window, cx);
@@ -207,6 +221,8 @@ impl PdfViewport {
         self.release(window);
         self.measurement.set(None);
         self.page_edit = None;
+        self.text_pages.clear();
+        self.text_selection = None;
     }
 
     pub(super) fn release(&mut self, window: &mut Window) {
@@ -283,6 +299,8 @@ impl PdfViewport {
 
     fn set_document(&mut self, result: io::Result<Vec<PageSize>>, window: &mut Window) {
         self.loading_document = false;
+        self.text_pages.clear();
+        self.text_selection = None;
         self.release(window);
         self.failed_pages.clear();
         self.visible = 0..0;
@@ -405,6 +423,11 @@ impl PdfViewport {
         });
         self.failed_pages
             .retain(|&index, _| visible.contains(&(index as usize)));
+        let selection = self.text_selection;
+        self.text_pages.retain(|&index, _| {
+            visible.contains(&(index as usize))
+                || selection.is_some_and(|selection| selection.contains_page(index))
+        });
     }
 
     fn apply_sync_jump(&mut self, window: &mut Window) {
@@ -494,6 +517,14 @@ impl PdfViewport {
                     .min_h(px(0.))
                     .overflow_scroll()
                     .track_scroll(&self.scroll)
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|library, _, _, cx| library.finish_pdf_selection(cx)),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|library, _, _, cx| library.finish_pdf_selection(cx)),
+                    )
                     .child(
                         div()
                             .relative()
@@ -513,6 +544,7 @@ impl PdfViewport {
                                             .get(index)
                                             .map(Vec::as_slice)
                                             .unwrap_or_default(),
+                                        self,
                                         self.last_sync,
                                         ready && !self.loading_document,
                                         palette,
@@ -539,6 +571,7 @@ fn render_page_slot(
     left: f32,
     frame: Option<&RasterizedPage>,
     links: &[PdfLink],
+    preview: &PdfViewport,
     last_sync: Option<PdfPosition>,
     ready: bool,
     palette: Palette,
@@ -562,9 +595,11 @@ fn render_page_slot(
                 .w(px(frame.width))
                 .h(px(frame.height))
         }))
+        .children(selection::highlights(preview, index, slot))
         .when(ready, |image| {
             let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
             let layout = bounds.clone();
+            let selection_bounds = bounds.clone();
             image
                 .tab_index(5)
                 .child(
@@ -580,6 +615,7 @@ fn render_page_slot(
                             && bounds.size.width > px(0.)
                             && bounds.size.height > px(0.)
                         {
+                            library.clear_pdf_selection(cx);
                             let x = f64::from(
                                 f32::from(event.position.x - bounds.origin.x)
                                     / f32::from(bounds.size.width),
@@ -597,12 +633,25 @@ fn render_page_slot(
                                 window,
                                 cx,
                             );
+                        } else {
+                            library.begin_pdf_selection(index, bounds, event, cx);
                         }
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(move |library, event: &gpui::MouseMoveEvent, _, cx| {
+                        library.move_pdf_selection(index, selection_bounds.get(), event, cx);
                     }),
                 )
                 .on_key_down(
                     cx.listener(move |library, event: &KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                        if event.keystroke.key == "c" && event.keystroke.modifiers.secondary() {
+                            if library.copy_pdf_selection(cx) {
+                                cx.stop_propagation();
+                            }
+                        } else if event.keystroke.key == "escape" {
+                            library.clear_pdf_selection(cx);
+                        } else if event.keystroke.key == "enter" || event.keystroke.key == "space" {
                             let position = last_sync
                                 .filter(|position| position.page == page)
                                 .unwrap_or(PdfPosition {

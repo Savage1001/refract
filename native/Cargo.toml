@@ -7,10 +7,11 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf", "pdf-links", "windows-updater", "codex-account"]
+desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf", "pdf-links", "pdf-text", "windows-updater", "codex-account"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 portable-pdf = ["dep:hayro"]
 pdf-links = ["dep:hayro-syntax", "dep:url"]
+pdf-text = ["dep:hayro-interpret"]
 ui-tests = ["desktop", "gpui/test-support"]
 installer = ["dep:zed-reqwest", "zed-reqwest/rustls-tls-native-roots"]
 windows-updater = ["dep:zed-reqwest", "zed-reqwest/rustls-tls-native-roots"]
@@ -36,6 +37,7 @@ gpui-component = { version = "=0.5.1", default-features = false, optional = true
 getrandom = "=0.4.3"
 httparse = "=1.10.1"
 hayro-syntax = { version = "=0.9.0", optional = true }
+hayro-interpret = { version = "=0.9.0", optional = true }
 icu_collator = { version = "=2.4.0", optional = true }
 icu_locale_core = { version = "=2.4.0", optional = true }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"], optional = true }
