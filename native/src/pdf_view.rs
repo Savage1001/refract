@@ -3,9 +3,11 @@ use gpui::{
     Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point,
     RenderImage, ScrollHandle, Size, Window, canvas, div, img, point, prelude::*, px, rgb, size,
 };
+use gpui_component::tooltip::Tooltip;
 use refract_native::{
     pdf_raster::{
         MAX_RASTER_PIXELS, PageRequest, PageSize,
+        links::{LinkTarget, PdfLink, read_document_links},
         stack::{INSET, PageSlot, PageStack, per_page_budget},
     },
     tex::synctex::PdfPosition,
@@ -40,6 +42,7 @@ pub(super) struct PdfViewport {
     page: u32,
     zoom: Zoom,
     sizes: Vec<PageSize>,
+    links: Vec<Vec<PdfLink>>,
     layout: PageStack,
     frames: BTreeMap<u32, RasterizedPage>,
     failed_pages: BTreeMap<u32, String>,
@@ -71,7 +74,7 @@ enum PdfWork {
 }
 
 enum PdfUpdate {
-    Document(io::Result<Vec<PageSize>>),
+    Document(io::Result<Vec<PageSize>>, Vec<Vec<PdfLink>>),
     Page(PageRequest, io::Result<RasterizedPage>),
 }
 
@@ -126,7 +129,15 @@ impl Library {
         let generation = preview.generation;
         let work = cx.background_executor().spawn(async move {
             match work {
-                PdfWork::ReadDocument => PdfUpdate::Document(read_page_sizes(&path)),
+                PdfWork::ReadDocument => {
+                    let sizes = read_page_sizes(&path);
+                    let links = if sizes.is_ok() {
+                        read_document_links(&path).unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    PdfUpdate::Document(sizes, links)
+                }
                 PdfWork::RenderPage(request) => {
                     PdfUpdate::Page(request, render_page(&path, request))
                 }
@@ -144,7 +155,10 @@ impl Library {
                 {
                     let pane = &mut selection.build.preview;
                     match update {
-                        PdfUpdate::Document(sizes) => pane.set_document(sizes, window),
+                        PdfUpdate::Document(sizes, links) => {
+                            pane.set_document(sizes, window);
+                            pane.links = links;
+                        }
                         PdfUpdate::Page(request, frame) if visible => {
                             pane.accept_page(request, frame)
                         }
@@ -495,8 +509,13 @@ impl PdfViewport {
                                         slot,
                                         left,
                                         self.frames.get(&(index as u32)),
+                                        self.links
+                                            .get(index)
+                                            .map(Vec::as_slice)
+                                            .unwrap_or_default(),
                                         self.last_sync,
                                         ready && !self.loading_document,
+                                        palette,
                                         cx,
                                     )
                                     .children(
@@ -519,8 +538,10 @@ fn render_page_slot(
     slot: &PageSlot,
     left: f32,
     frame: Option<&RasterizedPage>,
+    links: &[PdfLink],
     last_sync: Option<PdfPosition>,
     ready: bool,
+    palette: Palette,
     cx: &Context<Library>,
 ) -> impl IntoElement + ParentElement {
     let page = index + 1;
@@ -594,7 +615,68 @@ fn render_page_slot(
                         }
                     }),
                 )
+                .children(
+                    links
+                        .iter()
+                        .enumerate()
+                        .map(|(index, link)| render_pdf_link(index, slot, link, palette, cx)),
+                )
         })
+}
+
+fn render_pdf_link(
+    index: usize,
+    slot: &PageSlot,
+    link: &PdfLink,
+    palette: Palette,
+    cx: &Context<Library>,
+) -> impl IntoElement {
+    let label = match &link.target {
+        LinkTarget::Page(_) => "Go to linked PDF location",
+        LinkTarget::External(_) => "Open PDF link",
+    };
+    let target = link.target.clone();
+    let key_target = target.clone();
+    div()
+        .id(("pdf-link", index))
+        .debug_selector(|| format!("pdf-link-{index}"))
+        .absolute()
+        .left(px(link.left * slot.width))
+        .top(px(link.top * slot.height))
+        .w(px((link.right - link.left) * slot.width))
+        .h(px((link.bottom - link.top) * slot.height))
+        .tab_index(5)
+        .cursor_pointer()
+        .focus(move |style| style.border_1().border_color(rgb(palette.focus)))
+        .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |library, _, window, cx| {
+            library.follow_pdf_link(&target, window, cx);
+            cx.stop_propagation();
+        }))
+        .on_key_down(
+            cx.listener(move |library, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                    library.follow_pdf_link(&key_target, window, cx);
+                    cx.stop_propagation();
+                }
+            }),
+        )
+}
+
+impl Library {
+    fn follow_pdf_link(&mut self, link: &LinkTarget, window: &mut Window, cx: &mut Context<Self>) {
+        match link {
+            LinkTarget::Page(index) => {
+                if let Some(selection) = &mut self.selection {
+                    selection.build.preview.go_to_page(*index, window);
+                    self.start_pdf_frame(window, cx);
+                    cx.notify();
+                }
+            }
+            LinkTarget::External(url) => cx.open_url(url),
+        }
+    }
 }
 
 #[cfg(windows)]

@@ -583,7 +583,7 @@ impl Render for ModelPicker {
 }
 
 impl Library {
-    pub(super) fn refresh_account_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_account_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selection) = &mut self.selection {
             selection.conversation.models.remove(&Provider::Codex);
             self.prepare_model_picker(window, cx);

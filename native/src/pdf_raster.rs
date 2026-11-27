@@ -84,6 +84,8 @@ pub fn page_layout(
     })
 }
 
+#[cfg(feature = "pdf-links")]
+pub mod links;
 #[cfg(all(
     feature = "portable-pdf",
     any(target_os = "linux", target_os = "macos")
