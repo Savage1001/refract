@@ -99,6 +99,7 @@ async function verifyInstaller(output: string): Promise<void> {
 
   const installer = path.resolve(output, `${productName}-Native-Setup-${version}.exe`);
   const executable = path.join(installDir, `${productName}.exe`);
+  const fontLicense = path.join(installDir, 'Inter-OFL.txt');
   const installedVersion = path.join(installDir, 'refract-native-installed');
   const uninstaller = path.join(installDir, `Uninstall ${productName}.exe`);
   const uninstallerCopy = path.join(root, 'uninstaller-copy.exe');
@@ -109,6 +110,8 @@ async function verifyInstaller(output: string): Promise<void> {
   verifyRegistration(true);
   await fs.access(executable);
   await fs.access(uninstaller);
+  assert.equal(await fs.readFile(fontLicense, 'utf8'),
+    await fs.readFile(path.resolve(__dirname, '../../resources/fonts/Inter-OFL.txt'), 'utf8'));
   assert.equal((await fs.readFile(installedVersion, 'utf8')).trim(), version);
   const dependencies = path.join(localAppData, productName, 'dependencies');
   const bin = path.join(dependencies, 'TinyTeX', 'bin', 'windows');
@@ -150,7 +153,7 @@ async function verifyInstaller(output: string): Promise<void> {
   assert.equal(await run(uninstallerCopy, ['/S', '--delete-app-data', `_?=${installDir}`], env), 2);
   assert.equal(await run(uninstallerCopy, uninstallArgs, env), 0);
   verifyRegistration(false);
-  for (const file of [executable, installedVersion, uninstaller]) {
+  for (const file of [executable, fontLicense, installedVersion, uninstaller]) {
     await assert.rejects(fs.access(file), { code: 'ENOENT' });
   }
   assert.equal(await fs.readFile(project, 'utf8'), 'Fixture project');

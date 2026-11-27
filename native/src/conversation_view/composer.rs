@@ -295,7 +295,7 @@ impl Library {
                             .px(px(4.))
                             .py(px(4.))
                             .text_size(px(13.))
-                            .line_height(px(18.))
+                            .line_height(gpui::relative(1.5))
                             .disabled(pane.running.is_some()),
                     ),
             )

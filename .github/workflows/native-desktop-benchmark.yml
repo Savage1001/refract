@@ -1,0 +1,63 @@
+name: Desktop resource benchmark
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - src/**
+      - resources/**
+      - '*.cts'
+      - '*.ts'
+      - index.html
+      - style.css
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - scripts/benchmark-desktop-native.cts
+      - test/fixtures/parity-document.*
+      - .github/workflows/native-desktop-benchmark.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-resource-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-desktop-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Linux desktop and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            imagemagick libasound2t64 libfontconfig1-dev libgbm1 libgtk-3-0t64 libnss3 \
+            libwayland-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            mesa-vulkan-drivers xauth xdotool xvfb
+      - name: Build the Electron reference
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npx --no-install install-electron
+      - name: Build the native release executable
+        run: cargo +stable build --locked --release --manifest-path native/Cargo.toml --bin refract-native
+      - name: Benchmark the library and PDF workspace in private Xvfb displays
+        run: node build/scripts/benchmark-desktop-native.cjs "$RUNNER_TEMP/refract-desktop-benchmark"
+      - name: Upload measurements and synthetic profile screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-desktop-benchmark
+          path: ${{ runner.temp }}/refract-desktop-benchmark
+          if-no-files-found: ignore

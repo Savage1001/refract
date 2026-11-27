@@ -126,7 +126,7 @@ jobs:
           names=('Spectral methods for fluid dynamics' 'Conference paper - autumn notes' 'A short introduction to graph theory')
           for i in "${!names[@]}"; do
             id=$(printf '2b98e215-1a9f-4f24-972b-%012d' "$i")
-            project="$XDG_CONFIG_HOME/Refract/projects/$id"
+            project="$XDG_CONFIG_HOME/refract/projects/$id"
             mkdir -p "$project"
             printf '{"id":"%s","name":"%s","created":"2026-01-01T12:00:00.000Z","rootFile":"main.tex"}\n' "$id" "${names[$i]}" > "$project/.refract.json"
             cp /fixtures/parity-document.tex "$project/main.tex"
@@ -140,7 +140,7 @@ jobs:
           geometry=$(xdotool getwindowgeometry --shell "$client")
           grep -Fx 'WIDTH=1440' <<< "$geometry"
           grep -Fx 'HEIGHT=900' <<< "$geometry"
-          project="$XDG_CONFIG_HOME/Refract/projects/2b98e215-1a9f-4f24-972b-000000000000"
+          project="$XDG_CONFIG_HOME/refract/projects/2b98e215-1a9f-4f24-972b-000000000000"
           output="$project/.refract-build/main"
           # X11 maps the window before GPUI paints the asynchronously loaded project library.
           xdotool windowfocus "$client"
@@ -188,7 +188,7 @@ jobs:
           test ! -e /opt/Refract/refract
           test ! -L /usr/bin/refract
           test ! -e /usr/share/applications/refract.desktop
-          profile="$(getent passwd refract-test | cut -d: -f6)/.config/Refract"
+          profile="$(getent passwd refract-test | cut -d: -f6)/.config/refract"
           installed_source=$(sha256sum < "$profile/projects/2b98e215-1a9f-4f24-972b-000000000000/main.tex")
           fixture_source=$(sha256sum < /fixtures/parity-document.tex)
           test "$installed_source" = "$fixture_source"

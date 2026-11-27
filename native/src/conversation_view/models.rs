@@ -465,7 +465,13 @@ impl Render for ModelPicker {
                                     .ghost()
                                     .small()
                                     .w_full()
-                                    .label(model.name.clone())
+                                    .child(
+                                        div()
+                                            .text_size(px(14.))
+                                            .font_weight(FontWeight(580.))
+                                            .truncate()
+                                            .child(model.name.clone()),
+                                    )
                                     .when(!model.description.is_empty(), |button| {
                                         button.tooltip(model.description.clone())
                                     })
@@ -492,12 +498,19 @@ impl Render for ModelPicker {
                 if let Some(model) = selected {
                     let codex = self.provider.kind() == Provider::Codex;
                     options = options
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(if codex {
-                            "Reasoning"
-                        } else {
-                            "Variant"
-                        }))
-                        .child(div().truncate().child(model.name.clone()));
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight(520.))
+                                .child(if codex { "Reasoning" } else { "Variant" }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .truncate()
+                                .child(model.name.clone()),
+                        );
                     for effort in &model.efforts {
                         let value = effort.clone();
                         let current = catalog
@@ -510,7 +523,12 @@ impl Render for ModelPicker {
                                 .ghost()
                                 .small()
                                 .selected(current == Some(effort))
-                                .label(title_case(effort))
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .font_weight(FontWeight(520.))
+                                        .child(title_case(effort)),
+                                )
                                 .on_click(cx.listener(move |picker, _, _, cx| {
                                     picker.choose_effort(&value, cx)
                                 })),
@@ -628,6 +646,7 @@ impl Library {
     pub(super) fn model_picker_button(
         &self,
         pane: &ConversationPane,
+        palette: Palette,
         cx: &Context<Self>,
     ) -> Option<Popover> {
         let kind = pane.provider?;
@@ -640,20 +659,19 @@ impl Library {
             .get(&kind)
             .map(|picker| picker.read(cx).label())
             .unwrap_or_else(|| provider.label().into());
-        let label = pane
+        let effort = pane
             .models
             .get(&kind)
             .and_then(|picker| picker.read(cx).catalog())
             .and_then(|catalog| {
                 let selected = ModelPicker::selected(catalog)?;
-                let effort = catalog
+                catalog
                     .preferences
                     .reasoning_effort
                     .as_ref()
-                    .or(selected.default_effort.as_ref())?;
-                Some(format!("{name}  {}", title_case(effort)))
-            })
-            .unwrap_or(name);
+                    .or(selected.default_effort.as_ref())
+                    .map(|effort| title_case(effort))
+            });
         let library = cx.weak_entity();
         let content = library.clone();
         Some(
@@ -663,7 +681,20 @@ impl Library {
                     Button::new("model-picker-trigger")
                         .ghost()
                         .small()
-                        .label(label)
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .truncate()
+                                .child(name),
+                        )
+                        .children(effort.map(|effort| {
+                            div()
+                                .text_size(px(12.))
+                                .text_color(rgb(palette.muted))
+                                .truncate()
+                                .child(effort)
+                        }))
                         .disabled(pane.running.is_some()),
                 )
                 .on_open_change(move |open, window, app| {

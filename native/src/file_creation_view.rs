@@ -190,7 +190,7 @@ impl Library {
             let submit = library.clone();
             let close = library.clone();
             dialog
-                .title("New file")
+                .title(crate::dialog_title("New file"))
                 .confirm()
                 .button_props(DialogButtonProps::default().ok_text("Create file"))
                 .child(

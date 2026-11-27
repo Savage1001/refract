@@ -64,7 +64,7 @@ jobs:
             test -x "$tex/$tool"
           done
           inode="$(stat -f '%i' "$tex/synctex")"
-          profile="$HOME/Library/Application Support/Refract/projects"
+          profile="$HOME/Library/Application Support/refract/projects"
           mkdir -p "$profile"
           marker="$profile/refract-native-ci-marker"
           printf 'Existing project data\n' > "$marker"

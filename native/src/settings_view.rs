@@ -1,8 +1,8 @@
 use super::{Library, Palette, deleted_projects_view::recovery_button};
 use crate::account_settings_view::{AccountControls, AccountSection};
 use gpui::{
-    AnyElement, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Subscription, Task,
-    WeakEntity, Window, div, prelude::*, px, rgb, svg,
+    AnyElement, Context, Entity, FocusHandle, FontWeight, KeyDownEvent, SharedString, Subscription,
+    Task, WeakEntity, Window, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     WindowExt,
@@ -173,7 +173,7 @@ impl SettingsDialog {
             .gap(px(8.))
             .debug_selector(|| "settings-dialog".into())
             .child(self.account.contents(library.clone(), palette))
-            .child("Update track")
+            .child(div().font_weight(FontWeight::MEDIUM).child("Update track"))
             .child(
                 Select::new(&self.track_select)
                     .w_full()
@@ -312,7 +312,7 @@ impl Library {
         window.open_dialog(cx, move |dialog, window, _| {
             let close = owner.clone();
             dialog
-                .title("Settings")
+                .title(crate::dialog_title("Settings"))
                 .w(px(440.))
                 .close_button(false)
                 .overlay_closable(false)

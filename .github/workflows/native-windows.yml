@@ -115,13 +115,12 @@ jobs:
       - name: Capture the native library and workspace offscreen
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y --no-install-recommends imagemagick mesa-vulkan-drivers xauth xdotool xvfb
-          profile=$(mktemp -d "$RUNNER_TEMP/refract-native-profile.XXXXXX")
+          sudo apt-get install -y --no-install-recommends dbus-x11 dconf-gsettings-backend gsettings-desktop-schemas imagemagick mesa-vulkan-drivers xauth xdg-desktop-portal xdg-desktop-portal-gtk xdotool xvfb
           output="$RUNNER_TEMP/refract-native-reference"
-          fixture_source=../test/fixtures/parity-document.tex
-          fixture_tools="$profile/fixture-tex"
+          fixture="$(mktemp -d "$RUNNER_TEMP/refract-native-fixture.XXXXXX")"
+          fixture_tools="$fixture/tex"
           mkdir -p "$output" "$fixture_tools"
-          export REFRACT_CAPTURE_PDF="$profile/fixture.pdf"
+          export REFRACT_CAPTURE_PDF="$fixture/document.pdf"
           base64 --decode ../test/fixtures/parity-document.pdf.b64 > "$REFRACT_CAPTURE_PDF"
           # The screenshot must render the same PDF as the Electron reference.
           # The Windows TinyTeX check above exercises the real compiler separately.
@@ -137,21 +136,35 @@ jobs:
           cp "$REFRACT_CAPTURE_PDF" "$output_directory/main.pdf"
           PDFLATEX
           chmod +x "$fixture_tools/pdflatex"
-          names=('Spectral methods for fluid dynamics' 'Conference paper - autumn notes' 'A short introduction to graph theory')
+          export REFRACT_TEX_BIN="$fixture_tools"
+          export WAYLAND_DISPLAY= ZED_ALLOW_EMULATED_GPU=1 XDG_CURRENT_DESKTOP=GNOME
+          capture_theme() {
+          local theme=$1 scheme=$2 scheme_id=$3 background=$4 border=$5
+          export REFRACT_DATA_DIR="$fixture/$theme"
+          export XDG_CONFIG_HOME="$fixture/$theme/config" XDG_RUNTIME_DIR="$fixture/$theme/runtime"
+          install -d -m 700 "$XDG_CONFIG_HOME/xdg-desktop-portal" "$XDG_RUNTIME_DIR"
+          printf '[preferred]\ndefault=gtk\n' > "$XDG_CONFIG_HOME/xdg-desktop-portal/portals.conf"
+          local names=('Spectral methods for fluid dynamics' 'Conference paper - autumn notes' 'A short introduction to graph theory')
+          local i id folder
           for i in "${!names[@]}"; do
             id=$(printf '2b98e215-1a9f-4f24-972b-%012d' "$i")
-            folder="$profile/projects/$id"
-            mkdir -p "$folder"
-            printf '{"id":"%s","name":"%s","created":"2026-01-01T12:00:00.000Z","rootFile":"main.tex"}\n' "$id" "${names[$i]}" > "$folder/.refract.json"
+            folder="$REFRACT_DATA_DIR/projects/$id"
             mkdir -p "$folder/sections"
-            cp "$fixture_source" "$folder/main.tex"
+            printf '{"id":"%s","name":"%s","created":"2026-01-01T12:00:00.000Z","rootFile":"main.tex"}\n' "$id" "${names[$i]}" > "$folder/.refract.json"
+            cp ../test/fixtures/parity-document.tex "$folder/main.tex"
             printf '%% Research notes\nA stable spectral approximation.\n' > "$folder/sections/abstract.tex"
           done
-          export REFRACT_DATA_DIR="$profile" REFRACT_TEX_BIN="$fixture_tools"
-          export WAYLAND_DISPLAY= ZED_ALLOW_EMULATED_GPU=1
-          xvfb-run -a -s '-screen 0 1600x1000x24' bash -e -u -o pipefail -s -- "$output" <<'CAPTURE'
-          output=$1
-          ./target/debug/refract-native > "$output/native.log" 2>&1 &
+          xvfb-run -a -s '-screen 0 1600x1000x24' dbus-run-session -- bash -e -u -o pipefail -s -- "$output" "$theme" "$scheme" "$scheme_id" "$background" "$border" <<'CAPTURE'
+          output=$1 theme=$2 scheme=$3 scheme_id=$4 background=$5 border=$6
+          gsettings set org.gnome.desktop.interface color-scheme "$scheme"
+          actual_scheme=$(gdbus call --session --timeout 20 --dest org.freedesktop.portal.Desktop \
+            --object-path /org/freedesktop/portal/desktop \
+            --method org.freedesktop.portal.Settings.Read org.freedesktop.appearance color-scheme)
+          if [[ $actual_scheme != *"uint32 $scheme_id"* ]]; then
+            echo "Portal reported $actual_scheme for $theme" >&2
+            exit 1
+          fi
+          ./target/debug/refract-native > "$output/native-$theme.log" 2>&1 &
           app=$!
           trap 'kill "$app" 2>/dev/null || true; wait "$app" 2>/dev/null || true' EXIT
           client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
@@ -160,15 +173,22 @@ jobs:
           xdotool mousemove --sync 0 0
           capture() {
             local screen=$1 expected_width=$2 expected_height=$3 width height colors sidebar_edge
-            local shot="$output/light-$screen.png"
+            local shot="$output/$theme-$screen.png"
             for attempt in {1..24}; do
               import -window "$client" "$shot"
               read -r width height colors < <(identify -format '%w %h %k\n' "$shot")
               if (( width == expected_width && height == expected_height && colors > 32 )); then
-                if [[ $screen == workspace-compact ]]; then
+                if [[ $screen == library-list ]]; then
+                  local canvas
+                  canvas=$(convert "$shot" -crop 1x1+4+4 -depth 8 txt:-)
+                  if [[ $canvas != *"$background"* ]]; then
+                    sleep 0.2
+                    continue
+                  fi
+                elif [[ $screen == workspace-compact ]]; then
                   # X11 can capture the cropped wide layout before GPUI redraws it.
                   sidebar_edge=$(convert "$shot" -crop 3x1+208+120 -depth 8 txt:-)
-                  if [[ $sidebar_edge != *'#E4E4E7'* ]]; then
+                  if [[ $sidebar_edge != *"$border"* ]]; then
                     sleep 0.2
                     continue
                   fi
@@ -177,12 +197,35 @@ jobs:
               fi
               sleep 0.2
             done
-            echo "The Refract $screen did not render at ${expected_width}×${expected_height}" >&2
+            echo "The $theme Refract $screen did not render at ${expected_width}x${expected_height}" >&2
             return 1
           }
+          click() {
+            xdotool mousemove --window "$client" "$1" "$2" click 1
+            xdotool mousemove --sync 0 0
+          }
+          require_redraw() {
+            local before=$1 after=$2 changed
+            changed=$(compare -metric AE "$output/$theme-$before.png" "$output/$theme-$after.png" null: 2>&1 || true)
+            if [[ ! $changed =~ ^[0-9]+$ ]] || (( changed < 10000 )); then
+              echo "The $theme $after did not redraw: $changed changed pixels" >&2
+              exit 1
+            fi
+          }
           capture library-list 1440 900
-          xdotool mousemove --window "$client" 340 615 click 1
-          xdotool mousemove --sync 0 0
+          click 1220 284
+          sleep 0.4
+          capture library-grid 1440 900
+          require_redraw library-list library-grid
+          click 1078 187
+          sleep 0.4
+          capture settings 1440 900
+          require_redraw library-grid settings
+          xdotool key Escape
+          sleep 0.4
+          click 1174 284
+          sleep 0.4
+          click 340 615
           rendered_pdf="$REFRACT_DATA_DIR/projects/2b98e215-1a9f-4f24-972b-000000000000/.refract-build/main.pdf"
           for attempt in {1..40}; do
             if cmp -s "$REFRACT_CAPTURE_PDF" "$rendered_pdf"; then
@@ -199,6 +242,9 @@ jobs:
           timeout 10s xdotool windowsize --sync "$client" 900 650
           capture workspace-compact 900 650
           CAPTURE
+          }
+          capture_theme light prefer-light 2 '#FCFCFC' '#E4E4E7'
+          capture_theme dark prefer-dark 1 '#0A0A0A' '#191919'
       - name: Upload native visual verification artifacts
         if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -605,7 +605,7 @@ impl Library {
                     .disabled(pane.running.is_some()),
             );
         }
-        actions = actions.children(self.model_picker_button(pane, cx));
+        actions = actions.children(self.model_picker_button(pane, palette, cx));
         if pane.running.is_some() {
             actions.child(
                 chat_button("stop-chat", palette, cx, |library, _, _| {

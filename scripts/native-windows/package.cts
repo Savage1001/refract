@@ -25,6 +25,7 @@ async function packageWindows([app, dependencyHelper, output]: string[]): Promis
     const executable = path.join(stage, executableName);
     await fs.copyFile(path.resolve(app), executable);
     await fs.copyFile(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE'));
+    await fs.copyFile(path.join(root, 'resources/fonts/Inter-OFL.txt'), path.join(stage, 'Inter-OFL.txt'));
     await fs.writeFile(path.join(stage, 'refract-native-installed'), `${manifest.version}\n`);
     await editWindowsResources({
       file: executable,

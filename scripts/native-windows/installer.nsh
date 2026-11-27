@@ -67,6 +67,7 @@
   ClearErrors
   Delete "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
   Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\Inter-OFL.txt"
   Delete "$INSTDIR\uninstallerIcon.ico"
   Delete "$INSTDIR\${UNINSTALL_FILENAME}"
   ${If} ${Errors}

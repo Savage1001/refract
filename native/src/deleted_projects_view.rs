@@ -132,7 +132,7 @@ impl Library {
         window.open_dialog(cx, move |dialog, window, _| {
             let close = library.clone();
             dialog
-                .title("Deleted projects")
+                .title(crate::dialog_title("Deleted projects"))
                 .close_button(false)
                 .overlay_closable(false)
                 .child(deleted_projects_contents(

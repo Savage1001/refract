@@ -20,7 +20,7 @@ pub(super) fn init(cx: &mut App) {
 
     #[cfg(not(target_os = "macos"))]
     let inter_loaded = {
-        let data: &[u8] = include_bytes!("../fonts/Inter-Variable.ttf");
+        let data: &[u8] = include_bytes!("../fonts/Refract-Inter.ttc");
         match cx
             .text_system()
             .add_fonts(vec![std::borrow::Cow::Borrowed(data)])
@@ -35,19 +35,21 @@ pub(super) fn init(cx: &mut App) {
     let theme = Theme::global_mut(cx);
     #[cfg(not(target_os = "macos"))]
     if inter_loaded {
-        Rc::make_mut(&mut theme.light_theme).font_family = Some("Inter".into());
-        Rc::make_mut(&mut theme.dark_theme).font_family = Some("Inter".into());
+        Rc::make_mut(&mut theme.light_theme).font_family = Some("Refract Inter".into());
+        Rc::make_mut(&mut theme.dark_theme).font_family = Some("Refract Inter".into());
     }
     configure(
         Rc::make_mut(&mut theme.light_theme),
         &HighlightTheme::default_light(),
         ["#1b4ed8", "#507447", "#996018", "#956434"],
+        0xfcfcfc,
         0x27272a0a,
     );
     configure(
         Rc::make_mut(&mut theme.dark_theme),
         &HighlightTheme::default_dark(),
         ["#79a8ff", "#8fb58a", "#e5b567", "#d8ba8e"],
+        0x0a0a0a,
         0xf5f5f50a,
     );
     let mode = theme.mode;
@@ -90,8 +92,10 @@ fn configure(
     config: &mut ThemeConfig,
     defaults: &HighlightTheme,
     colors: [&str; 4],
+    editor_background: u32,
     active_line: u32,
 ) {
+    config.mono_font_family = Some(crate::monospace_font().into());
     let style = config
         .highlight
         .get_or_insert_with(|| defaults.style.clone());
@@ -102,5 +106,6 @@ fn configure(
     style.syntax.comment = Some(comment);
     style.syntax.punctuation_special = Some(math);
     style.syntax.punctuation_bracket = Some(bracket);
+    style.editor_background = Some(gpui::rgb(editor_background).into());
     style.editor_active_line = Some(rgba(active_line).into());
 }

@@ -101,6 +101,7 @@ struct Library {
     project_rename_task: Option<Task<()>>,
     project_action_error: Option<String>,
     project_name_focus: FocusHandle,
+    keyboard_focus: bool,
     rename_draft: Option<RenameDraft>,
     selection: Option<Selection>,
     tree_task: Option<Task<()>>,
@@ -271,6 +272,7 @@ impl Library {
             project_rename_task: None,
             project_action_error: None,
             project_name_focus: cx.focus_handle().tab_stop(true).tab_index(1),
+            keyboard_focus: false,
             rename_draft: None,
             selection: None,
             tree_task: None,
@@ -1217,6 +1219,21 @@ impl Render for Library {
         Self::find_shortcuts(cx)
             .id("library")
             .track_focus(&self.focus_handle)
+            .capture_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
+                let modifiers = event.keystroke.modifiers;
+                if !library.keyboard_focus
+                    && !(modifiers.control || modifiers.alt || modifiers.platform)
+                {
+                    library.keyboard_focus = true;
+                    cx.notify();
+                }
+            }))
+            .capture_any_mouse_down(cx.listener(|library, _, _, cx| {
+                if library.keyboard_focus {
+                    library.keyboard_focus = false;
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|library, _: &SaveSource, window, cx| {
                 library.save_active_file(window, cx)
             }))
@@ -1224,7 +1241,8 @@ impl Render for Library {
             .flex()
             .bg(rgb(palette.canvas))
             .text_color(rgb(palette.text))
-            .text_sm()
+            .text_size(px(13.))
+            .line_height(gpui::DefiniteLength::Fraction(1.5))
             .child(view)
             .children(self.entry_menu_layer(palette, cx))
             .children(dialog)
@@ -1412,6 +1430,7 @@ impl Library {
                     .appearance(false)
                     .tab_index(1)
                     .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
                     .h(px(36.))
                     .prefix(
                         svg()
@@ -2218,6 +2237,14 @@ fn monospace_font() -> &'static str {
     }
 }
 
+fn dialog_title(text: impl Into<SharedString>) -> impl gpui::IntoElement {
+    div()
+        .text_size(px(18.))
+        .line_height(px(27.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(text.into())
+}
+
 fn collect_expanded_folders(entries: &[ProjectEntry], expanded: &mut HashSet<String>) {
     for entry in entries {
         if let Some(children) = &entry.children {
@@ -2247,16 +2274,19 @@ fn projects_dir() -> Option<PathBuf> {
     if let Some(profile) = env::var_os("REFRACT_DATA_DIR").filter(|path| !path.is_empty()) {
         return Some(PathBuf::from(profile).join("projects"));
     }
-    let config_dir = if cfg!(target_os = "windows") {
-        env::var_os("APPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
+    if cfg!(target_os = "windows") {
+        return env::var_os("APPDATA")
+            .map(|dir| PathBuf::from(dir).join("Refract").join("projects"));
+    }
+    let config_dir = if cfg!(target_os = "macos") {
         env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"))
     } else {
         env::var_os("XDG_CONFIG_HOME")
+            .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
     };
-    config_dir.map(|dir| dir.join("Refract").join("projects"))
+    config_dir.map(|dir| refract_native::profile_path::unix_profile_dir(&dir).join("projects"))
 }
 
 fn initialize_app(cx: &mut App) {

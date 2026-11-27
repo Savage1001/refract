@@ -180,7 +180,7 @@ impl Library {
             let submit = library.clone();
             let close = library.clone();
             dialog
-                .title("Select the main LaTeX document")
+                .title(crate::dialog_title("Select the main LaTeX document"))
                 .confirm()
                 .button_props(DialogButtonProps::default().ok_text("Import"))
                 .child(

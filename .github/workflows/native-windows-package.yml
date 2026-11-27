@@ -7,6 +7,7 @@ on:
       - scripts/installer.nsh
       - scripts/native-windows/**
       - resources/logo.ico
+      - resources/fonts/Inter-OFL.txt
       - package.json
       - package-lock.json
       - .github/workflows/native-windows-package.yml

@@ -412,7 +412,9 @@ impl Library {
                 button
                     .cursor_pointer()
                     .hover(move |style| style.text_color(rgb(palette.text)).underline())
-                    .focus(move |style| style.text_color(rgb(palette.text)).underline())
+                    .when(self.keyboard_focus, |button| {
+                        button.focus(move |style| style.text_color(rgb(palette.text)).underline())
+                    })
                     .on_click(
                         cx.listener(|library, _, window, cx| {
                             library.open_rename_dialog(window, cx)
@@ -447,7 +449,7 @@ impl Library {
             let submit = library.clone();
             let close = library.clone();
             dialog
-                .title("Rename project")
+                .title(crate::dialog_title("Rename project"))
                 .confirm()
                 .button_props(DialogButtonProps::default().ok_text("Rename"))
                 .child("Project name")

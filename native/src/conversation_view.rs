@@ -657,7 +657,7 @@ impl Library {
                         .child(
                             div()
                                 .text_size(px(13.))
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::BOLD)
                                 .child("Welcome to Refract!"),
                         )
                         .child(

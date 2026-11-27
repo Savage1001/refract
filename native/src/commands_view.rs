@@ -447,6 +447,8 @@ impl Library {
                     .disabled(self.restore_task.is_some() || self.entry_write_task.is_some())
                     .h_full()
                     .appearance(false)
+                    .px(px(4.))
+                    .py(px(2.))
                     .font_family(monospace_font())
                     .text_size(px(14.))
                     .line_height(px(23.)),

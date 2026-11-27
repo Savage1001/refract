@@ -28,6 +28,7 @@ pub mod managed_codex;
 pub mod managed_tex;
 pub mod outline;
 pub mod pdf_raster;
+pub mod profile_path;
 pub mod project_catalog;
 mod project_entries;
 mod project_management;

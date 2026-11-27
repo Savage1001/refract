@@ -392,7 +392,7 @@ impl Library {
             let close = library.clone();
             let cancel = busy.clone();
             dialog
-                .title(title)
+                .title(crate::dialog_title(title))
                 .confirm()
                 .keyboard(!busy.get())
                 .button_props(DialogButtonProps::default().ok_text(action))

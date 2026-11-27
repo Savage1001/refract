@@ -233,6 +233,7 @@ impl Library {
         let query = view.query.clone();
         let input = Input::new(&query)
             .appearance(false)
+            .font_weight(FontWeight::MEDIUM)
             .h(px(36.))
             .tab_index(1)
             .prefix(

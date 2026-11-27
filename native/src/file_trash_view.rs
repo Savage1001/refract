@@ -268,7 +268,7 @@ impl Library {
         window.open_dialog(cx, move |dialog, window, _| {
             let close = library.clone();
             dialog
-                .title("Deleted files")
+                .title(crate::dialog_title("Deleted files"))
                 .close_button(false)
                 .overlay_closable(false)
                 .keyboard(!content.borrow().busy)
