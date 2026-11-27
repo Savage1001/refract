@@ -7,6 +7,8 @@ on:
       - .github/workflows/native-windows.yml
       - scripts/account-storage-fixture.cts
       - scripts/capture-electron-parity.cts
+      - scripts/legacy-profile-fixture.cts
+      - test/fixtures/headless-ui.cts
       - test/fixtures/parity-document.*
 
 permissions:
@@ -33,7 +35,7 @@ jobs:
       - name: Check formatting
         run: cargo +stable fmt --all -- --check
       - name: Test project library
-        run: cargo +stable test --locked --no-default-features --features latex-syntax
+        run: cargo +stable test --locked --no-default-features --features latex-syntax,legacy-profile
       - name: Test the assistant tool server over loopback
         run: cargo +stable test --locked --no-default-features --lib assistant_tools::server::tests::serves_an_authenticated_turn_and_releases_its_listener -- --ignored
       - name: Install managed TeX and verify automatic discovery
@@ -61,7 +63,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Build a disposable Electron secure storage fixture
+      - name: Build disposable Electron profile fixtures
         working-directory: .
         run: |
           npm ci --no-audit --no-fund
@@ -69,8 +71,11 @@ jobs:
           npm run build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npx --no-install install-electron
-      - name: Verify protected ChatGPT account storage with Electron
-        run: cargo +stable test --locked --no-default-features --features codex-account --lib codex_account::storage::tests::exchanges_a_synthetic_connection_with_electron_safe_storage -- --ignored
+      - name: Verify profile compatibility with Electron
+        run: |
+          cargo +stable test --locked --no-default-features --features codex-account,legacy-profile --lib codex_account::storage::tests::exchanges_a_synthetic_connection_with_electron_safe_storage -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +stable test --locked --no-default-features --features codex-account,legacy-profile --lib legacy_profile::tests::imports_local_storage_written_by_the_packaged_electron_version -- --ignored
 
   unix:
     name: native (${{ matrix.os }})
@@ -91,7 +96,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Test project library and PDF rendering
-        run: cargo +stable test --locked --no-default-features --features latex-syntax,portable-pdf,pdf-links,pdf-text
+        run: cargo +stable test --locked --no-default-features --features latex-syntax,legacy-profile,portable-pdf,pdf-links,pdf-text
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -154,12 +159,20 @@ jobs:
           xdotool windowsize "$client" 1440 900
           xdotool mousemove --sync 0 0
           capture() {
-            local screen=$1 expected_width=$2 expected_height=$3 width height colors
+            local screen=$1 expected_width=$2 expected_height=$3 width height colors sidebar_edge
             local shot="$output/light-$screen.png"
-            for attempt in {1..12}; do
+            for attempt in {1..24}; do
               import -window "$client" "$shot"
               read -r width height colors < <(identify -format '%w %h %k\n' "$shot")
               if (( width == expected_width && height == expected_height && colors > 32 )); then
+                if [[ $screen == workspace-compact ]]; then
+                  # X11 can capture the cropped wide layout before GPUI redraws it.
+                  sidebar_edge=$(convert "$shot" -crop 3x1+208+120 -depth 8 txt:-)
+                  if [[ $sidebar_edge != *'#E4E4E7'* ]]; then
+                    sleep 0.2
+                    continue
+                  fi
+                fi
                 return 0
               fi
               sleep 0.2

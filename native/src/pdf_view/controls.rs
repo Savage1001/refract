@@ -194,6 +194,13 @@ impl Library {
         } else {
             format!("{zoom}%")
         };
+        let zoom_readout_width = if view.zoom == Zoom::FitWidth {
+            22.
+        } else {
+            34.
+        };
+        let zoom_group_width =
+            28. * 2. + 6. * 2. + zoom_readout_width + if show_labels { 36. } else { 0. };
         Some(
             div()
                 .flex()
@@ -247,6 +254,7 @@ impl Library {
                     div()
                         .flex()
                         .flex_none()
+                        .w(px(zoom_group_width))
                         .items_center()
                         .gap(px(6.))
                         .ml(px(group_margin))
@@ -262,7 +270,13 @@ impl Library {
                             )
                             .child(pdf_icon("refract/minus.svg", palette)),
                         )
-                        .child(div().flex_none().px(px(2.)).mx(px(-3.)).child(label))
+                        .child(
+                            div()
+                                .flex_none()
+                                .w(px(zoom_readout_width))
+                                .text_center()
+                                .child(label),
+                        )
                         .child(
                             pdf_button(
                                 "pdf-zoom-in",
@@ -510,6 +524,11 @@ mod tests {
         });
         cx.run_until_parked();
         cx.refresh().unwrap();
+        let zoom = cx.debug_bounds("pdf-zoom-in").unwrap();
+        let fit = cx.debug_bounds("pdf-fit-width").unwrap();
+        let same_row = zoom.origin.y < fit.origin.y + fit.size.height
+            && fit.origin.y < zoom.origin.y + zoom.size.height;
+        assert!(!same_row || zoom.origin.x + zoom.size.width <= fit.origin.x);
         cx.update(|_, app| {
             let build = &library.read(app).selection.as_ref().unwrap().build;
             assert_eq!(

@@ -204,6 +204,12 @@ impl Library {
     fn new(projects_dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let path = projects_dir.clone();
         let load = cx.background_executor().spawn(async move {
+            if let Err(error) = refract_native::legacy_profile::migrate_electron_profile(&path) {
+                eprintln!(
+                    "Couldn’t import saved Refract preferences ({:?}).",
+                    error.kind()
+                );
+            }
             let mut projects = list_projects(&path)?;
             for project in &mut projects {
                 if let Some(recovered) = recover_project_restore(&path, project)? {
@@ -212,9 +218,16 @@ impl Library {
             }
             Ok(projects)
         });
-        cx.spawn(async move |library, cx| {
+        cx.spawn_in(window, async move |library, cx| {
             let projects = load.await;
-            let _ = library.update(cx, |library, cx| {
+            let _ = library.update_in(cx, |library, window, cx| {
+                library.catalog.reload_preferences(window, cx);
+                library.outline.reload_height();
+                library.workspace_layout.panes = PaneVisibility::read(
+                    &library
+                        .projects_dir
+                        .with_file_name(".refract-native-workspace.json"),
+                );
                 library.set_projects(projects, cx);
                 cx.notify();
             });
@@ -223,6 +236,8 @@ impl Library {
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle);
+        cx.observe_window_bounds(window, |_, _, cx| cx.notify())
+            .detach();
         let outline = OutlinePane::new(&projects_dir);
         let project_query = cx.new(|cx| {
             InputState::new(window, cx)
@@ -1571,6 +1586,7 @@ impl Library {
                             .child(
                                 div()
                                     .when(!grid, |name| name.truncate())
+                                    .text_size(px(14.))
                                     .font_weight(FontWeight(550.))
                                     .child(project.name.clone()),
                             )

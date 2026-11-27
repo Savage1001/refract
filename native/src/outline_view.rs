@@ -113,6 +113,10 @@ impl OutlinePane {
         self.scroll.set_offset(point(px(0.), px(0.)));
     }
 
+    pub(super) fn reload_height(&mut self) {
+        self.height = read_height(&self.preferences);
+    }
+
     fn replace_rows(&mut self, rows: Vec<OutlineRow>, window: &mut Window) {
         let current_images: HashSet<_> = rows
             .iter()

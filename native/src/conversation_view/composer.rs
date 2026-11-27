@@ -37,7 +37,7 @@ impl Composer {
     ) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .auto_grow(2, 6)
+                .auto_grow(1, 6)
                 .placeholder("Ask anything")
                 .default_value(draft.text)
         });
@@ -237,7 +237,6 @@ impl Library {
             .flex()
             .flex_col()
             .flex_none()
-            .gap_1()
             .p_2()
             .rounded(px(8.))
             .border_1()
@@ -287,10 +286,21 @@ impl Library {
                             library.attach_to_conversation(Some(image.bytes.clone()), window, cx);
                         }
                     }))
-                    .child(Input::new(&composer.input).appearance(false).bordered(false).disabled(pane.running.is_some())),
+                    .child(
+                        Input::new(&composer.input)
+                            .appearance(false)
+                            .bordered(false)
+                            .min_h(px(36.))
+                            .max_h(px(120.))
+                            .px(px(4.))
+                            .py(px(4.))
+                            .text_size(px(13.))
+                            .line_height(px(18.))
+                            .disabled(pane.running.is_some()),
+                    ),
             )
             .child(
-                div().flex().items_center().child(
+                div().flex().min_h(px(36.)).items_center().child(
                     chat_button("attach", palette, cx, move |library, window, cx| {
                         if !disabled {
                             library.attach_to_conversation(None, window, cx);

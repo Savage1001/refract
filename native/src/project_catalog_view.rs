@@ -111,6 +111,13 @@ impl ProjectCatalogView {
         self.preferences.grid
     }
 
+    pub(super) fn reload_preferences(&mut self, window: &mut Window, cx: &mut Context<Library>) {
+        self.preferences = LibraryPreferences::read(&self.path);
+        self.sort.update(cx, |state, cx| {
+            state.set_selected_value(&self.preferences.sort, window, cx)
+        });
+    }
+
     pub(super) fn visible_projects<'a>(
         &self,
         projects: &'a [Project],

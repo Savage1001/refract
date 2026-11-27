@@ -593,13 +593,16 @@ impl Library {
             })
         });
         let viewport = window.viewport_size();
-        let height = self.workspace_layout.chat_height(
-            f32::from(viewport.width),
-            f32::from(viewport.height),
-            has_messages,
-        );
+        let (width, viewport_height) = (f32::from(viewport.width), f32::from(viewport.height));
+        let height = self
+            .workspace_layout
+            .chat_height(width, viewport_height, has_messages);
+        let short = viewport_height <= 720.;
+        let margin = if width <= 800. { 10. } else { 16. };
+        let padding = if width <= 800. { 10. } else { 12. };
         let header = div()
             .h(px(30.))
+            .mb(px(if short { 4. } else { 8. }))
             .flex()
             .flex_none()
             .items_center()
@@ -641,6 +644,7 @@ impl Library {
             .flex_1()
             .min_h(px(0.))
             .px_1()
+            .pt(px(2.))
             .pb(px(10.))
             .overflow_y_scroll()
             .track_scroll(&pane.scroll);
@@ -661,6 +665,7 @@ impl Library {
                                 .mt_1()
                                 .pr_6()
                                 .text_size(px(12.))
+                                .line_height(px(19.2))
                                 .text_color(rgb(palette.muted))
                                 .child("Ask about your LaTeX, research, or writing."),
                         )
@@ -702,16 +707,17 @@ impl Library {
             .relative()
             .flex()
             .flex_col()
-            .mx_4()
-            .mb_4()
-            .p_3()
-            .gap_2()
+            .mx(px(margin))
+            .mb(px(margin))
+            .p(px(padding))
             .rounded(px(10.))
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
             .when(editor_shown, |panel| panel.h(px(height)).flex_none())
-            .when(!editor_shown, |pane| pane.flex_1().min_h(px(0.)).mt_4())
+            .when(!editor_shown, |pane| {
+                pane.flex_1().min_h(px(0.)).mt(px(margin))
+            })
             .child(header)
             .children(
                 pane.error

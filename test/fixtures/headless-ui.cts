@@ -29,7 +29,8 @@ function installFixture(data:{pdf:string; source:string}):void {
    return names.map(name=>{
     const file=prefix+name, folder=Object.keys(state.files).some(candidate=>candidate.startsWith(file+'/'));
     return folder ? {name,path:file,children:make(file+'/')} : {name,path:file};
-   });
+   }).sort((left,right)=>
+      Number(Boolean(right.children))-Number(Boolean(left.children)) || left.name.localeCompare(right.name));
   }; return make('');
  };
  let updateTrack: 'stable' | 'beta' = 'stable';

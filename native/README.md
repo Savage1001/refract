@@ -59,6 +59,8 @@ Select **Chats** in the sidebar to open or rename conversations saved by Electro
 
 **Settings** reads and writes the existing Stable or Pre-release update track. Installed Windows x64 packages check for native Refract releases every ten minutes and verify the installer size and SHA-256 from GitHub before offering **Restart to update**.
 
+On first launch from an existing Refract profile, the native app imports the saved project view and sort order, workspace pane visibility, outline height, and chat drafts. It reads a bounded copy of Electron’s local storage and preserves preferences and drafts already saved by the native app.
+
 The native package workflows build Windows x64, macOS Intel and Apple Silicon, Debian and Ubuntu, and Arch installers as pull request artifacts. Verification installs packages in disposable runners or containers. Windows and macOS packages bundle the dependency setup helper. Linux packages declare TeX and SyncTeX dependencies for the system package manager.
 
 ## Parity before replacing Electron

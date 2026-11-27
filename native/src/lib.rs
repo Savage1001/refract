@@ -20,6 +20,8 @@ pub mod file_preview;
 pub mod latex_commands;
 #[cfg(feature = "latex-syntax")]
 pub mod latex_syntax;
+#[cfg(feature = "legacy-profile")]
+pub mod legacy_profile;
 #[cfg(any(feature = "desktop", feature = "codex-account", test))]
 pub mod managed_codex;
 #[cfg(any(feature = "installer", test))]

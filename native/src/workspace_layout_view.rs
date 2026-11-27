@@ -251,11 +251,21 @@ impl Library {
             .when(horizontal, |handle| {
                 handle
                     .absolute()
-                    .top(px(-3.))
-                    .left_0()
-                    .right_0()
-                    .h(px(6.))
+                    .top(px(-5.))
+                    .left(gpui::relative(0.25))
+                    .right(gpui::relative(0.25))
+                    .h(px(10.))
                     .cursor_row_resize()
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(4.))
+                            .left(gpui::relative(0.4))
+                            .right(gpui::relative(0.4))
+                            .h(px(2.))
+                            .rounded(px(2.))
+                            .bg(rgb(palette.input_border)),
+                    )
             })
             .when(!horizontal, |handle| {
                 handle.w(px(6.)).h_full().mx(px(-3.)).cursor_col_resize()
