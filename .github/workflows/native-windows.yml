@@ -94,6 +94,53 @@ jobs:
           sudo apt-get install -y libfontconfig1-dev libwayland-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev
       - name: Check the native application
         run: cargo +stable check --locked --bin refract-native
+      - name: Build for visual verification
+        if: runner.os == 'Linux'
+        run: cargo +stable build --locked --bin refract-native
+      - name: Capture the native project library offscreen
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y imagemagick mesa-vulkan-drivers xauth xdotool xvfb
+          profile=$(mktemp -d "$RUNNER_TEMP/refract-native-profile.XXXXXX")
+          output="$RUNNER_TEMP/refract-native-reference"
+          mkdir -p "$output"
+          names=('Spectral methods for fluid dynamics' 'Conference paper - autumn notes' 'A short introduction to graph theory')
+          for i in "${!names[@]}"; do
+            id=$(printf '2b98e215-1a9f-4f24-972b-%012d' "$i")
+            folder="$profile/projects/$id"
+            mkdir -p "$folder"
+            printf '{"id":"%s","name":"%s","created":"2026-01-01T12:00:00.000Z","rootFile":"main.tex"}\n' "$id" "${names[$i]}" > "$folder/.refract.json"
+            printf '%% Visual test fixture\n' > "$folder/main.tex"
+          done
+          export REFRACT_DATA_DIR="$profile"
+          export WAYLAND_DISPLAY= ZED_ALLOW_EMULATED_GPU=1
+          xvfb-run -a -s '-screen 0 1600x1000x24' bash -e -u -o pipefail -s -- "$output" <<'CAPTURE'
+          output=$1
+          ./target/debug/refract-native > "$output/native.log" 2>&1 &
+          app=$!
+          trap 'kill "$app" 2>/dev/null || true; wait "$app" 2>/dev/null || true' EXIT
+          client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
+          timeout 10s xdotool windowmove --sync "$client" 0 0
+          timeout 10s xdotool windowsize --sync "$client" 1440 900
+          shot="$output/light-library-list.png"
+          for attempt in {1..12}; do
+            import -window "$client" "$shot"
+            read -r width height colors < <(identify -format '%w %h %k\n' "$shot")
+            if (( width == 1440 && height == 900 && colors > 32 )); then
+              exit 0
+            fi
+            sleep 0.2
+          done
+          echo 'The Refract project library did not render at 1440×900' >&2
+          exit 1
+          CAPTURE
+      - name: Upload native visual verification artifacts
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-native-reference
+          path: ${{ runner.temp }}/refract-native-reference
+          if-no-files-found: ignore
 
   electron-reference:
     runs-on: windows-latest

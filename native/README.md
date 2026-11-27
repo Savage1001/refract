@@ -55,6 +55,8 @@ Use the Electron app for assistants and updates.
 
 The current Electron app is the reference for appearance and behavior. The Native preview workflow runs the existing renderer's interaction tests and uploads fixture screenshots of the library, settings, and workspace in light and dark themes, including the compact workspace layout. Run `node build/scripts/capture-electron-parity.cjs <output-folder>` after `npm run build` to capture the same reference on a machine with Microsoft Edge.
 
+The Linux job captures the native project library at the reference's 1440 × 900 viewport in a private Xvfb display. Download the `refract-native-reference` and `refract-electron-reference` artifacts from the same run to compare the project lists.
+
 Before changing the default app or shipping this crate, verify the GPUI build against these references and run equivalent workflows on Windows, macOS, and Linux. Compare views at the same viewport, scale, and theme. Include app chrome, keyboard and pointer interaction, focus, accessibility, and responsive layouts. Verify project and file management, editing, PDF preview and SyncTeX in both directions, versions and comments, chats and settings, and installation and updates. Confirm that existing projects and settings open in place.
 
 Run the project-library tests without building GPUI or opening a window.
