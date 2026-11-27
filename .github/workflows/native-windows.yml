@@ -6,6 +6,7 @@ on:
       - native/**
       - .github/workflows/native-windows.yml
       - scripts/capture-electron-parity.cts
+      - test/fixtures/parity-document.*
 
 permissions:
   contents: read
@@ -100,10 +101,28 @@ jobs:
       - name: Capture the native library and workspace offscreen
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y --no-install-recommends imagemagick mesa-vulkan-drivers texlive-latex-base texlive-latex-recommended xauth xdotool xvfb
+          sudo apt-get install -y --no-install-recommends imagemagick mesa-vulkan-drivers xauth xdotool xvfb
           profile=$(mktemp -d "$RUNNER_TEMP/refract-native-profile.XXXXXX")
           output="$RUNNER_TEMP/refract-native-reference"
-          mkdir -p "$output"
+          fixture_source=../test/fixtures/parity-document.tex
+          fixture_tools="$profile/fixture-tex"
+          mkdir -p "$output" "$fixture_tools"
+          export REFRACT_CAPTURE_PDF="$profile/fixture.pdf"
+          base64 --decode ../test/fixtures/parity-document.pdf.b64 > "$REFRACT_CAPTURE_PDF"
+          # The screenshot must render the same PDF as the Electron reference.
+          # The Windows TinyTeX check above exercises the real compiler separately.
+          cat > "$fixture_tools/pdflatex" <<'PDFLATEX'
+          #!/bin/sh
+          set -eu
+          for argument do
+            case "$argument" in
+              -output-directory=*) output_directory=${argument#*=} ;;
+            esac
+          done
+          : "${output_directory:?Missing fixture output directory}"
+          cp "$REFRACT_CAPTURE_PDF" "$output_directory/main.pdf"
+          PDFLATEX
+          chmod +x "$fixture_tools/pdflatex"
           names=('Spectral methods for fluid dynamics' 'Conference paper - autumn notes' 'A short introduction to graph theory')
           for i in "${!names[@]}"; do
             id=$(printf '2b98e215-1a9f-4f24-972b-%012d' "$i")
@@ -111,21 +130,10 @@ jobs:
             mkdir -p "$folder"
             printf '{"id":"%s","name":"%s","created":"2026-01-01T12:00:00.000Z","rootFile":"main.tex"}\n' "$id" "${names[$i]}" > "$folder/.refract.json"
             mkdir -p "$folder/sections"
-            cat > "$folder/main.tex" <<'TEX'
-          \documentclass[11pt]{article}
-          \usepackage[margin=1in]{geometry}
-          \title{Spectral methods}
-          \author{Research notes}
-          \date{Working draft}
-          \begin{document}
-          \maketitle
-          \section{Introduction}
-          A stable spectral approximation for fluid dynamics.
-          \end{document}
-          TEX
+            cp "$fixture_source" "$folder/main.tex"
             printf '%% Research notes\nA stable spectral approximation.\n' > "$folder/sections/abstract.tex"
           done
-          export REFRACT_DATA_DIR="$profile"
+          export REFRACT_DATA_DIR="$profile" REFRACT_TEX_BIN="$fixture_tools"
           export WAYLAND_DISPLAY= ZED_ALLOW_EMULATED_GPU=1
           xvfb-run -a -s '-screen 0 1600x1000x24' bash -e -u -o pipefail -s -- "$output" <<'CAPTURE'
           output=$1
@@ -153,16 +161,17 @@ jobs:
           capture library-list 1440 900
           xdotool mousemove --window "$client" 340 615 click 1
           xdotool mousemove --sync 0 0
+          rendered_pdf="$REFRACT_DATA_DIR/projects/2b98e215-1a9f-4f24-972b-000000000000/.refract-build/main.pdf"
           for attempt in {1..40}; do
-            if compgen -G "$REFRACT_DATA_DIR/projects/*/.refract-build/main.pdf" > /dev/null; then
+            if cmp -s "$REFRACT_CAPTURE_PDF" "$rendered_pdf"; then
               sleep 1
               break
             fi
             sleep 0.25
           done
           capture workspace 1440 900
-          if ! compgen -G "$REFRACT_DATA_DIR/projects/*/.refract-build/main.pdf" > /dev/null; then
-            echo 'The workspace fixture did not compile' >&2
+          if ! cmp -s "$REFRACT_CAPTURE_PDF" "$rendered_pdf"; then
+            echo 'The native workspace did not load the shared screenshot PDF' >&2
             exit 1
           fi
           timeout 10s xdotool windowsize --sync "$client" 900 650

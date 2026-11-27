@@ -7,8 +7,13 @@ import type { Page } from 'playwright';
 const desktop = { width: 1440, height: 900 };
 const compact = { width: 900, height: 650 };
 
-async function captureTheme(output: string, theme: 'light' | 'dark'): Promise<void> {
-  const { browser, page, errors } = await fixture.openHeadlessUi(theme, undefined, {
+interface CaptureDocument {
+  pdf: string;
+  source: string;
+}
+
+async function captureTheme(output: string, theme: 'light' | 'dark', document: CaptureDocument): Promise<void> {
+  const { browser, page, errors } = await fixture.openHeadlessUi(theme, document, {
     viewport: desktop,
     reducedMotion: 'reduce',
   });
@@ -65,9 +70,15 @@ async function capture(page: Page, output: string, theme: string, screen: string
 async function main(): Promise<void> {
   const output = process.argv[2];
   if (!output) throw new Error('Pass an output folder for the screenshots.');
+  const documentsDir = path.resolve(__dirname, '../../test/fixtures');
+  const [source, pdf] = await Promise.all([
+    fs.readFile(path.join(documentsDir, 'parity-document.tex'), 'utf8'),
+    fs.readFile(path.join(documentsDir, 'parity-document.pdf.b64'), 'ascii'),
+  ]);
+  const document = { source: source.replace(/\r\n/g, '\n'), pdf: pdf.replace(/\s+/g, '') };
   await fs.mkdir(output, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
-    await captureTheme(output, theme);
+    await captureTheme(output, theme, document);
   }
 }
 
