@@ -60,6 +60,7 @@ impl Library {
                 .collect();
         }
         self.projects = Some(projects);
+        self.refresh_project_edits(cx);
     }
 
     pub(super) fn can_create_project(&self) -> bool {
@@ -234,7 +235,7 @@ impl Library {
             .id("project-actions")
             .relative()
             .flex_none()
-            .when(self.grid_view, |actions| {
+            .when(self.catalog.is_grid(), |actions| {
                 actions.absolute().right(px(12.)).top(px(12.))
             })
             .on_click(|_, _, cx| cx.stop_propagation())
@@ -604,12 +605,7 @@ mod tests {
             assert!(view.project_focus[&original.id].actions.is_focused(window));
         });
 
-        cx.update(|_, app| {
-            library.update(app, |view, cx| {
-                view.grid_view = true;
-                cx.notify();
-            })
-        });
+        cx.update(|_, app| library.update(app, |view, cx| view.set_library_grid(true, cx)));
         cx.simulate_keystrokes("enter tab enter");
         assert!(cx.has_pending_prompt());
         cx.simulate_prompt_answer("Duplicate");

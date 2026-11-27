@@ -9,6 +9,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
 };
 use refract_native::comments::{Comment, read_comments};
+use refract_native::project_catalog::matches_query;
 use refract_native::versions::{
     Version, list_versions, recover_project_restore, restore_project_version, restore_version_file,
     retry_retained_restore_stages, snapshot_project,
@@ -39,6 +40,7 @@ mod file_transfer_view;
 mod file_trash_view;
 mod outline_view;
 mod pdf_view;
+mod project_catalog_view;
 mod project_import_view;
 mod project_info_view;
 mod project_management_view;
@@ -58,6 +60,7 @@ use file_move_view::{EntryMenu, EntryMoveDraft};
 use file_search_view::{FileSearch, RefractAssets};
 use file_trash_view::DeletedFilesDialog;
 use outline_view::OutlinePane;
+use project_catalog_view::ProjectCatalogView;
 use project_import_view::ImportDraft;
 use project_info_view::ProjectInfoState;
 use project_management_view::{ProjectFocus, RenameDraft};
@@ -119,7 +122,7 @@ struct Library {
     project_focus: HashMap<String, ProjectFocus>,
     home_focus: FocusHandle,
     logo: Arc<Image>,
-    grid_view: bool,
+    catalog: ProjectCatalogView,
     last_tool: WorkspaceTool,
 }
 
@@ -210,6 +213,7 @@ impl Library {
                 cx.notify();
             }
         });
+        let catalog = ProjectCatalogView::new(&projects_dir, window, cx);
         Self {
             projects_dir,
             projects: None,
@@ -265,7 +269,7 @@ impl Library {
                 ImageFormat::Png,
                 include_bytes!("../../resources/logo.png").to_vec(),
             )),
-            grid_view: false,
+            catalog,
             last_tool: WorkspaceTool::Logs,
         }
     }
@@ -277,6 +281,7 @@ impl Library {
         {
             return;
         }
+        self.catalog.cancel_edit_scan();
         self.project_menu = None;
         self.entry_menu = None;
         self.project_open_sequence = self.project_open_sequence.wrapping_add(1);
@@ -547,7 +552,7 @@ impl Library {
             if let Some(focus) = self
                 .project_focus
                 .get(&previous.project.id)
-                .filter(|_| previous.project.name.to_lowercase().contains(&query))
+                .filter(|_| matches_query(&previous.project, &query))
             {
                 window.focus(&focus.open);
             } else {
@@ -555,6 +560,7 @@ impl Library {
                     .update(cx, |input, cx| input.focus(window, cx));
             }
         }
+        self.refresh_project_edits(cx);
         cx.notify();
     }
 
@@ -1221,6 +1227,7 @@ impl Library {
                     .py(px(16.))
                     .child(self.project_search_field(palette))
                     .child(div().flex_1())
+                    .child(self.catalog.sort_control(palette))
                     .child(
                         div()
                             .flex()
@@ -1236,12 +1243,7 @@ impl Library {
             .children(self.project_action_error.clone())
             .child(match &self.projects {
                 Some(Ok(projects)) if !projects.is_empty() => {
-                    let projects = projects
-                        .iter()
-                        .filter(|project| {
-                            query.is_empty() || project.name.to_lowercase().contains(&query)
-                        })
-                        .collect::<Vec<_>>();
+                    let projects = self.catalog.visible_projects(projects, &query);
                     let count = if projects.len() == 1 {
                         "1 project".to_owned()
                     } else {
@@ -1261,7 +1263,7 @@ impl Library {
                                         .text_color(rgb(palette.muted))
                                         .child(count),
                                 )
-                                .when(!self.grid_view, |content| {
+                                .when(!self.catalog.is_grid(), |content| {
                                     content.child(
                                         div()
                                             .px(px(14.))
@@ -1278,7 +1280,7 @@ impl Library {
                                 })
                                 .child(
                                     div()
-                                        .when(self.grid_view, |list| {
+                                        .when(self.catalog.is_grid(), |list| {
                                             list.grid().grid_cols(columns).gap(px(16.)).pt(px(16.))
                                         })
                                         .children(
@@ -1394,19 +1396,17 @@ impl Library {
             .py(px(6.))
             .focus(move |style| style.bg(rgb(palette.selection)))
             .hover(move |style| style.bg(rgb(palette.selection)))
-            .when(self.grid_view == grid, |button| {
+            .when(self.catalog.is_grid() == grid, |button| {
                 button.bg(rgb(palette.surface)).shadow_sm()
             })
             .child(label)
             .on_click(cx.listener(move |library, _, _, cx| {
-                library.grid_view = grid;
-                cx.notify();
+                library.set_library_grid(grid, cx);
             }))
             .on_key_down(
                 cx.listener(move |library, event: &gpui::KeyDownEvent, _, cx| {
                     if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                        library.grid_view = grid;
-                        cx.notify();
+                        library.set_library_grid(grid, cx);
                     }
                 }),
             )
@@ -1420,7 +1420,7 @@ impl Library {
     ) -> impl IntoElement {
         let keyboard_project = project.clone();
         let click_project = project.clone();
-        let grid = self.grid_view;
+        let grid = self.catalog.is_grid();
         let date = project
             .created
             .as_deref()
@@ -2199,7 +2199,7 @@ mod tests {
         cx.update(|_, app| assert!(library.read(app).project_query.read(app).value().is_empty()));
         cx.simulate_input("PAPER");
         click(cx, "Grid");
-        cx.update(|_, app| assert!(library.read(app).grid_view));
+        cx.update(|_, app| assert!(library.read(app).catalog.is_grid()));
         cx.simulate_keystrokes("tab tab enter");
         cx.update(|_, app| {
             let selection = library.read(app).selection.as_ref().expect("open project");
@@ -2369,7 +2369,7 @@ mod tests {
         cx.update(|window, app| {
             let library = library.read(app);
             assert!(library.selection.is_none());
-            assert!(library.grid_view);
+            assert!(library.catalog.is_grid());
             assert!(library.project_focus[id].open.is_focused(window));
         });
         assert_eq!(

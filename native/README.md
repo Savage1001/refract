@@ -2,7 +2,7 @@
 
 This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. Create a project with **New project**, or select its name in the workspace to rename it. The workspace opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 32 MiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
 
-Use **Search** to filter project names in either library view. Use **Duplicate** in a project’s library menu to open a copy with its files, comments, version history, and LaTeX settings. **Delete** moves the project to **Deleted projects**, where it can be restored for up to 30 days.
+Use **Search** to filter project names in either library view. **Sort** offers newest first, oldest first, name, and recently edited. Refract remembers the selected order and library view across native launches. Use **Duplicate** in a project’s library menu to open a copy with its files, comments, version history, and LaTeX settings. **Delete** moves the project to **Deleted projects**, where it can be restored for up to 30 days.
 
 Use **+** in Files to create a file at the project root or in a selected folder. Open **More file options** to create a folder. A folder’s **Add items** menu preselects that destination.
 

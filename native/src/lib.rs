@@ -13,6 +13,7 @@ pub mod latex_commands;
 pub mod latex_syntax;
 pub mod outline;
 pub mod pdf_raster;
+pub mod project_catalog;
 mod project_entries;
 mod project_management;
 pub mod project_search;
