@@ -189,7 +189,9 @@ jobs:
           test ! -L /usr/bin/refract
           test ! -e /usr/share/applications/refract.desktop
           profile="$(getent passwd refract-test | cut -d: -f6)/.config/Refract"
-          cmp "$profile/projects/2b98e215-1a9f-4f24-972b-000000000000/main.tex" /fixtures/parity-document.tex
+          installed_source=$(sha256sum < "$profile/projects/2b98e215-1a9f-4f24-972b-000000000000/main.tex")
+          fixture_source=$(sha256sum < /fixtures/parity-document.tex)
+          test "$installed_source" = "$fixture_source"
           command -v pdflatex
           command -v synctex
           LINUX
