@@ -1,7 +1,8 @@
 use super::{Library, Palette, deleted_projects_view::recovery_button};
+use crate::account_settings_view::{AccountControls, AccountSection};
 use gpui::{
-    AnyElement, Context, Entity, FocusHandle, Focusable, KeyDownEvent, SharedString, Subscription,
-    Task, WeakEntity, Window, div, prelude::*, px, rgb, svg,
+    AnyElement, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Subscription, Task,
+    WeakEntity, Window, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     WindowExt,
@@ -45,6 +46,7 @@ impl SelectItem for TrackChoice {
 
 pub(super) struct SettingsView {
     profile: PathBuf,
+    pub(super) account: AccountControls,
     track: UpdateTrack,
     track_select: Entity<SelectState<Vec<TrackChoice>>>,
     _track_subscription: Subscription,
@@ -64,6 +66,7 @@ pub(super) struct SettingsView {
 }
 
 struct SettingsDialog {
+    account: AccountSection,
     track_select: Entity<SelectState<Vec<TrackChoice>>>,
     close_focus: FocusHandle,
     check_focus: FocusHandle,
@@ -107,6 +110,7 @@ impl SettingsView {
             }
         });
         let updater = WindowsUpdater::installed(&profile);
+        let account = AccountControls::new(&profile, window, cx);
         let message = if updater.is_some() {
             "Updates are checked every 10 minutes."
         } else {
@@ -114,6 +118,7 @@ impl SettingsView {
         };
         Self {
             profile,
+            account,
             track,
             track_select: selector,
             _track_subscription: subscription,
@@ -136,6 +141,7 @@ impl SettingsView {
     fn dialog_contents(&self) -> SettingsDialog {
         let busy = self.save.is_some() || self.work.is_some();
         SettingsDialog {
+            account: self.account.section(),
             track_select: self.track_select.clone(),
             close_focus: self.close_focus.clone(),
             check_focus: self.check_focus.clone(),
@@ -166,6 +172,7 @@ impl SettingsDialog {
             .flex_col()
             .gap(px(8.))
             .debug_selector(|| "settings-dialog".into())
+            .child(self.account.contents(library.clone(), palette))
             .child("Update track")
             .child(
                 Select::new(&self.track_select)
@@ -298,6 +305,7 @@ impl Library {
             return;
         }
         self.dismiss_project_menu(cx);
+        self.refresh_account_settings(window, cx);
         let owner = cx.weak_entity();
         let contents = Rc::new(RefCell::new(self.settings.dialog_contents()));
         self.settings.dialog = Some(contents.clone());
@@ -317,7 +325,7 @@ impl Library {
                     let _ = close.update(app, |library, cx| library.settings_closed(window, cx));
                 })
         });
-        window.focus(&self.settings.track_select.read(cx).focus_handle(cx));
+        window.focus(&self.settings.account.focus_handle(cx));
     }
 
     fn settings_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -454,6 +462,7 @@ impl Library {
 
     fn restart_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_create_project()
+            || self.settings.account.busy()
             || self.settings.work.is_some()
             || self.settings.save.is_some()
             || self.navigation_after_save.is_some()
@@ -479,6 +488,7 @@ mod tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext};
     use gpui_component::Root;
+    use refract_native::codex_connection::CodexMode;
 
     #[gpui::test]
     fn settings_read_and_save_the_existing_update_track(cx: &mut TestAppContext) {
@@ -501,14 +511,20 @@ mod tests {
             let settings = &library.read(app).settings;
             let selector = settings.track_select.read(app);
             assert_eq!(selector.selected_value(), Some(&UpdateTrack::Beta));
-            assert!(selector.focus_handle(app).is_focused(window));
+            assert!(settings.account.focus_handle(app).is_focused(window));
             assert!(settings.updater.is_none());
             library.update(app, |library, cx| {
                 library.change_update_track(UpdateTrack::Stable, window, cx);
+                library.account_action(
+                    crate::account_settings_view::AccountAction::Select(CodexMode::Cli),
+                    window,
+                    cx,
+                );
             });
         });
         cx.run_until_parked();
         assert_eq!(UpdateTrack::load(profile.path()), UpdateTrack::Stable);
+        assert_eq!(CodexMode::load(profile.path()), CodexMode::Cli);
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
         cx.update(|window, app| {

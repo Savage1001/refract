@@ -5,6 +5,7 @@ on:
     paths:
       - native/**
       - .github/workflows/native-windows.yml
+      - scripts/account-storage-fixture.cts
       - scripts/capture-electron-parity.cts
       - test/fixtures/parity-document.*
 
@@ -55,6 +56,21 @@ jobs:
         run: cargo +stable build --locked
       - name: Test GPUI keyboard interaction
         run: cargo +stable test --locked --bin refract-native --features ui-tests
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build a disposable Electron secure storage fixture
+        working-directory: .
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx --no-install install-electron
+      - name: Verify protected ChatGPT account storage with Electron
+        run: cargo +stable test --locked --no-default-features --features codex-account --lib codex_account::storage::tests::exchanges_a_synthetic_connection_with_electron_safe_storage -- --ignored
 
   unix:
     name: native (${{ matrix.os }})

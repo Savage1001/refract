@@ -16,6 +16,7 @@ use refract_native::{
         run_codex,
     },
     assistant_tools::{AssistantToolServer, AssistantTools, claims_successful_build},
+    codex_connection::CodexMode,
     conversation::{
         Attachment, Conversation, ConversationId, Message, Provider, StartTurn,
         begin_conversation_turn,
@@ -25,7 +26,8 @@ use refract_native::{
 };
 use std::{
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -35,36 +37,109 @@ use std::{
 #[derive(Clone)]
 pub(super) enum InstalledProvider {
     Codex(CodexCli),
+    #[cfg(windows)]
+    CodexAccount(Arc<refract_native::codex_account::CodexAccount>),
+    #[cfg(not(windows))]
+    CodexAccount,
     OpenCode(OpenCodeCli),
+}
+
+pub(super) enum PreparedProvider<'a> {
+    Codex(CodexBackend<'a>),
+    OpenCode(&'a OpenCodeCli),
+}
+
+pub(super) enum CodexBackend<'a> {
+    Cli(&'a CodexCli),
+    #[cfg(windows)]
+    Account(refract_native::codex_account::CodexConnection),
+}
+
+impl CodexBackend<'_> {
+    pub(super) fn key(&self) -> Option<&str> {
+        match self {
+            Self::Cli(_) => None,
+            #[cfg(windows)]
+            Self::Account(connection) => Some(connection.account_key()),
+        }
+    }
+
+    pub(super) fn command(&self, cwd: &Path) -> io::Result<Command> {
+        match self {
+            Self::Cli(cli) => Ok(cli.app_server_command(cwd)),
+            #[cfg(windows)]
+            Self::Account(connection) => connection.app_server_command(cwd),
+        }
+    }
 }
 
 impl InstalledProvider {
     pub(super) fn kind(&self) -> Provider {
         match self {
             Self::Codex(_) => Provider::Codex,
+            #[cfg(windows)]
+            Self::CodexAccount(_) => Provider::Codex,
+            #[cfg(not(windows))]
+            Self::CodexAccount => Provider::Codex,
             Self::OpenCode(_) => Provider::OpenCode,
         }
     }
 
     pub(super) fn label(&self) -> &'static str {
-        match self {
-            Self::Codex(_) => "Codex",
-            Self::OpenCode(_) => "OpenCode",
+        match self.kind() {
+            Provider::Codex => "Codex",
+            Provider::OpenCode => "OpenCode",
         }
     }
 
     pub(super) fn mode(&self) -> AssistantConnection {
         match self {
             Self::Codex(_) => AssistantConnection::CodexCli,
+            #[cfg(windows)]
+            Self::CodexAccount(_) => AssistantConnection::CodexAccount,
+            #[cfg(not(windows))]
+            Self::CodexAccount => AssistantConnection::CodexAccount,
             Self::OpenCode(_) => AssistantConnection::OpenCode,
+        }
+    }
+
+    pub(super) fn prepare(&self, cancel: &AtomicBool) -> io::Result<PreparedProvider<'_>> {
+        #[cfg(not(windows))]
+        let _ = cancel;
+        match self {
+            Self::Codex(cli) => Ok(PreparedProvider::Codex(CodexBackend::Cli(cli))),
+            #[cfg(windows)]
+            Self::CodexAccount(account) => account
+                .connection(cancel)
+                .map(CodexBackend::Account)
+                .map(PreparedProvider::Codex),
+            #[cfg(not(windows))]
+            Self::CodexAccount => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                refract_native::managed_codex::UNSUPPORTED_PLATFORM,
+            )),
+            Self::OpenCode(cli) => Ok(PreparedProvider::OpenCode(cli)),
         }
     }
 }
 
-pub(super) fn installed_providers() -> Vec<InstalledProvider> {
+pub(super) fn installed_providers(
+    profile: &Path,
+    #[cfg(windows)] account: Arc<refract_native::codex_account::CodexAccount>,
+) -> Vec<InstalledProvider> {
     let mut providers = Vec::new();
-    if let Ok(cli) = discover_codex_cli() {
-        providers.push(InstalledProvider::Codex(cli));
+    match CodexMode::load(profile) {
+        CodexMode::Account => {
+            #[cfg(windows)]
+            providers.push(InstalledProvider::CodexAccount(account));
+            #[cfg(not(windows))]
+            providers.push(InstalledProvider::CodexAccount);
+        }
+        CodexMode::Cli => {
+            if let Ok(cli) = discover_codex_cli() {
+                providers.push(InstalledProvider::Codex(cli));
+            }
+        }
     }
     if let Ok(cli) = discover_opencode_cli() {
         providers.push(InstalledProvider::OpenCode(cli));
@@ -187,6 +262,11 @@ fn run_turn(
     notices: async_channel::Sender<TurnNotice>,
 ) -> io::Result<CompletedTurn> {
     let mode = work.provider.mode();
+    let prepared = work.provider.prepare(cancel)?;
+    let account_key = match &prepared {
+        PreparedProvider::Codex(codex) => codex.key(),
+        PreparedProvider::OpenCode(_) => None,
+    };
     let profile = work.projects.parent().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -213,7 +293,7 @@ fn run_turn(
             provider: work.provider.kind(),
             prompt: &work.prompt,
             attachments: &work.attachments,
-            codex_account: None,
+            codex_account: account_key,
             build_instructions: Some(&instructions),
         },
     )?;
@@ -229,57 +309,60 @@ fn run_turn(
             let _ = notices.try_send(TurnNotice::Progress(progress));
         }
     };
-    let mut execute =
-        |prompt: &str, session_id: Option<&str>, images: &[PathBuf]| match &work.provider {
-            InstalledProvider::Codex(cli) => {
-                match run_codex(
-                    cli.app_server_command(&context.workspace),
-                    CodexTurnRequest {
-                        account_connection: false,
-                        session_id,
-                        prompt,
-                        images,
-                        options: CodexThreadOptions {
-                            model: preferences.model.as_deref(),
-                            reasoning_effort: preferences.reasoning_effort.as_deref(),
-                            fast_mode: preferences.fast_mode,
-                            developer_instructions: Some(&engine_instructions),
-                            tools: Some(CodexToolConnection {
-                                url: server.url(),
-                                token: server.token(),
-                            }),
-                        },
-                    },
-                    cancel,
-                    &mut update,
-                ) {
-                    Ok(reply) => (Ok(reply.text), Some(reply.session_id)),
-                    Err(error) => (Err(error.message), error.session_id),
-                }
-            }
-            InstalledProvider::OpenCode(cli) => {
-                match run_opencode(
-                    cli,
-                    OpenCodeTurnRequest {
-                        cwd: &context.workspace,
-                        session_id,
-                        prompt,
-                        images,
+    let mut execute = |prompt: &str, session_id: Option<&str>, images: &[PathBuf]| match &prepared {
+        PreparedProvider::Codex(codex) => {
+            let command = match codex.command(&context.workspace) {
+                Ok(command) => command,
+                Err(error) => return (Err(error.to_string()), None),
+            };
+            match run_codex(
+                command,
+                CodexTurnRequest {
+                    account_connection: account_key.is_some(),
+                    session_id,
+                    prompt,
+                    images,
+                    options: CodexThreadOptions {
                         model: preferences.model.as_deref(),
-                        variant: preferences.reasoning_effort.as_deref(),
-                        tools: Some(OpenCodeToolConnection {
+                        reasoning_effort: preferences.reasoning_effort.as_deref(),
+                        fast_mode: preferences.fast_mode,
+                        developer_instructions: Some(&engine_instructions),
+                        tools: Some(CodexToolConnection {
                             url: server.url(),
                             token: server.token(),
                         }),
                     },
-                    cancel,
-                    &mut update,
-                ) {
-                    Ok(reply) => (Ok(reply.text), reply.session_id),
-                    Err(error) => (Err(error.message), error.session_id),
-                }
+                },
+                cancel,
+                &mut update,
+            ) {
+                Ok(reply) => (Ok(reply.text), Some(reply.session_id)),
+                Err(error) => (Err(error.message), error.session_id),
             }
-        };
+        }
+        PreparedProvider::OpenCode(cli) => {
+            match run_opencode(
+                cli,
+                OpenCodeTurnRequest {
+                    cwd: &context.workspace,
+                    session_id,
+                    prompt,
+                    images,
+                    model: preferences.model.as_deref(),
+                    variant: preferences.reasoning_effort.as_deref(),
+                    tools: Some(OpenCodeToolConnection {
+                        url: server.url(),
+                        token: server.token(),
+                    }),
+                },
+                cancel,
+                &mut update,
+            ) {
+                Ok(reply) => (Ok(reply.text), reply.session_id),
+                Err(error) => (Err(error.message), error.session_id),
+            }
+        }
+    };
     let (mut result, mut session) = execute(
         &context.prompt,
         context.session_id.as_deref(),

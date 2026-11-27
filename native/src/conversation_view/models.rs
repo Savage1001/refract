@@ -1,4 +1,8 @@
-use super::{ConversationPane, Library, Palette, assistant::InstalledProvider};
+use super::{
+    ConversationPane, Library, Palette,
+    assistant::{InstalledProvider, PreparedProvider},
+};
+use crate::account_settings_view::AccountAction;
 use gpui::{
     Context, Corner, Entity, FontWeight, Render, Subscription, Task, WeakEntity, Window, div,
     prelude::*, px, rgb,
@@ -11,8 +15,8 @@ use gpui_component::{
 };
 use refract_native::{
     assistant_preferences::{
-        AssistantPreferences, load_assistant_preferences, save_assistant_preferences,
-        valid_codex_effort,
+        AssistantConnection, AssistantPreferences, load_assistant_preferences,
+        save_assistant_preferences, valid_codex_effort,
     },
     assistant_runtime::{
         codex_catalog::discover_codex_models, opencode::catalog::discover_opencode_models,
@@ -225,6 +229,7 @@ impl ModelPicker {
     fn label(&self) -> String {
         match self.catalog.as_ref() {
             None => self.provider.label().into(),
+            Some(Err(error)) if self.needs_account_setup(error) => "Sign in".into(),
             Some(Err(_)) => "Models unavailable".into(),
             Some(Ok(catalog)) => Self::selected(catalog)
                 .map(|model| model.name.clone())
@@ -233,8 +238,23 @@ impl ModelPicker {
         }
     }
 
+    fn needs_account_setup(&self, error: &str) -> bool {
+        self.provider.mode() == AssistantConnection::CodexAccount
+            && (error.starts_with("Download the Codex runtime")
+                || error.starts_with("Sign in with ChatGPT")
+                || error.starts_with("Your ChatGPT session ended.")
+                || error.starts_with("ChatGPT plan usage was not granted."))
+    }
+
     pub(super) fn ready_to_send(&self) -> bool {
-        self.loading.is_none() && self.pending_save.is_none()
+        self.loading.is_none()
+            && self.pending_save.is_none()
+            && !self.catalog.as_ref().is_some_and(|result| {
+                result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| self.needs_account_setup(error))
+            })
     }
 }
 
@@ -243,9 +263,13 @@ fn load_models(
     project: &Path,
     cancel: &AtomicBool,
 ) -> Result<Vec<Model>, String> {
-    match provider {
-        InstalledProvider::Codex(cli) => {
-            discover_codex_models(cli.app_server_command(project), false, cancel).map(|models| {
+    match provider
+        .prepare(cancel)
+        .map_err(|error| error.to_string())?
+    {
+        PreparedProvider::Codex(codex) => {
+            let command = codex.command(project).map_err(|error| error.to_string())?;
+            discover_codex_models(command, codex.key().is_some(), cancel).map(|models| {
                 models
                     .into_iter()
                     .map(|model| {
@@ -270,7 +294,7 @@ fn load_models(
                     .collect()
             })
         }
-        InstalledProvider::OpenCode(cli) => {
+        PreparedProvider::OpenCode(cli) => {
             discover_opencode_models(cli, project, cancel).map(|models| {
                 models
                     .into_iter()
@@ -357,6 +381,37 @@ impl Render for ModelPicker {
             }
             _ if self.loading.is_some() => {
                 list = list.child("Loading models…");
+            }
+            Some(Err(error)) if self.needs_account_setup(error) => {
+                let owner = self.parent.clone();
+                let busy = owner
+                    .read_with(cx, |library, _| library.settings.account.busy())
+                    .unwrap_or(false);
+                list = list
+                    .child("Codex requires sign-in")
+                    .child(error.clone())
+                    .child(
+                        Button::new("model-picker-sign-in")
+                            .small()
+                            .label(if busy {
+                                "Connecting…"
+                            } else {
+                                "Sign in with ChatGPT"
+                            })
+                            .disabled(busy)
+                            .on_click(move |_, window, app| {
+                                let _ = owner.update(app, |library, cx| {
+                                    library.account_action(
+                                        AccountAction::SignIn {
+                                            new_registration: false,
+                                            install_first: true,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    );
             }
             Some(Err(error)) => {
                 list = list.child(error.clone()).child(
@@ -528,6 +583,13 @@ impl Render for ModelPicker {
 }
 
 impl Library {
+    pub(super) fn refresh_account_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selection) = &mut self.selection {
+            selection.conversation.models.remove(&Provider::Codex);
+            self.prepare_model_picker(window, cx);
+        }
+    }
+
     pub(super) fn prepare_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selection) = &mut self.selection else {
             return;

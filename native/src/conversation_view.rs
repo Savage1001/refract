@@ -212,15 +212,20 @@ impl Library {
         let path = self.projects_dir.clone();
         selection.conversation.error = None;
         let needs_providers = !selection.conversation.providers_loaded;
+        #[cfg(windows)]
+        let account = self.settings.account.service();
         let load = cx.background_executor().spawn(async move {
             let history = load_conversation(&path, &project, &id);
             let draft = load_conversation_draft(&path, &project, &id);
-            (
-                id,
-                history,
-                draft,
-                needs_providers.then(installed_providers),
-            )
+            let providers = needs_providers.then(|| {
+                let profile = path.parent().unwrap_or(&path);
+                #[cfg(windows)]
+                let providers = installed_providers(profile, account);
+                #[cfg(not(windows))]
+                let providers = installed_providers(profile);
+                providers
+            });
+            (id, history, draft, providers)
         });
         selection.conversation.load_task = Some(cx.spawn_in(window, async move |library, cx| {
             let (id, result, draft, providers) = load.await;

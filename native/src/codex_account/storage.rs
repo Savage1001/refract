@@ -335,4 +335,40 @@ mod tests {
         assert!(save(profile.path(), &fixture()).is_err());
         assert_eq!(fs::read(path).unwrap(), broken);
     }
+
+    #[test]
+    #[ignore = "requires the Electron fixture runner built by Windows CI"]
+    fn exchanges_a_synthetic_connection_with_electron_safe_storage() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let electron = repository.join("node_modules/electron/dist/electron.exe");
+        let fixture = repository.join("build/scripts/account-storage-fixture.cjs");
+        let profile = tempfile::tempdir().unwrap();
+        let run = |action: &str| {
+            let mut command = std::process::Command::new(&electron);
+            crate::tex::process::configure_process(&mut command);
+            let result = command
+                .args(["--disable-gpu", "--disable-renderer-backgrounding"])
+                .arg(&fixture)
+                .env("REFRACT_TEST_ACCOUNT_FIXTURE_ACTION", action)
+                .env("REFRACT_TEST_ACCOUNT_FIXTURE_DIR", profile.path())
+                .env_remove("ELECTRON_RUN_AS_NODE")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "Electron secure storage fixture failed ({action}): {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+
+        run("write");
+        let mut connection = load(profile.path()).unwrap().unwrap();
+        assert_eq!(
+            connection.session.as_ref().unwrap().access_token,
+            "fixture-electron"
+        );
+        connection.session.as_mut().unwrap().expires_at = 400_000;
+        save(profile.path(), &connection).unwrap();
+        run("verify");
+    }
 }

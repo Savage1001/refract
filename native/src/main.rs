@@ -30,6 +30,7 @@ use std::{
     time::Duration,
 };
 
+mod account_settings_view;
 mod asset_image;
 mod asset_view;
 mod build_log_view;
