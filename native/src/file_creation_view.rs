@@ -481,7 +481,8 @@ mod tests {
             library.update(app, |view, cx| view.open_project(project, window, cx))
         });
         cx.run_until_parked();
-        cx.simulate_keystrokes("tab enter");
+        // From the project name, Tab reaches Files, Chats, then Add.
+        cx.simulate_keystrokes("tab tab tab enter");
         cx.update(|window, app| assert!(window.has_active_dialog(app)));
         cx.simulate_keystrokes("enter");
         cx.update(|window, app| {
