@@ -5309,6 +5309,7 @@ dependencies = [
  "image",
  "katex-native",
  "markdown",
+ "memmap2",
  "notify",
  "raw-window-handle",
  "regex",

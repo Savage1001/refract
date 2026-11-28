@@ -6,7 +6,7 @@ use gpui::{
 };
 use gpui_component::{
     WindowExt,
-    select::{Select, SelectEvent, SelectItem, SelectState},
+    select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState},
     tooltip::Tooltip,
 };
 use refract_native::updates::{
@@ -197,16 +197,14 @@ impl SettingsDialog {
                     .font_weight(FontWeight::MEDIUM)
                     .child("Update track"),
             )
-            .child(
-                Select::new(&self.track_select)
-                    .w_full()
-                    .h(px(36.))
-                    .text_size(px(13.))
-                    .border_color(rgb(palette.input_border))
-                    .disabled(self.track_saving),
-            )
+            .child(settings_select(
+                &self.track_select,
+                palette,
+                self.track_saving,
+            ))
             .child(
                 div()
+                    .mt(px(4.))
                     .text_size(px(13.))
                     .line_height(px(20.8))
                     .text_color(rgb(palette.muted))
@@ -298,6 +296,23 @@ impl SettingsDialog {
     }
 }
 
+pub(super) fn settings_select<D: SelectDelegate + 'static>(
+    state: &Entity<SelectState<D>>,
+    palette: Palette,
+    disabled: bool,
+) -> impl IntoElement {
+    div().w_full().h(px(36.)).flex_none().child(
+        Select::new(state)
+            .w_full()
+            .h_full()
+            .text_size(px(13.))
+            .text_color(rgb(palette.text))
+            .bg(rgb(palette.surface))
+            .border_color(rgb(palette.input_border))
+            .disabled(disabled),
+    )
+}
+
 fn settings_action(
     id: &'static str,
     label: &'static str,
@@ -368,7 +383,14 @@ impl Library {
                 .min(max_height);
             let width = (viewport.width - px(48.)).max(px(0.)).min(px(440.));
             let measurement = measured_height.clone();
-            let palette = Palette::for_window(window);
+            let measure_owner = owner.clone();
+            let mut palette = Palette::for_window(window);
+            if matches!(
+                window.appearance(),
+                gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+            ) {
+                palette.muted = 0x818181;
+            }
             dialog
                 .title(crate::dialog_title("Settings"))
                 .w(width)
@@ -385,12 +407,16 @@ impl Library {
                 .child(
                     div()
                         .flex_none()
-                        .on_children_prepainted(move |bounds, window, _| {
+                        .on_children_prepainted(move |bounds, window, app| {
                             if let Some(content) = bounds.first()
                                 && measurement.replace(Some(content.size.height))
                                     != Some(content.size.height)
                             {
-                                window.refresh();
+                                let measure_owner = measure_owner.clone();
+                                window.defer(app, move |window, app| {
+                                    let _ = measure_owner.update(app, |_, cx| cx.notify());
+                                    window.refresh();
+                                });
                             }
                         })
                         .child(contents.borrow().contents(owner.clone(), palette)),

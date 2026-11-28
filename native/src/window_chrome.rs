@@ -4,6 +4,7 @@ use gpui::{
     size, transparent_black,
 };
 use gpui_component::tooltip::Tooltip;
+#[cfg(not(test))]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use refract_native::workspace_layout::WORKSPACE_HEADER_HEIGHT;
 use std::sync::OnceLock;
@@ -273,10 +274,17 @@ fn caption_corner(scale: f32) -> Pixels {
     })
 }
 
+#[cfg(not(test))]
 fn hwnd(window: &Window) -> Option<HWND> {
     let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window).ok()?.as_raw()
     else {
         return None;
     };
     Some(HWND(handle.hwnd.get() as *mut _))
+}
+
+#[cfg(test)]
+fn hwnd(_: &Window) -> Option<HWND> {
+    // GPUI's synthetic test windows have no OS handle.
+    None
 }

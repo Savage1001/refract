@@ -5,7 +5,7 @@ use gpui_component::{
 };
 use refract_native::latex_syntax;
 use serde_json::json;
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 pub(super) fn init(cx: &mut App) {
     let config = LanguageConfig::new(
@@ -43,17 +43,28 @@ pub(super) fn init(cx: &mut App) {
         &HighlightTheme::default_light(),
         ["#1b4ed8", "#507447", "#996018", "#956434"],
         0xfcfcfc,
-        0x27272a0a,
     );
     configure(
         Rc::make_mut(&mut theme.dark_theme),
         &HighlightTheme::default_dark(),
         ["#79a8ff", "#8fb58a", "#e5b567", "#d8ba8e"],
         0x0a0a0a,
-        0xf5f5f50a,
     );
     let mode = theme.mode;
     Theme::change(mode, None, cx);
+}
+
+pub(super) fn set_editor_focus(focused: bool, cx: &mut App) {
+    let theme = Theme::global(cx);
+    let active_line = focused.then(|| match theme.mode {
+        gpui_component::ThemeMode::Dark => rgba(0xf5f5f50a).into(),
+        _ => rgba(0x27272a0a).into(),
+    });
+    if theme.highlight_theme.style.editor_active_line != active_line {
+        Arc::make_mut(&mut Theme::global_mut(cx).highlight_theme)
+            .style
+            .editor_active_line = active_line;
+    }
 }
 
 #[cfg(all(test, feature = "ui-tests"))]
@@ -74,6 +85,29 @@ mod tests {
                 (ThemeMode::Dark, [0x79a8ff, 0xd8ba8e, 0xe5b567, 0x8fb58a]),
             ] {
                 Theme::change(mode, None, app);
+                assert!(
+                    Theme::global(app)
+                        .highlight_theme
+                        .style
+                        .editor_active_line
+                        .is_none()
+                );
+                set_editor_focus(true, app);
+                assert!(
+                    Theme::global(app)
+                        .highlight_theme
+                        .style
+                        .editor_active_line
+                        .is_some()
+                );
+                set_editor_focus(false, app);
+                assert!(
+                    Theme::global(app)
+                        .highlight_theme
+                        .style
+                        .editor_active_line
+                        .is_none()
+                );
                 let styles =
                     highlighter.styles(&(0..source.len()), &Theme::global(app).highlight_theme);
                 for (offset, color) in [0, 7, 11, 15].into_iter().zip(expected) {
@@ -93,13 +127,24 @@ fn configure(
     defaults: &HighlightTheme,
     colors: [&str; 4],
     editor_background: u32,
-    active_line: u32,
 ) {
     config.mono_font_family = Some(crate::monospace_font().into());
-    config.colors.ring = Some(match config.mode {
-        gpui_component::ThemeMode::Dark => "#346bf1".into(),
-        _ => "#1b4ed8".into(),
-    });
+    let [surface, text, border, input, muted, ring] = match config.mode {
+        gpui_component::ThemeMode::Dark => [
+            "#111111", "#f5f5f5", "#191919", "#1e1e1e", "#818181", "#346bf1",
+        ],
+        _ => [
+            "#ffffff", "#27272a", "#e4e4e7", "#d4d4d8", "#71717b", "#1b4ed8",
+        ],
+    };
+    config.colors.background = Some(surface.into());
+    config.colors.foreground = Some(text.into());
+    config.colors.border = Some(border.into());
+    config.colors.input = Some(input.into());
+    config.colors.muted_foreground = Some(muted.into());
+    config.colors.popover = Some(surface.into());
+    config.colors.popover_foreground = Some(text.into());
+    config.colors.ring = Some(ring.into());
     let style = config
         .highlight
         .get_or_insert_with(|| defaults.style.clone());
@@ -111,5 +156,5 @@ fn configure(
     style.syntax.punctuation_special = Some(math);
     style.syntax.punctuation_bracket = Some(bracket);
     style.editor_background = Some(gpui::rgb(editor_background).into());
-    style.editor_active_line = Some(rgba(active_line).into());
+    style.editor_active_line = None;
 }

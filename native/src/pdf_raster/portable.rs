@@ -1,8 +1,9 @@
 use super::{PageLayout, PageRequest, PageSize, page_layout};
+use crate::tex::RetainedPdf;
 use hayro::{
     RenderCache, RenderSettings,
     hayro_interpret::{InterpreterSettings, util::TransformExt},
-    hayro_syntax::Pdf,
+    hayro_syntax::{Pdf, PdfData},
     kurbo::Affine,
     render_into,
     vello_cpu::{
@@ -10,7 +11,7 @@ use hayro::{
         color::palette::css::WHITE, peniko::ImageAlphaType,
     },
 };
-use std::{fs, io, path::Path, sync::Arc};
+use std::{fs, io, panic::AssertUnwindSafe, path::Path, sync::Arc};
 
 pub struct Page {
     pub current: u32,
@@ -30,7 +31,16 @@ pub fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
 }
 
 pub fn read_page_sizes_from_bytes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
-    std::panic::catch_unwind(move || read_sizes(bytes)).unwrap_or_else(|_| {
+    read_page_sizes_from_data(bytes.into())
+}
+
+pub fn read_retained_page_sizes(document: &RetainedPdf) -> io::Result<Vec<PageSize>> {
+    read_page_sizes_from_data(retained_data(document)?)
+}
+
+fn read_page_sizes_from_data(data: PdfData) -> io::Result<Vec<PageSize>> {
+    // The mapped or buffered input is immutable. Parser state is local to the operation.
+    std::panic::catch_unwind(AssertUnwindSafe(move || read_sizes(data))).unwrap_or_else(|_| {
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Couldn’t open PDF.",
@@ -38,8 +48,8 @@ pub fn read_page_sizes_from_bytes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSiz
     })
 }
 
-fn read_sizes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
-    let pdf = open_pdf(bytes)?;
+fn read_sizes(data: PdfData) -> io::Result<Vec<PageSize>> {
+    let pdf = open_pdf(data)?;
     Ok(pdf
         .pages()
         .iter()
@@ -54,8 +64,23 @@ fn read_sizes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
 }
 
 pub fn render_bytes(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Page> {
-    // A malformed document should fail its preview on the worker instead of interrupting the app.
-    std::panic::catch_unwind(move || render(bytes, request)).unwrap_or_else(|_| {
+    render_data(bytes.into(), request)
+}
+
+pub fn render_retained(document: &RetainedPdf, request: PageRequest) -> io::Result<Page> {
+    render_data(retained_data(document)?, request)
+}
+
+fn retained_data(document: &RetainedPdf) -> io::Result<PdfData> {
+    match document {
+        RetainedPdf::Bytes(bytes) => Ok(bytes.clone().into()),
+        RetainedPdf::File(file) => Ok(Arc::new(file.map()?).into()),
+    }
+}
+
+fn render_data(data: PdfData, request: PageRequest) -> io::Result<Page> {
+    // The mapped or buffered input is immutable. Parser state is local to the operation.
+    std::panic::catch_unwind(AssertUnwindSafe(move || render(data, request))).unwrap_or_else(|_| {
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Couldn’t render this PDF page.",
@@ -63,8 +88,8 @@ pub fn render_bytes(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Pag
     })
 }
 
-fn open_pdf(bytes: Arc<Vec<u8>>) -> io::Result<Pdf> {
-    Pdf::new(bytes).map_err(|error| {
+fn open_pdf(data: PdfData) -> io::Result<Pdf> {
+    Pdf::new(data).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Couldn’t open PDF. {error:?}"),
@@ -72,8 +97,8 @@ fn open_pdf(bytes: Arc<Vec<u8>>) -> io::Result<Pdf> {
     })
 }
 
-fn render(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Page> {
-    let pdf = open_pdf(bytes)?;
+fn render(data: PdfData, request: PageRequest) -> io::Result<Page> {
+    let pdf = open_pdf(data)?;
     let pages = pdf.pages();
     let count = u32::try_from(pages.len()).map_err(io::Error::other)?;
     if count == 0 {

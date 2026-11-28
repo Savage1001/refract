@@ -40,6 +40,7 @@ mod compile_view;
 mod conversation_view;
 mod deleted_projects_view;
 mod editor_find_view;
+mod editor_views;
 mod file_creation_view;
 mod file_move_view;
 mod file_search_view;
@@ -70,6 +71,7 @@ use compile_view::{RunningBuild, WorkspaceBuild};
 use conversation_view::ConversationPane;
 use deleted_projects_view::DeletedProjectsDialog;
 use editor_find_view::EditorFind;
+use editor_views::EditorViews;
 use file_creation_view::EntryDraft;
 use file_move_view::{EntryMenu, EntryMoveDraft};
 use file_search_view::{FileSearch, RefractAssets};
@@ -118,6 +120,7 @@ struct Library {
     move_draft: Option<EntryMoveDraft>,
     preview_task: Option<Task<()>>,
     editor_find: EditorFind,
+    editor_views: EditorViews,
     commands: Commands,
     outline: OutlinePane,
     comments_task: Option<Task<()>>,
@@ -257,6 +260,12 @@ impl Library {
         window.focus(&focus_handle);
         cx.observe_window_bounds(window, |_, _, cx| cx.notify())
             .detach();
+        gpui_component::Theme::sync_system_appearance(Some(window), cx);
+        cx.observe_window_appearance(window, |_, window, cx| {
+            gpui_component::Theme::sync_system_appearance(Some(window), cx);
+            cx.notify();
+        })
+        .detach();
         let outline = OutlinePane::new(&projects_dir);
         let project_query = cx.new(|cx| {
             InputState::new(window, cx)
@@ -303,6 +312,7 @@ impl Library {
             move_draft: None,
             preview_task: None,
             editor_find: EditorFind::new(window, cx),
+            editor_views: EditorViews::default(),
             commands: Commands::default(),
             outline,
             comments_task: None,
@@ -472,13 +482,18 @@ impl Library {
                     }
                 };
                 tab.editor = Some(source.map(|source| {
-                    let state = cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .code_editor(refract_native::latex_syntax::NAME)
-                            .searchable(false)
-                            .soft_wrap(false)
-                            .default_value(source.clone())
-                    });
+                    let state = library
+                        .editor_views
+                        .restore(&selection.project.id, &file, &source, cx)
+                        .unwrap_or_else(|| {
+                            cx.new(|cx| {
+                                InputState::new(window, cx)
+                                    .code_editor(refract_native::latex_syntax::NAME)
+                                    .searchable(false)
+                                    .soft_wrap(false)
+                                    .default_value(source.clone())
+                            })
+                        });
                     let autosave = Self::watch_source(&state, &file, window, cx);
                     let editor_selection =
                         cx.observe_in(&state, window, |library, editor, window, cx| {
@@ -549,6 +564,9 @@ impl Library {
             window,
             move |library, editor, event: &InputEvent, window, cx| {
                 library.update_commands_for_input(&editor, event, window, cx);
+                if matches!(event, InputEvent::Focus | InputEvent::Blur) {
+                    cx.notify();
+                }
                 if matches!(event, InputEvent::Change) {
                     library.queue_save(&file, window, cx);
                     library.sync_find_selection(&editor, true, window, cx);
@@ -565,8 +583,12 @@ impl Library {
         let Some(index) = selection.tabs.iter().position(|tab| tab.path == file) else {
             return;
         };
-        let had_focus = selection.tabs[index].close_focus.is_focused(window);
-        selection.tabs.remove(index);
+        let tab = selection.tabs.remove(index);
+        let had_focus = tab.close_focus.is_focused(window);
+        if let Some(Ok(editor)) = tab.editor {
+            self.editor_views
+                .remember(&selection.project.id, tab.path, editor, cx);
+        }
         if selection.file.as_deref() == Some(file) {
             if let Some(last) = selection.tabs.last() {
                 let path = last.path.clone();
@@ -617,6 +639,12 @@ impl Library {
         self.comments_task = None;
         self.comparison_task = None;
         if let Some(mut previous) = self.selection.take() {
+            for tab in previous.tabs.drain(..) {
+                if let Some(Ok(editor)) = tab.editor {
+                    self.editor_views
+                        .remember(&previous.project.id, tab.path, editor, cx);
+                }
+            }
             previous.build.preview.release(window);
             if let Some(asset) = previous.asset_preview {
                 asset.release(window);
@@ -1250,6 +1278,12 @@ impl Palette {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui::Focusable as _;
+
+        let editor_focused = self
+            .active_editor()
+            .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
+        source_theme::set_editor_focus(editor_focused, cx);
         self.thumbnails.release_replaced(window);
         if !self.pdf_is_visible(window)
             && let Some(selection) = &mut self.selection
@@ -2549,6 +2583,112 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(fs::read_to_string(marker).unwrap(), "Saved");
         cx.update(|app| assert!(app.windows().is_empty()));
+    }
+
+    #[gpui::test]
+    fn reopening_source_restores_selection_and_viewport_without_reusing_old_text(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::{EntityInputHandler, ScrollDelta, ScrollWheelEvent, point};
+        use gpui_component::input::RopeExt;
+
+        let profile = tempfile::tempdir().unwrap();
+        let projects = profile.path().join("projects");
+        let project = refract_native::create_project(&projects, "Source views").unwrap();
+        let file = projects.join(&project.id).join("main.tex");
+        let source = (0..160)
+            .map(|line| format!("Line {line:03}: Source view fixture.\n"))
+            .collect::<String>();
+        fs::write(&file, &source).unwrap();
+
+        cx.update(initialize_app);
+        let mut library = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| Library::new(projects, window, cx));
+            library = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let library = library.unwrap();
+        let open_project = |cx: &mut VisualTestContext| {
+            cx.update(|window, app| {
+                library.update(app, |view, cx| {
+                    view.open_project(project.clone(), window, cx)
+                });
+            });
+            cx.run_until_parked();
+            cx.refresh().unwrap();
+        };
+        let read_view = |cx: &mut VisualTestContext| {
+            let upper_left = cx.debug_bounds("document-editor").unwrap().origin;
+            cx.update(|window, app| {
+                let editor = library.read(app).active_editor().unwrap();
+                editor.update(app, |input, cx| {
+                    let selection = input.selected_text_range(false, window, cx).unwrap();
+                    let top = input.character_index_for_point(
+                        upper_left + point(px(90.), px(8.)),
+                        window,
+                        cx,
+                    );
+                    (selection.range, selection.reversed, top)
+                })
+            })
+        };
+        open_project(cx);
+        cx.update(|window, app| {
+            library
+                .read(app)
+                .active_editor()
+                .unwrap()
+                .update(app, |input, cx| {
+                    let position = input.text().offset_to_position(8);
+                    input.set_cursor_position(position, window, cx);
+                });
+        });
+        cx.simulate_keystrokes("shift-left shift-left");
+        let editor_bounds = cx.debug_bounds("document-editor").unwrap();
+        cx.simulate_event(ScrollWheelEvent {
+            position: editor_bounds.center(),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-460.))),
+            ..ScrollWheelEvent::default()
+        });
+        cx.refresh().unwrap();
+        let first_view = read_view(cx);
+        assert_eq!(first_view.0, 6..8);
+        assert!(first_view.1);
+        assert!(first_view.2.is_some_and(|index| index > 250));
+
+        cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                view.request_navigation(Navigation::CloseFile("main.tex".into()), window, cx);
+                view.open_file("main.tex".into(), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+        assert_eq!(read_view(cx), first_view);
+
+        let go_home = |cx: &mut VisualTestContext| {
+            cx.update(|window, app| {
+                library.update(app, |view, cx| {
+                    view.request_navigation(Navigation::Projects, window, cx)
+                });
+            });
+            cx.run_until_parked();
+        };
+        go_home(cx);
+        open_project(cx);
+        assert_eq!(read_view(cx), first_view);
+
+        go_home(cx);
+        fs::write(&file, "Changed outside Refract.\n").unwrap();
+        open_project(cx);
+        cx.update(|_, app| {
+            let editor = library.read(app).active_editor().unwrap();
+            assert_eq!(
+                editor.read(app).value().as_ref(),
+                "Changed outside Refract.\n"
+            );
+        });
     }
 
     #[gpui::test]

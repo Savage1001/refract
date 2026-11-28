@@ -11,9 +11,9 @@ use refract_native::{
         stack::{INSET, PageSlot, PageStack, per_page_budget},
         text::{TextPage, page_text_from_bytes},
     },
-    tex::{read_compiled_pdf_for_preview, synctex::PdfPosition},
+    tex::{RetainedPdf, synctex::PdfPosition},
 };
-use std::{cell::Cell, collections::BTreeMap, io, ops::Range, path::Path, rc::Rc, sync::Arc};
+use std::{cell::Cell, collections::BTreeMap, io, ops::Range, rc::Rc, sync::Arc};
 
 mod controls;
 mod selection;
@@ -55,8 +55,8 @@ pub(super) struct PdfViewport {
     viewport: Size<Pixels>,
     measurement: Rc<Cell<Option<(Point<Pixels>, Size<Pixels>)>>>,
     generation: u64,
-    document: Option<Arc<Vec<u8>>>,
-    pending_document: Option<Arc<Vec<u8>>>,
+    document: Option<Arc<RetainedPdf>>,
+    pending_document: Option<Arc<RetainedPdf>>,
     document_generation: u64,
     committed_document_generation: u64,
     loading_document: bool,
@@ -77,23 +77,23 @@ pub(super) struct RasterizedPage {
 }
 
 enum PdfWork {
-    ReadDocument(Arc<Vec<u8>>),
-    RenderPage(Arc<Vec<u8>>, PageRequest, bool),
+    ReadDocument(Arc<RetainedPdf>),
+    RenderPage(Arc<RetainedPdf>, PageRequest, bool),
 }
 
 enum PdfUpdate {
-    Document(Arc<Vec<u8>>, io::Result<Vec<PageSize>>, Vec<Vec<PdfLink>>),
+    Document(
+        Arc<RetainedPdf>,
+        io::Result<Vec<PageSize>>,
+        Vec<Vec<PdfLink>>,
+    ),
     Page(PageRequest, io::Result<RasterizedPage>, Option<TextPage>),
-}
-
-pub(super) fn capture_built_pdf(path: &Path) -> io::Result<Arc<Vec<u8>>> {
-    read_compiled_pdf_for_preview(path).map(Arc::new)
 }
 
 impl Library {
     pub(super) fn load_built_pdf(
         &mut self,
-        result: io::Result<Arc<Vec<u8>>>,
+        result: io::Result<RetainedPdf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -101,8 +101,8 @@ impl Library {
             let preview = &mut selection.build.preview;
             preview.document_generation = preview.document_generation.wrapping_add(1);
             match result {
-                Ok(bytes) => {
-                    preview.pending_document = Some(bytes);
+                Ok(document) => {
+                    preview.pending_document = Some(Arc::new(document));
                     preview.loading_document = true;
                     preview.error = None;
                     if preview.page_focus.is_none() {
@@ -158,18 +158,23 @@ impl Library {
         let work = cx.background_executor().spawn(async move {
             match work {
                 PdfWork::ReadDocument(document) => {
-                    let sizes = read_page_sizes(document.clone());
-                    let links = if sizes.is_ok() {
-                        document_links_from_bytes(document.clone()).unwrap_or_default()
-                    } else {
-                        Vec::new()
+                    let sizes = read_page_sizes(&document);
+                    let links = match document.as_ref() {
+                        RetainedPdf::Bytes(bytes) if sizes.is_ok() => {
+                            document_links_from_bytes(bytes.clone()).unwrap_or_default()
+                        }
+                        _ => Vec::new(),
                     };
                     PdfUpdate::Document(document, sizes, links)
                 }
                 PdfWork::RenderPage(document, request, needs_text) => {
-                    let image = raster_pdf_bytes(document.clone(), request);
-                    let text = (needs_text && image.is_ok())
-                        .then(|| page_text_from_bytes(document, request.index).unwrap_or_default());
+                    let image = raster_retained_pdf(&document, request);
+                    let text = match document.as_ref() {
+                        RetainedPdf::Bytes(bytes) if needs_text && image.is_ok() => Some(
+                            page_text_from_bytes(bytes.clone(), request.index).unwrap_or_default(),
+                        ),
+                        _ => None,
+                    };
                     PdfUpdate::Page(request, image, text)
                 }
             }
@@ -764,7 +769,7 @@ impl Library {
 #[cfg(windows)]
 mod windows_pdf;
 #[cfg(windows)]
-use windows_pdf::read_page_sizes;
+use windows_pdf::{raster_retained_pdf, read_page_sizes};
 
 #[cfg(windows)]
 pub(super) use windows_pdf::{raster_pdf_bytes, render_asset_page};
@@ -772,9 +777,9 @@ pub(super) use windows_pdf::{raster_pdf_bytes, render_asset_page};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod portable_pdf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use portable_pdf::read_page_sizes;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) use portable_pdf::{raster_pdf_bytes, render_asset_page};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use portable_pdf::{raster_retained_pdf, read_page_sizes};
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub(super) fn render_asset_page(_: Arc<Vec<u8>>, _: u32) -> io::Result<RasterizedPage> {
@@ -793,7 +798,15 @@ pub(super) fn raster_pdf_bytes(_: Arc<Vec<u8>>, _: PageRequest) -> io::Result<Ra
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn read_page_sizes(_: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
+fn read_page_sizes(_: &RetainedPdf) -> io::Result<Vec<PageSize>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Inline PDF rendering is unavailable on this platform.",
+    ))
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn raster_retained_pdf(_: &RetainedPdf, _: PageRequest) -> io::Result<RasterizedPage> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Inline PDF rendering is unavailable on this platform.",
@@ -807,7 +820,7 @@ mod tests {
     use gpui::{Modifiers, TestAppContext, VisualTestContext};
     use gpui_component::Root;
     use refract_native::{Project, create_project, tex::BuildResult};
-    use std::{fs, io::Write, sync::atomic::AtomicBool};
+    use std::{fs, io::Write, path::Path, sync::atomic::AtomicBool};
 
     fn two_page_pdf() -> Vec<u8> {
         let text = "BT /F1 12 Tf 30 390 Td (Retained text) Tj ET\n";

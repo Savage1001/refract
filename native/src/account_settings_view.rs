@@ -1,12 +1,13 @@
 use super::{Library, Palette};
+use crate::settings_view::settings_select;
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, FontWeight, SharedString,
     Subscription, Task, WeakEntity, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::{
     Sizable, Size,
-    button::Button,
-    select::{Select, SelectEvent, SelectItem, SelectState},
+    button::{Button, ButtonVariants},
+    select::{SelectEvent, SelectItem, SelectState},
 };
 #[cfg(windows)]
 use refract_native::codex_account::CodexAccount;
@@ -333,13 +334,9 @@ impl AccountSection {
     pub(super) fn contents(&self, library: WeakEntity<Library>, palette: Palette) -> AnyElement {
         let account_button = |id: &'static str, label: String, action: AccountAction| {
             let owner = library.clone();
-            Button::new(id)
-                .label(label)
-                .with_size(Size::Small)
-                .on_click(move |_, window, cx| {
-                    let _ =
-                        owner.update(cx, |library, cx| library.account_action(action, window, cx));
-                })
+            account_action_button(id, label, palette).on_click(move |_, window, cx| {
+                let _ = owner.update(cx, |library, cx| library.account_action(action, window, cx));
+            })
         };
         let cancel = library.clone();
         let message = self
@@ -361,18 +358,12 @@ impl AccountSection {
                     .font_weight(FontWeight::MEDIUM)
                     .child("Codex connection"),
             )
-            .child(
-                Select::new(&self.selector)
-                    .w_full()
-                    .h(px(36.))
-                    .text_size(px(13.))
-                    .border_color(rgb(palette.input_border))
-                    .disabled(self.busy),
-            )
+            .child(settings_select(&self.selector, palette, self.busy))
             .when(self.display.mode == CodexMode::Account, |section| {
                 section
                     .child(
                         div()
+                            .mt(px(4.))
                             .text_size(px(13.))
                             .line_height(px(20.8))
                             .text_color(rgb(palette.muted))
@@ -408,9 +399,7 @@ impl AccountSection {
                             .gap(px(8.))
                             .when(self.busy && self.can_cancel, |actions| {
                                 actions.child(
-                                    Button::new("cancel-codex")
-                                        .label("Cancel")
-                                        .with_size(Size::Small)
+                                    account_action_button("cancel-codex", "Cancel".into(), palette)
                                         .on_click(move |_, _, app| {
                                             let _ = cancel.update(app, |library, cx| {
                                                 if let Some(work) = &library.settings.account.work {
@@ -467,6 +456,21 @@ impl AccountSection {
             })
             .into_any_element()
     }
+}
+
+fn account_action_button(id: &'static str, label: String, palette: Palette) -> Button {
+    Button::new(id)
+        .ghost()
+        .with_size(Size::Size(px(33.5)))
+        .h(px(33.5))
+        .px(px(10.))
+        .child(
+            div()
+                .text_size(px(13.))
+                .line_height(px(19.5))
+                .text_color(rgb(palette.text))
+                .child(label),
+        )
 }
 
 impl Library {

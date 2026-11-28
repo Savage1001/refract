@@ -1,4 +1,7 @@
-use super::{ConversationPane, Library, Palette, chat_button};
+use super::{
+    ConversationPane, Library, Palette, chat_button,
+    models::{CHECKING_MODELS, ModelSelection},
+};
 use gpui::{Context, Entity, SharedString, Subscription, Window, div, prelude::*, px, rgb, svg};
 use gpui_component::{
     Sizable,
@@ -8,7 +11,7 @@ use gpui_component::{
 use refract_native::{
     Project, ProjectEntry,
     assistant_launch::{CodexCli, OpenCodeCli, discover_codex_cli, discover_opencode_cli},
-    assistant_preferences::{AssistantConnection, load_assistant_preferences},
+    assistant_preferences::AssistantConnection,
     assistant_protocol::{CodexThreadOptions, CodexToolConnection},
     assistant_runtime::{
         CodexTurnRequest, CodexUpdate,
@@ -244,6 +247,7 @@ struct TurnWork {
     project: Project,
     id: ConversationId,
     provider: InstalledProvider,
+    model_selection: ModelSelection,
     prompt: String,
     attachments: Vec<Attachment>,
 }
@@ -261,19 +265,11 @@ fn run_turn(
     cancel: &Arc<AtomicBool>,
     notices: async_channel::Sender<TurnNotice>,
 ) -> io::Result<CompletedTurn> {
-    let mode = work.provider.mode();
     let prepared = work.provider.prepare(cancel)?;
     let account_key = match &prepared {
         PreparedProvider::Codex(codex) => codex.key(),
         PreparedProvider::OpenCode(_) => None,
     };
-    let profile = work.projects.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Couldn’t locate the Refract profile",
-        )
-    })?;
-    let preferences = load_assistant_preferences(profile, mode)?;
     snapshot_project(&work.projects, &work.project)?;
     let tools = AssistantTools::new(
         work.projects.clone(),
@@ -323,9 +319,9 @@ fn run_turn(
                     prompt,
                     images,
                     options: CodexThreadOptions {
-                        model: preferences.model.as_deref(),
-                        reasoning_effort: preferences.reasoning_effort.as_deref(),
-                        fast_mode: preferences.fast_mode,
+                        model: Some(work.model_selection.model.as_str()),
+                        reasoning_effort: work.model_selection.effort.as_deref(),
+                        fast_mode: work.model_selection.fast_mode,
                         developer_instructions: Some(&engine_instructions),
                         tools: Some(CodexToolConnection {
                             url: server.url(),
@@ -348,8 +344,8 @@ fn run_turn(
                     session_id,
                     prompt,
                     images,
-                    model: preferences.model.as_deref(),
-                    variant: preferences.reasoning_effort.as_deref(),
+                    model: Some(work.model_selection.model.as_str()),
+                    variant: work.model_selection.effort.as_deref(),
                     tools: Some(OpenCodeToolConnection {
                         url: server.url(),
                         token: server.token(),
@@ -435,13 +431,13 @@ impl Library {
         }) else {
             return;
         };
-        if pane
+        let Some(model_selection) = pane
             .models
             .get(&provider.kind())
-            .is_some_and(|picker| !picker.read(cx).ready_to_send())
-        {
+            .and_then(|picker| picker.read(cx).selection())
+        else {
             return;
-        }
+        };
         let prompt = composer.input.read(cx).value().to_string();
         if prompt.trim().is_empty() || pane.load_task.is_some() {
             return;
@@ -460,6 +456,7 @@ impl Library {
             project: selection.project.clone(),
             id: pane.active.clone(),
             provider: provider.clone(),
+            model_selection,
             prompt,
             attachments: composer.attachments.clone(),
         };
@@ -619,13 +616,15 @@ impl Library {
                 .child(div().size(px(10.)).rounded(px(2.)).bg(rgb(palette.muted))),
             )
         } else {
+            let model_issue =
+                provider.and_then(|provider| match pane.models.get(&provider.kind()) {
+                    Some(picker) => picker.read(cx).send_issue(),
+                    None => Some(CHECKING_MODELS),
+                });
             let enabled = can_send
                 && provider.is_some()
                 && pane.load_task.is_none()
-                && pane
-                    .provider
-                    .and_then(|kind| pane.models.get(&kind))
-                    .is_none_or(|picker| picker.read(cx).ready_to_send())
+                && model_issue.is_none()
                 && self.project_writes_idle();
             actions.child(
                 chat_button("send", palette, cx, move |library, window, cx| {
@@ -639,7 +638,9 @@ impl Library {
                 .justify_center()
                 .tab_stop(enabled)
                 .when(!enabled, |button| button.cursor_default().opacity(0.5))
-                .tooltip(|window, cx| Tooltip::new("Send").build(window, cx))
+                .tooltip(move |window, cx| {
+                    Tooltip::new(model_issue.unwrap_or("Send")).build(window, cx)
+                })
                 .child(
                     svg()
                         .path("refract/send.svg")

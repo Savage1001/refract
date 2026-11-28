@@ -1,10 +1,12 @@
-use super::pdf_view::{PdfViewport, capture_built_pdf};
+use super::pdf_view::PdfViewport;
 use super::{Library, Navigation, Palette};
 use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb, svg};
 use gpui_component::{WindowExt, tooltip::Tooltip};
+use refract_native::tex::BuildResult;
 #[cfg(not(all(test, feature = "ui-tests")))]
-use refract_native::tex::{TexToolchain, compile_project};
-use refract_native::{Project, tex::BuildResult};
+use refract_native::tex::{TexToolchain, compile_project_with_preview};
+#[cfg(all(test, feature = "ui-tests"))]
+use refract_native::{Project, tex::retain_compiled_pdf};
 use std::{
     io,
     path::Path,
@@ -14,6 +16,7 @@ use std::{
     },
 };
 
+#[cfg(all(test, feature = "ui-tests"))]
 pub(super) type Compiler = fn(&Path, &Project, &AtomicBool) -> io::Result<BuildResult>;
 
 pub(super) struct RunningBuild {
@@ -67,11 +70,6 @@ impl Library {
         let Some(compiler) = self.test_compiler else {
             return;
         };
-        #[cfg(not(all(test, feature = "ui-tests")))]
-        let compiler: Compiler = |path, project, cancel| {
-            let toolchain = TexToolchain::discover()?;
-            compile_project(path, project, &toolchain, cancel)
-        };
         let has_edits = self.has_unsaved_changes(&Navigation::Projects, cx);
         let Some(selection) = self
             .selection
@@ -94,17 +92,25 @@ impl Library {
         let cancel = Arc::new(AtomicBool::new(false));
         let run_cancel = cancel.clone();
         let compile = cx.background_executor().spawn(async move {
-            let result =
-                compiler(&projects, &project, &run_cancel).map_err(|error| error.to_string());
-            let preview = result
-                .as_ref()
-                .ok()
-                .and_then(|result| result.pdf.as_deref())
-                .map(capture_built_pdf);
-            (result, preview)
+            #[cfg(all(test, feature = "ui-tests"))]
+            let result = compiler(&projects, &project, &run_cancel).map(|build| {
+                let preview = build
+                    .pdf
+                    .as_ref()
+                    .map(|_| retain_compiled_pdf(&projects, &project, &run_cancel));
+                (build, preview)
+            });
+            #[cfg(not(all(test, feature = "ui-tests")))]
+            let result = TexToolchain::discover().and_then(|toolchain| {
+                compile_project_with_preview(&projects, &project, &toolchain, &run_cancel)
+            });
+            result.map_err(|error| error.to_string())
         });
         let task = cx.spawn_in(window, async move |library, cx| {
-            let (result, preview) = compile.await;
+            let (result, preview) = match compile.await {
+                Ok((build, preview)) => (Ok(build), preview),
+                Err(error) => (Err(error), None),
+            };
             let _ = library.update_in(cx, |library, window, cx| {
                 library.build_task = None;
                 if let Some(selection) = &mut library.selection
@@ -113,7 +119,9 @@ impl Library {
                     && !selection.build.queued
                 {
                     selection.build.outcome = Some(result);
-                    if let Some(preview) = preview {
+                    if let Some(preview) = preview.filter(|preview| {
+                        !matches!(preview, Err(error) if error.kind() == io::ErrorKind::Interrupted)
+                    }) {
                         library.load_built_pdf(preview, window, cx);
                     }
                 }

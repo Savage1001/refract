@@ -31,6 +31,8 @@ use std::{
     },
 };
 
+pub(super) const CHECKING_MODELS: &str = "Checking model availability…";
+
 struct Model {
     id: String,
     name: String,
@@ -42,8 +44,109 @@ struct Model {
 }
 
 struct Catalog {
-    options: Vec<Model>,
+    options: Result<Vec<Model>, DiscoveryError>,
     preferences: AssistantPreferences,
+}
+
+enum DiscoveryError {
+    Connection(String),
+    Catalog(String),
+}
+
+impl DiscoveryError {
+    fn message(&self) -> &str {
+        match self {
+            Self::Connection(message) | Self::Catalog(message) => message,
+        }
+    }
+}
+
+impl Catalog {
+    fn models(&self) -> &[Model] {
+        self.options.as_deref().unwrap_or_default()
+    }
+
+    fn selected(&self) -> Option<&Model> {
+        let id = self.preferences.model.as_deref()?;
+        self.models().iter().find(|model| model.id == id)
+    }
+
+    fn normalize_selection(&self) -> Option<AssistantPreferences> {
+        let model = if self.preferences.model.is_some() {
+            self.selected()?
+        } else {
+            self.models()
+                .iter()
+                .find(|model| model.is_default)
+                .or_else(|| self.models().first())?
+        };
+        let mut preferences = self.preferences.clone();
+        preferences.model = Some(model.id.clone());
+        if preferences
+            .reasoning_effort
+            .as_ref()
+            .is_none_or(|effort| !model.efforts.contains(effort))
+        {
+            preferences.reasoning_effort = model.default_effort.clone();
+        }
+        (preferences != self.preferences).then_some(preferences)
+    }
+
+    fn send_issue(&self, provider: Provider, settings_unsaved: bool) -> Option<&'static str> {
+        if settings_unsaved {
+            return Some("Retry saving model settings");
+        }
+        match &self.options {
+            Err(DiscoveryError::Catalog(_))
+                if provider == Provider::Codex && self.preferences.model.is_some() =>
+            {
+                None
+            }
+            Err(_) => Some(match provider {
+                Provider::Codex => "Retry loading Codex models",
+                Provider::OpenCode => "Retry loading OpenCode models",
+            }),
+            Ok(_) => match self.selected() {
+                None => Some(match provider {
+                    Provider::Codex => "Choose an available Codex model",
+                    Provider::OpenCode => "Choose an available OpenCode model",
+                }),
+                Some(model)
+                    if self
+                        .preferences
+                        .reasoning_effort
+                        .as_ref()
+                        .is_some_and(|effort| !model.efforts.contains(effort)) =>
+                {
+                    Some(match provider {
+                        Provider::Codex => "Choose an available reasoning effort",
+                        Provider::OpenCode => "Choose an available model variant",
+                    })
+                }
+                Some(_) => None,
+            },
+        }
+    }
+
+    fn selection(&self, provider: Provider) -> Option<ModelSelection> {
+        Some(ModelSelection {
+            model: self.preferences.model.clone()?,
+            effort: self.preferences.reasoning_effort.clone(),
+            fast_mode: (provider == Provider::Codex)
+                .then_some(self.preferences.fast_mode.unwrap_or(false)),
+        })
+    }
+}
+
+pub(super) struct ModelSelection {
+    pub(super) model: String,
+    pub(super) effort: Option<String>,
+    pub(super) fast_mode: Option<bool>,
+}
+
+struct SaveFailure {
+    message: String,
+    affects_selection: bool,
 }
 
 struct ModelLoad {
@@ -67,8 +170,7 @@ pub(super) struct ModelPicker {
     favorites: bool,
     catalog: Option<Result<Catalog, String>>,
     loading: Option<ModelLoad>,
-    save_error: Option<String>,
-    pending_save: Option<AssistantPreferences>,
+    save_error: Option<SaveFailure>,
 }
 
 impl ModelPicker {
@@ -93,7 +195,6 @@ impl ModelPicker {
             catalog: None,
             loading: None,
             save_error: None,
-            pending_save: None,
         }
     }
 
@@ -104,12 +205,14 @@ impl ModelPicker {
         let provider = self.provider.clone();
         let project = self.project.clone();
         let profile = self.profile.clone();
+        let preferences = self.catalog().map(|catalog| catalog.preferences.clone());
         let cancel = Arc::new(AtomicBool::new(false));
         let job_cancel = cancel.clone();
         let checkout = cx.background_executor().spawn(async move {
-            let preferences = load_assistant_preferences(&profile, provider.mode())
+            let preferences = preferences
+                .map_or_else(|| load_assistant_preferences(&profile, provider.mode()), Ok)
                 .map_err(|error| format!("Couldn’t load model preferences. {error}"))?;
-            let options = load_models(&provider, &project, &job_cancel)?;
+            let options = load_models(&provider, &project, &job_cancel);
             Ok(Catalog {
                 options,
                 preferences,
@@ -120,6 +223,9 @@ impl ModelPicker {
             let _ = picker.update(cx, |picker, cx| {
                 picker.loading = None;
                 picker.catalog = Some(result);
+                if let Some(preferences) = picker.catalog().and_then(Catalog::normalize_selection) {
+                    picker.save(preferences, true, cx);
+                }
                 picker.update_parent(cx);
             });
         });
@@ -134,18 +240,6 @@ impl ModelPicker {
         self.catalog.as_ref().and_then(|state| state.as_ref().ok())
     }
 
-    fn selected(catalog: &Catalog) -> Option<&Model> {
-        if let Some(id) = catalog.preferences.model.as_deref() {
-            catalog.options.iter().find(|model| model.id == id)
-        } else {
-            catalog
-                .options
-                .iter()
-                .find(|model| model.is_default)
-                .or_else(|| catalog.options.first())
-        }
-    }
-
     fn update_parent(&self, cx: &mut Context<Self>) {
         cx.notify();
         let _ = self.parent.update(cx, |_, cx| cx.notify());
@@ -155,15 +249,16 @@ impl ModelPicker {
         let Some(catalog) = self.catalog() else {
             return;
         };
-        let Some(model) = catalog.options.iter().find(|model| model.id == id) else {
+        let Some(model) = catalog.models().iter().find(|model| model.id == id) else {
             return;
         };
-        let mut next = catalog.preferences.clone();
-        if next.model.as_deref() != Some(id) {
-            next.model = Some(id.into());
-            next.reasoning_effort = model.default_effort.clone();
+        if catalog.preferences.model.as_deref() == Some(id) {
+            return;
         }
-        self.save(next, cx);
+        let mut next = catalog.preferences.clone();
+        next.model = Some(id.into());
+        next.reasoning_effort = model.default_effort.clone();
+        self.save(next, true, cx);
     }
 
     fn favorite(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -176,19 +271,23 @@ impl ModelPicker {
         } else {
             next.favorites.push(id.to_owned());
         }
-        self.save(next, cx);
+        self.save(next, false, cx);
     }
 
     fn choose_effort(&mut self, effort: &str, cx: &mut Context<Self>) {
-        let Some(catalog) = self.catalog() else {
+        let Some(catalog) = self.catalog().filter(|catalog| {
+            catalog
+                .selected()
+                .is_some_and(|model| model.efforts.iter().any(|candidate| candidate == effort))
+        }) else {
             return;
         };
-        let mut next = catalog.preferences.clone();
-        if next.model.is_none() {
-            next.model = Self::selected(catalog).map(|model| model.id.clone());
+        if catalog.preferences.reasoning_effort.as_deref() == Some(effort) {
+            return;
         }
+        let mut next = catalog.preferences.clone();
         next.reasoning_effort = Some(effort.into());
-        self.save(next, cx);
+        self.save(next, true, cx);
     }
 
     fn toggle_fast_mode(&mut self, cx: &mut Context<Self>) {
@@ -197,44 +296,68 @@ impl ModelPicker {
         };
         let mut next = catalog.preferences.clone();
         next.fast_mode = Some(!next.fast_mode.unwrap_or(false));
-        self.save(next, cx);
+        self.save(next, true, cx);
     }
 
-    fn save(&mut self, preferences: AssistantPreferences, cx: &mut Context<Self>) {
-        if self
-            .parent
-            .read_with(cx, |parent, _| {
-                parent
-                    .selection
-                    .as_ref()
-                    .is_some_and(|selection| selection.conversation.running.is_some())
-            })
-            .unwrap_or(true)
+    fn save(
+        &mut self,
+        preferences: AssistantPreferences,
+        affects_selection: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.loading.is_some()
+            || self
+                .parent
+                .read_with(cx, |parent, _| {
+                    parent
+                        .selection
+                        .as_ref()
+                        .is_some_and(|selection| selection.conversation.running.is_some())
+                })
+                .unwrap_or(true)
         {
             return;
         }
-        if let Err(error) =
-            save_assistant_preferences(&self.profile, self.provider.mode(), &preferences)
-        {
-            self.save_error = Some(format!("Couldn’t save model preferences. {error}"));
-            self.pending_save = Some(preferences);
-        } else if let Some(Ok(catalog)) = &mut self.catalog {
-            catalog.preferences = preferences;
-            self.save_error = None;
-            self.pending_save = None;
-        }
+        let Some(Ok(catalog)) = &mut self.catalog else {
+            return;
+        };
+        catalog.preferences = preferences;
+        let affects_selection = affects_selection
+            || self
+                .save_error
+                .as_ref()
+                .is_some_and(|error| error.affects_selection);
+        self.save_error =
+            save_assistant_preferences(&self.profile, self.provider.mode(), &catalog.preferences)
+                .err()
+                .map(|error| SaveFailure {
+                    message: format!("Couldn’t save model preferences. {error}"),
+                    affects_selection,
+                });
         self.update_parent(cx);
     }
 
     fn label(&self) -> String {
         match self.catalog.as_ref() {
             None => self.provider.label().into(),
-            Some(Err(error)) if self.needs_account_setup(error) => "Sign in".into(),
-            Some(Err(_)) => "Models unavailable".into(),
-            Some(Ok(catalog)) => Self::selected(catalog)
-                .map(|model| model.name.clone())
-                .or_else(|| catalog.preferences.model.clone())
-                .unwrap_or_else(|| self.provider.label().into()),
+            Some(Err(_)) => "Preferences unavailable".into(),
+            Some(Ok(catalog)) => {
+                if let Err(error) = &catalog.options
+                    && self.needs_account_setup(error.message())
+                {
+                    return "Sign in".into();
+                }
+                if let Some(model) = catalog.selected() {
+                    model.name.clone()
+                } else if let Some(model) = &catalog.preferences.model {
+                    let name = model.rsplit('/').next().unwrap_or(model).replace('-', " ");
+                    format!("{name} (unavailable)")
+                } else if catalog.options.is_err() {
+                    "Models unavailable".into()
+                } else {
+                    "Choose a model".into()
+                }
+            }
         }
     }
 
@@ -247,15 +370,27 @@ impl ModelPicker {
                 || error == refract_native::managed_codex::UNSUPPORTED_PLATFORM)
     }
 
-    pub(super) fn ready_to_send(&self) -> bool {
-        self.loading.is_none()
-            && self.pending_save.is_none()
-            && !self.catalog.as_ref().is_some_and(|result| {
-                result
+    pub(super) fn send_issue(&self) -> Option<&'static str> {
+        if self.loading.is_some() {
+            return Some(CHECKING_MODELS);
+        }
+        match self.catalog.as_ref() {
+            None => Some(CHECKING_MODELS),
+            Some(Err(_)) => Some("Retry loading model preferences"),
+            Some(Ok(catalog)) => catalog.send_issue(
+                self.provider.kind(),
+                self.save_error
                     .as_ref()
-                    .err()
-                    .is_some_and(|error| self.needs_account_setup(error))
-            })
+                    .is_some_and(|error| error.affects_selection),
+            ),
+        }
+    }
+
+    pub(super) fn selection(&self) -> Option<ModelSelection> {
+        if self.send_issue().is_some() {
+            return None;
+        }
+        self.catalog()?.selection(self.provider.kind())
     }
 }
 
@@ -263,40 +398,47 @@ fn load_models(
     provider: &InstalledProvider,
     project: &Path,
     cancel: &AtomicBool,
-) -> Result<Vec<Model>, String> {
+) -> Result<Vec<Model>, DiscoveryError> {
     match provider
         .prepare(cancel)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| DiscoveryError::Connection(error.to_string()))?
     {
         PreparedProvider::Codex(codex) => {
-            let command = codex.command(project).map_err(|error| error.to_string())?;
-            discover_codex_models(command, codex.key().is_some(), cancel).map(|models| {
-                models
-                    .into_iter()
-                    .map(|model| {
-                        let efforts: Vec<_> = model
-                            .supported_reasoning_efforts
-                            .into_iter()
-                            .map(|effort| effort.effort)
-                            .filter(|effort| valid_codex_effort(effort))
-                            .collect();
-                        let default_effort =
-                            preferred_effort(&efforts, model.default_reasoning_effort.as_deref());
-                        Model {
-                            id: model.id,
-                            name: model.display_name,
-                            identity: model.model,
-                            description: model.description,
-                            default_effort,
-                            efforts,
-                            is_default: model.is_default,
-                        }
-                    })
-                    .collect()
-            })
+            let command = codex
+                .command(project)
+                .map_err(|error| DiscoveryError::Connection(error.to_string()))?;
+            discover_codex_models(command, codex.key().is_some(), cancel)
+                .map_err(DiscoveryError::Catalog)
+                .map(|models| {
+                    models
+                        .into_iter()
+                        .map(|model| {
+                            let efforts: Vec<_> = model
+                                .supported_reasoning_efforts
+                                .into_iter()
+                                .map(|effort| effort.effort)
+                                .filter(|effort| valid_codex_effort(effort))
+                                .collect();
+                            let default_effort = preferred_effort(
+                                &efforts,
+                                model.default_reasoning_effort.as_deref(),
+                            );
+                            Model {
+                                id: model.id,
+                                name: model.display_name,
+                                identity: model.model,
+                                description: model.description,
+                                default_effort,
+                                efforts,
+                                is_default: model.is_default,
+                            }
+                        })
+                        .collect()
+                })
         }
-        PreparedProvider::OpenCode(cli) => {
-            discover_opencode_models(cli, project, cancel).map(|models| {
+        PreparedProvider::OpenCode(cli) => discover_opencode_models(cli, project, cancel)
+            .map_err(DiscoveryError::Catalog)
+            .map(|models| {
                 models
                     .into_iter()
                     .map(|model| Model {
@@ -309,8 +451,7 @@ fn load_models(
                         is_default: false,
                     })
                     .collect()
-            })
-        }
+            }),
     }
 }
 
@@ -378,19 +519,22 @@ impl Render for ModelPicker {
             .text_size(px(12.));
         match self.catalog.as_ref() {
             None if self.loading.is_none() => {
-                list = list.child("Checking model availability…");
+                list = list.child(CHECKING_MODELS);
             }
             _ if self.loading.is_some() => {
                 list = list.child("Loading models…");
             }
-            Some(Err(error)) if self.needs_account_setup(error) => {
+            Some(Ok(Catalog {
+                options: Err(error),
+                ..
+            })) if self.needs_account_setup(error.message()) => {
                 let owner = self.parent.clone();
                 let busy = owner
                     .read_with(cx, |library, _| library.settings.account.busy())
                     .unwrap_or(false);
                 list = list
                     .child("Codex requires sign-in")
-                    .child(error.clone())
+                    .child(error.message().to_owned())
                     .child(
                         Button::new("model-picker-sign-in")
                             .small()
@@ -416,18 +560,30 @@ impl Render for ModelPicker {
             }
             Some(Err(error)) => {
                 list = list.child(error.clone()).child(
+                    Button::new("retry-preferences")
+                        .ghost()
+                        .small()
+                        .label("Retry preferences")
+                        .on_click(cx.listener(|picker, _, _, cx| picker.load(cx))),
+                );
+            }
+            Some(Ok(Catalog {
+                options: Err(error),
+                ..
+            })) => {
+                list = list.child(error.message().to_owned()).child(
                     Button::new("retry-models")
                         .ghost()
                         .small()
-                        .label("Retry")
+                        .label("Retry model discovery")
                         .on_click(cx.listener(|picker, _, _, cx| picker.load(cx))),
                 );
             }
             Some(Ok(catalog)) => {
-                let selected = Self::selected(catalog);
+                let selected = catalog.selected();
                 let terms: Vec<_> = query.split_whitespace().collect();
                 let filtered: Vec<_> = catalog
-                    .options
+                    .models()
                     .iter()
                     .filter(|model| {
                         let favorite = catalog.preferences.favorites.contains(&model.id);
@@ -442,7 +598,9 @@ impl Render for ModelPicker {
                     })
                     .collect();
                 if filtered.is_empty() {
-                    list = list.child(if query.is_empty() && self.favorites {
+                    list = list.child(if catalog.models().is_empty() {
+                        "No models available"
+                    } else if query.is_empty() && self.favorites {
                         "No favorites yet"
                     } else {
                         "No matching models"
@@ -514,11 +672,7 @@ impl Render for ModelPicker {
                         );
                     for effort in &model.efforts {
                         let value = effort.clone();
-                        let current = catalog
-                            .preferences
-                            .reasoning_effort
-                            .as_ref()
-                            .or(model.default_effort.as_ref());
+                        let current = catalog.preferences.reasoning_effort.as_ref();
                         options = options.child(
                             Button::new(gpui::SharedString::from(format!("effort/{effort}")))
                                 .ghost()
@@ -571,21 +725,22 @@ impl Render for ModelPicker {
                     .child(div().flex_1().min_w(px(0.)).child(Input::new(&self.query)))
                     .child(controls),
             )
-            .children(self.save_error.clone().map(|error| {
+            .children(self.save_error.as_ref().map(|error| {
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
                     .text_color(rgb(palette.warning))
-                    .child(error)
+                    .child(error.message.clone())
                     .child(
                         Button::new("retry-model-save")
                             .ghost()
                             .small()
                             .label("Retry saving")
+                            .disabled(self.loading.is_some())
                             .on_click(cx.listener(|picker, _, _, cx| {
-                                if let Some(preferences) = picker.pending_save.clone() {
-                                    picker.save(preferences, cx);
+                                if let Some(catalog) = picker.catalog() {
+                                    picker.save(catalog.preferences.clone(), false, cx);
                                 }
                             })),
                     )
@@ -665,12 +820,12 @@ impl Library {
             .get(&kind)
             .and_then(|picker| picker.read(cx).catalog())
             .and_then(|catalog| {
-                let selected = ModelPicker::selected(catalog)?;
+                let selected = catalog.selected()?;
                 catalog
                     .preferences
                     .reasoning_effort
                     .as_ref()
-                    .or(selected.default_effort.as_ref())
+                    .filter(|effort| selected.efforts.contains(*effort))
                     .map(|effort| title_case(effort))
             });
         let library = cx.weak_entity();
@@ -748,6 +903,25 @@ fn title_case(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn catalog(model: Option<&str>, effort: Option<&str>) -> Catalog {
+        Catalog {
+            options: Ok(vec![Model {
+                id: "gpt-example".into(),
+                name: "GPT Example".into(),
+                identity: "gpt-example".into(),
+                description: String::new(),
+                efforts: vec!["low".into(), "high".into()],
+                default_effort: Some("low".into()),
+                is_default: true,
+            }]),
+            preferences: AssistantPreferences {
+                model: model.map(str::to_owned),
+                reasoning_effort: effort.map(str::to_owned),
+                ..AssistantPreferences::default()
+            },
+        }
+    }
+
     #[test]
     fn chooses_the_reference_effort_order_and_labels() {
         let supported = vec!["high".to_owned(), "low".to_owned(), "medium".to_owned()];
@@ -762,5 +936,81 @@ mod tests {
         assert_eq!(preferred_effort(&[], None), None);
         assert_eq!(title_case("xhigh"), "Extra high");
         assert_eq!(title_case("extra_deep"), "Extra deep");
+    }
+
+    #[test]
+    fn normalizes_an_unset_selection_and_uses_the_same_effort_for_turns() {
+        let mut catalog = catalog(None, Some("medium"));
+        catalog.preferences = catalog.normalize_selection().unwrap();
+        assert!(catalog.normalize_selection().is_none());
+        assert_eq!(catalog.send_issue(Provider::Codex, false), None);
+        let selection = catalog.selection(Provider::Codex).unwrap();
+        assert_eq!(catalog.selected().unwrap().id, selection.model);
+        assert_eq!(selection.effort.as_deref(), Some("low"));
+        assert_eq!(selection.fast_mode, Some(false));
+
+        catalog.preferences.fast_mode = Some(true);
+        catalog.preferences.reasoning_effort = Some("high".into());
+        assert!(catalog.normalize_selection().is_none());
+        let selection = catalog.selection(Provider::Codex).unwrap();
+        assert_eq!(selection.effort.as_deref(), Some("high"));
+        assert_eq!(selection.fast_mode, Some(true));
+    }
+
+    #[test]
+    fn blocks_unavailable_models_efforts_and_unsaved_settings() {
+        let mut catalog = catalog(Some("removed"), Some("medium"));
+        assert!(catalog.normalize_selection().is_none());
+        assert_eq!(
+            catalog.send_issue(Provider::Codex, false),
+            Some("Choose an available Codex model")
+        );
+        catalog.preferences.model = Some("gpt-example".into());
+        assert_eq!(
+            catalog.send_issue(Provider::Codex, false),
+            Some("Choose an available reasoning effort")
+        );
+        assert_eq!(
+            catalog.send_issue(Provider::OpenCode, false),
+            Some("Choose an available model variant")
+        );
+
+        catalog.preferences = catalog.normalize_selection().unwrap();
+        assert_eq!(
+            catalog.send_issue(Provider::Codex, true),
+            Some("Retry saving model settings")
+        );
+        assert_eq!(catalog.send_issue(Provider::Codex, false), None);
+
+        catalog.options = Ok(Vec::new());
+        assert_eq!(
+            catalog.send_issue(Provider::OpenCode, false),
+            Some("Choose an available OpenCode model")
+        );
+    }
+
+    #[test]
+    fn allows_saved_codex_selections_only_on_catalog_discovery_failure() {
+        let mut catalog = catalog(Some("gpt-example"), Some("high"));
+        catalog.options = Err(DiscoveryError::Catalog("Discovery failed".into()));
+        assert_eq!(catalog.send_issue(Provider::Codex, false), None);
+        let selection = catalog.selection(Provider::Codex).unwrap();
+        assert_eq!(selection.model, "gpt-example");
+        assert_eq!(selection.effort.as_deref(), Some("high"));
+        assert_eq!(
+            catalog.send_issue(Provider::OpenCode, false),
+            Some("Retry loading OpenCode models")
+        );
+        catalog.options = Err(DiscoveryError::Connection("Account setup failed".into()));
+        assert_eq!(
+            catalog.send_issue(Provider::Codex, false),
+            Some("Retry loading Codex models")
+        );
+        catalog.options = Err(DiscoveryError::Catalog("Discovery failed".into()));
+        catalog.preferences.model = None;
+        assert_eq!(
+            catalog.send_issue(Provider::Codex, false),
+            Some("Retry loading Codex models")
+        );
     }
 }

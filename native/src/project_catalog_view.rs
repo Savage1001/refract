@@ -167,6 +167,8 @@ impl ProjectCatalogView {
                             .icon(Icon::empty().path("refract/chevron-down.svg"))
                             .h(px(36.))
                             .text_size(px(12.))
+                            .text_color(rgb(palette.text))
+                            .bg(rgb(palette.surface))
                             .border_color(rgb(palette.input_border)),
                     ),
             )

@@ -10,7 +10,7 @@ default = ["desktop"]
 desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:notify", "dep:raw-window-handle", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf", "pdf-links", "pdf-text", "windows-updater", "codex-account", "legacy-profile"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 legacy-profile = ["dep:rusty-leveldb"]
-portable-pdf = ["dep:hayro"]
+portable-pdf = ["dep:hayro", "dep:memmap2"]
 pdf-links = ["dep:hayro-syntax", "dep:url"]
 pdf-text = ["dep:hayro-interpret"]
 ui-tests = ["desktop", "gpui/test-support"]
@@ -75,4 +75,5 @@ zeroize = { version = "=1.9.2", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 hayro = { version = "=0.9.0", optional = true }
+memmap2 = { version = "=0.9.12", optional = true }
 rustix = { version = "=1.1.6", features = ["fs", "process"] }

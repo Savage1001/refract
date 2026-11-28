@@ -35,8 +35,110 @@ impl Fixture {
         runner: impl FnMut(Command, &AtomicBool) -> io::Result<ProcessOutput>,
     ) -> io::Result<BuildResult> {
         let settings = build_settings(&self.projects, &self.project)?;
-        build(&self.dir, &settings, &self.toolchain, cancel, runner)
+        build(
+            &self.dir,
+            &settings,
+            &self.toolchain,
+            cancel,
+            runner,
+            |_| {},
+        )
     }
+}
+
+#[test]
+fn keeps_disk_and_memory_previews_when_the_build_replaces_its_pdf() {
+    let fixture = Fixture::new();
+    fs::create_dir(&fixture.output).unwrap();
+    let pdf = fixture.output.join("main.pdf");
+    let original = b"%PDF-1.4\nPrevious document\n";
+    let cancel = AtomicBool::new(false);
+
+    for memory_limit in [0, original.len() as u64] {
+        fs::write(&pdf, original).unwrap();
+        let snapshot = snapshot_pdf(build_file(&pdf).unwrap(), memory_limit, &cancel).unwrap();
+        fs::remove_file(&pdf).unwrap();
+        fs::write(&pdf, b"%PDF-1.4\nReplacement\n").unwrap();
+
+        match snapshot {
+            RetainedPdf::Bytes(bytes) => {
+                assert_ne!(memory_limit, 0);
+                assert_eq!(bytes.as_slice(), original);
+            }
+            RetainedPdf::File(file) => {
+                assert_eq!(memory_limit, 0);
+                #[cfg(windows)]
+                {
+                    let path = file.path().to_owned();
+                    assert_eq!(fs::read(&path).unwrap(), original);
+                    drop(file);
+                    assert!(!path.exists());
+                }
+                #[cfg(all(
+                    feature = "portable-pdf",
+                    any(target_os = "linux", target_os = "macos")
+                ))]
+                assert_eq!(&file.map().unwrap()[..], original);
+                #[cfg(not(any(
+                    windows,
+                    all(
+                        feature = "portable-pdf",
+                        any(target_os = "linux", target_os = "macos")
+                    )
+                )))]
+                {
+                    use std::io::{Seek, SeekFrom};
+                    let mut file = file.file;
+                    file.seek(SeekFrom::Start(0)).unwrap();
+                    let mut bytes = Vec::new();
+                    file.read_to_end(&mut bytes).unwrap();
+                    assert_eq!(bytes, original);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn captures_the_pdf_while_the_build_lock_is_held() {
+    let fixture = Fixture::new();
+    let cancel = AtomicBool::new(false);
+    let settings = build_settings(&fixture.projects, &fixture.project).unwrap();
+    let mut snapshot = None;
+    build(
+        &fixture.dir,
+        &settings,
+        &fixture.toolchain,
+        &cancel,
+        |_, _| {
+            fs::write(fixture.output.join("main.pdf"), b"%PDF-fixture")?;
+            Ok(success("rendered"))
+        },
+        |pdf| {
+            let error = lock_build_directory(&fixture.output).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            snapshot = Some(retain_pdf_at(pdf, &cancel).unwrap());
+        },
+    )
+    .unwrap();
+    assert!(matches!(snapshot, Some(RetainedPdf::Bytes(_))));
+}
+
+#[test]
+fn preview_rejects_invalid_and_linked_build_artifacts_and_honors_cancellation() {
+    let fixture = Fixture::new();
+    fs::create_dir(&fixture.output).unwrap();
+    let pdf = fixture.output.join("main.pdf");
+    let cancel = AtomicBool::new(false);
+    let read = || retain_compiled_pdf(&fixture.projects, &fixture.project, &cancel);
+    fs::write(&pdf, b"incomplete build").unwrap();
+    assert_eq!(read().unwrap_err().kind(), io::ErrorKind::InvalidData);
+    fs::write(&pdf, b"%PDF-1.4\n").unwrap();
+    cancel.store(true, Ordering::Relaxed);
+    assert_eq!(read().unwrap_err().kind(), io::ErrorKind::Interrupted);
+    cancel.store(false, Ordering::Relaxed);
+    fs::hard_link(&pdf, fixture.dir.join("linked.pdf")).unwrap();
+    assert_eq!(read().unwrap_err().kind(), io::ErrorKind::InvalidData);
 }
 
 fn tool_name(command: &Command) -> String {

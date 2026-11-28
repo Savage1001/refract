@@ -12,7 +12,10 @@ use std::{
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 pub mod diagnostics;
@@ -33,7 +36,7 @@ const SYNC_FILES: [&str; 4] = [
 ];
 const BUILD_LOG_LIMIT: usize = 250_000;
 const THUMBNAIL_PDF_LIMIT: u64 = 64 * 1024 * 1024;
-const RETAINED_PDF_LIMIT: u64 = 128 * 1024 * 1024;
+const IN_MEMORY_PDF_LIMIT: u64 = 128 * 1024 * 1024;
 
 const DRAFT_WRAPPER: &str = r"\PassOptionsToPackage{draft}{graphics}
 \PassOptionsToPackage{draft}{graphicx}
@@ -85,12 +88,35 @@ pub fn compile_project(
     toolchain: &TexToolchain,
     cancel: &AtomicBool,
 ) -> io::Result<BuildResult> {
+    compile_with_output(projects_dir, project, toolchain, cancel, |_| {})
+}
+
+pub fn compile_project_with_preview(
+    projects_dir: &Path,
+    project: &Project,
+    toolchain: &TexToolchain,
+    cancel: &AtomicBool,
+) -> io::Result<(BuildResult, Option<io::Result<RetainedPdf>>)> {
+    let mut preview = None;
+    let build = compile_with_output(projects_dir, project, toolchain, cancel, |path| {
+        preview = Some(retain_pdf_at(path, cancel));
+    })?;
+    Ok((build, preview))
+}
+
+fn compile_with_output(
+    projects_dir: &Path,
+    project: &Project,
+    toolchain: &TexToolchain,
+    cancel: &AtomicBool,
+    capture: impl FnOnce(&Path),
+) -> io::Result<BuildResult> {
     if cancel.load(Ordering::Relaxed) {
         return Ok(cancelled_build());
     }
     let dir = checked_project_directory(projects_dir, project)?;
     let settings = read_build_settings(&dir, project)?;
-    build(&dir, &settings, toolchain, cancel, run_process)
+    build(&dir, &settings, toolchain, cancel, run_process, capture)
 }
 
 pub fn save_compiled_pdf(source: &Path, destination: &Path) -> io::Result<()> {
@@ -106,22 +132,132 @@ pub fn save_compiled_pdf(source: &Path, destination: &Path) -> io::Result<()> {
     })
 }
 
-/// Keep a bounded, immutable copy of the output before the next build can replace it.
-pub fn read_compiled_pdf_for_preview(path: &Path) -> io::Result<Vec<u8>> {
-    let file = build_file(path)?;
-    let too_large = || invalid("The compiled PDF is too large to retain in the preview");
-    if file.metadata()?.len() > RETAINED_PDF_LIMIT {
-        return Err(too_large());
+#[derive(Debug)]
+pub enum RetainedPdf {
+    Bytes(Arc<Vec<u8>>),
+    File(PreviewFile),
+}
+
+/// An app-owned snapshot of a PDF that is too large to keep in the heap.
+#[derive(Debug)]
+pub struct PreviewFile {
+    #[cfg(windows)]
+    path: tempfile::TempPath,
+    #[cfg(not(windows))]
+    file: File,
+}
+
+impl PreviewFile {
+    #[cfg(windows)]
+    pub fn path(&self) -> &Path {
+        &self.path
     }
-    let mut bytes = Vec::new();
-    file.take(RETAINED_PDF_LIMIT + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > RETAINED_PDF_LIMIT {
-        return Err(too_large());
+
+    #[cfg(all(
+        feature = "portable-pdf",
+        any(target_os = "linux", target_os = "macos")
+    ))]
+    pub(crate) fn map(&self) -> io::Result<memmap2::Mmap> {
+        // The backing file is anonymous and this type gives out no writable handles.
+        // Only snapshot_pdf writes to it, before any rendering worker can map it.
+        unsafe { memmap2::Mmap::map(&self.file) }
     }
-    if !bytes.starts_with(b"%PDF-") {
+}
+
+/// Snapshot this project's compiled output independently of the next build.
+pub fn retain_compiled_pdf(
+    projects_dir: &Path,
+    project: &Project,
+    cancel: &AtomicBool,
+) -> io::Result<RetainedPdf> {
+    let project_dir = checked_project_directory(projects_dir, project)?;
+    let output = project_dir.join(".refract-build");
+    let _lock = lock_build_directory(&output)?;
+    retain_pdf_at(&output.join("main.pdf"), cancel)
+}
+
+fn retain_pdf_at(path: &Path, cancel: &AtomicBool) -> io::Result<RetainedPdf> {
+    if path.canonicalize()? != path {
+        return Err(invalid("Invalid compiled PDF path"));
+    }
+    snapshot_pdf(build_file(path)?, IN_MEMORY_PDF_LIMIT, cancel)
+}
+
+fn snapshot_pdf(mut file: File, memory_limit: u64, cancel: &AtomicBool) -> io::Result<RetainedPdf> {
+    check_preview_cancel(cancel)?;
+    let length = file.metadata()?.len();
+    let mut header = [0; 5];
+    if file.read_exact(&mut header).is_err() || &header != b"%PDF-" {
         return Err(invalid("Invalid PDF data"));
     }
-    Ok(bytes)
+    let remaining = length
+        .checked_sub(header.len() as u64)
+        .ok_or_else(|| invalid("Invalid PDF data"))?;
+    let mut copy = |snapshot: &mut dyn Write| -> io::Result<()> {
+        snapshot.write_all(&header)?;
+        copy_pdf_bytes(&mut file, snapshot, remaining, cancel)?;
+        if file.metadata()?.len() != length {
+            return Err(invalid(
+                "The compiled PDF changed before the preview was ready",
+            ));
+        }
+        Ok(())
+    };
+    if length <= memory_limit {
+        let mut bytes = Vec::with_capacity(length as usize);
+        copy(&mut bytes)?;
+        return Ok(RetainedPdf::Bytes(Arc::new(bytes)));
+    }
+
+    // Windows' PDF renderer reopens by name. Retain the cleanup guard for
+    // the entire lifetime of the preview and any render work in flight.
+    #[cfg(windows)]
+    let snapshot = {
+        let mut snapshot = tempfile::Builder::new()
+            .prefix("refract-pdf-")
+            .suffix(".pdf")
+            .tempfile()?;
+        copy(&mut snapshot)?;
+        PreviewFile {
+            path: snapshot.into_temp_path(),
+        }
+    };
+    #[cfg(not(windows))]
+    let snapshot = {
+        let mut file = tempfile::tempfile()?;
+        copy(&mut file)?;
+        PreviewFile { file }
+    };
+    Ok(RetainedPdf::File(snapshot))
+}
+
+fn copy_pdf_bytes(
+    source: &mut File,
+    snapshot: &mut dyn Write,
+    mut remaining: u64,
+    cancel: &AtomicBool,
+) -> io::Result<()> {
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        check_preview_cancel(cancel)?;
+        if remaining == 0 {
+            return Ok(());
+        }
+        let chunk = remaining.min(buffer.len() as u64) as usize;
+        source.read_exact(&mut buffer[..chunk])?;
+        snapshot.write_all(&buffer[..chunk])?;
+        remaining -= chunk as u64;
+    }
+}
+
+fn check_preview_cancel(cancel: &AtomicBool) -> io::Result<()> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "PDF preview was cancelled",
+        ));
+    }
+    Ok(())
 }
 
 pub fn compiled_pdf_for_thumbnail(
@@ -174,6 +310,7 @@ fn build(
     toolchain: &TexToolchain,
     cancel: &AtomicBool,
     runner: impl FnMut(Command, &AtomicBool) -> io::Result<ProcessOutput>,
+    capture: impl FnOnce(&Path),
 ) -> io::Result<BuildResult> {
     if cancel.load(Ordering::Relaxed) {
         return Ok(cancelled_build());
@@ -197,7 +334,9 @@ fn build(
         ]),
     )?;
     let result = execute_build(dir, &output, &root, settings, toolchain, cancel, runner);
-    if !result.as_ref().is_ok_and(|build| build.pdf.is_some()) {
+    if let Some(path) = result.as_ref().ok().and_then(|build| build.pdf.as_deref()) {
+        capture(path);
+    } else {
         remove_outputs(&output, SYNC_FILES.into_iter().chain(["main.pdf"]))?;
     }
     result
@@ -518,8 +657,23 @@ fn build_file(path: &Path) -> io::Result<File> {
             "Only unlinked regular files are allowed in the compilation directory",
         ));
     }
-    let file = File::open(path)?;
-    if !has_one_link(&file)? {
+    let mut options = File::options();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use rustix::fs::OFlags;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    let info = file.metadata()?;
+    if !info.is_file() || is_link(&info) || !has_one_link(&file)? {
         return Err(invalid(
             "Only unlinked regular files are allowed in the compilation directory",
         ));

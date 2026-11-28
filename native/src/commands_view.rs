@@ -416,6 +416,7 @@ impl Library {
                 }
             })
             .id("document-editor")
+            .debug_selector(|| "document-editor".into())
             .key_context("RefractSource")
             .on_action(
                 cx.listener(|view, _: &CompleteLatex, window, cx| view.open_commands(window, cx)),
