@@ -1,8 +1,12 @@
 use super::pdf_view::PdfViewport;
-use super::{Library, Navigation, Palette};
+use super::{
+    Library, Navigation, Palette, Selection, build_log_view::tree_has_file, monospace_font,
+    workspace_tools::tool_button,
+};
 use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb, svg};
 use gpui_component::{WindowExt, tooltip::Tooltip};
 use refract_native::tex::BuildResult;
+use refract_native::tex::diagnostics::diagnostic_source;
 #[cfg(not(all(test, feature = "ui-tests")))]
 use refract_native::tex::{TexToolchain, compile_project_with_preview};
 #[cfg(all(test, feature = "ui-tests"))]
@@ -27,6 +31,7 @@ pub(super) struct RunningBuild {
 pub(super) struct WorkspaceBuild {
     pub(super) queued: bool,
     outcome: Option<Result<BuildResult, String>>,
+    show_error_log: bool,
     pub(super) sync_error: Option<String>,
     pub(super) preview: PdfViewport,
 }
@@ -36,6 +41,7 @@ impl WorkspaceBuild {
         Self {
             queued: true,
             outcome: None,
+            show_error_log: false,
             sync_error: None,
             preview: PdfViewport::default(),
         }
@@ -44,6 +50,7 @@ impl WorkspaceBuild {
     pub(super) fn invalidate(&mut self) {
         self.queued = true;
         self.outcome = None;
+        self.show_error_log = false;
         self.sync_error = None;
         self.preview.clear_sync();
     }
@@ -164,12 +171,16 @@ impl Library {
 
     pub(super) fn compile_pane(
         &self,
-        build: &WorkspaceBuild,
+        selection: &Selection,
         pane_width: f32,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let build = &selection.build;
         let compiling = self.build_task.is_some();
+        let retained = build.preview.has_content();
+        let failure =
+            !compiling && !build.queued && build.outcome.is_some() && build.pdf().is_none();
         let compile_label = if compiling {
             "Compiling…"
         } else if build.pdf().is_some() {
@@ -185,16 +196,12 @@ impl Library {
             "Changes pending compilation"
         } else if build.pdf().is_some() {
             "PDF ready"
-        } else if build.outcome.is_some() {
-            "Compilation failed"
         } else {
             "PDF preview"
         };
-        let body = if build.preview.has_content() {
+        let body = if retained {
             let status = if compiling || build.queued {
                 Some("Showing the last successful build while changes compile.")
-            } else if build.pdf().is_none() {
-                Some(status)
             } else {
                 None
             };
@@ -207,7 +214,7 @@ impl Library {
                     cx,
                 )
                 .into_any_element()
-        } else {
+        } else if !failure {
             div()
                 .size_full()
                 .flex()
@@ -216,10 +223,12 @@ impl Library {
                 .justify_center()
                 .gap_2()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child(status))
-                .when(build.pdf().is_none() && build.outcome.is_some(), |pane| {
-                    pane.child("Open Logs in Tools for details.")
+                .when(build.queued, |pane| {
+                    pane.child("Your preview will update after the document is compiled.")
                 })
                 .into_any_element()
+        } else {
+            div().into_any_element()
         };
         div()
             .id("preview-pane")
@@ -286,7 +295,123 @@ impl Library {
                     .text_color(rgb(palette.warning))
                     .child(error)
             }))
+            .when(failure, |pane| {
+                pane.child(self.preview_error(selection, retained, palette, cx))
+            })
             .child(div().flex_1().min_h(px(0.)).child(body))
+    }
+
+    fn preview_error(
+        &self,
+        selection: &Selection,
+        retained: bool,
+        palette: Palette,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let build = &selection.build;
+        let log = build.log().unwrap_or_default();
+        let diagnostic = log
+            .lines()
+            .find_map(|line| Some((diagnostic_source(line)?, line)));
+        let cause = diagnostic
+            .as_ref()
+            .and_then(|(_, line)| line.splitn(3, ':').nth(2).map(str::trim))
+            .or_else(|| log.lines().find(|line| line.starts_with("! ")))
+            .or_else(|| log.lines().find(|line| !line.trim().is_empty()))
+            .unwrap_or("Check the build output for details, then compile again.");
+        let location = log.lines().find(|line| {
+            line.strip_prefix("l.")
+                .is_some_and(|line| line.starts_with(|c: char| c.is_ascii_digit()))
+        });
+        let summary = location.map_or_else(|| cause.to_owned(), |line| format!("{cause} - {line}"));
+        let position = diagnostic.map(|(position, _)| position).filter(|position| {
+            selection
+                .tree
+                .as_ref()
+                .and_then(|tree| tree.as_ref().ok())
+                .is_some_and(|entries| tree_has_file(entries, &position.file))
+        });
+        let (error, surface) = if palette.canvas == 0x0a0a0a {
+            (0xff6467, 0x301214)
+        } else {
+            (0xc10007, 0xfcebec)
+        };
+        div()
+            .id("preview-error")
+            .debug_selector(|| "preview-error".into())
+            .flex()
+            .flex_col()
+            .flex_none()
+            .items_start()
+            .gap(px(8.))
+            .mx(px(12.))
+            .mt(px(8.))
+            .p(px(20.))
+            .max_h(if retained {
+                gpui::relative(0.35)
+            } else {
+                gpui::relative(0.8)
+            })
+            .overflow_y_scroll()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(rgb(error))
+            .bg(rgb(surface))
+            .text_size(px(12.))
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(error))
+                    .child("Could not compile"),
+            )
+            .child(summary)
+            .child(if retained {
+                "Showing the last successful PDF. Fix the issue and compile again."
+            } else {
+                "Resolve the issue, then compile again."
+            })
+            .when_some(position, |pane, position| {
+                let label = format!("Go to line {} in {}", position.line, position.file);
+                pane.child(tool_button(
+                    "preview-error-source",
+                    label,
+                    false,
+                    palette,
+                    cx,
+                    move |view, window, cx| {
+                        view.jump_to_source_position(position.clone(), window, cx)
+                    },
+                ))
+            })
+            .child(tool_button(
+                "preview-error-log",
+                "View build output",
+                build.show_error_log,
+                palette,
+                cx,
+                |view, _, cx| {
+                    if let Some(selection) = &mut view.selection {
+                        selection.build.show_error_log = !selection.build.show_error_log;
+                        cx.notify();
+                    }
+                },
+            ))
+            .when(build.show_error_log, |pane| {
+                pane.child(
+                    div()
+                        .debug_selector(|| "preview-error-output".into())
+                        .w_full()
+                        .p(px(14.))
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_color(rgb(palette.border))
+                        .bg(rgb(palette.surface))
+                        .font_family(monospace_font())
+                        .line_height(px(20.))
+                        .child(log.to_owned()),
+                )
+            })
     }
 }
 
@@ -306,10 +431,11 @@ fn preview_button(
         .items_center()
         .justify_center()
         .rounded(px(6.))
+        .tab_index(5)
+        .tab_stop(enabled || id == "compile")
         .when(!enabled && id != "compile", |button| button.opacity(0.45))
         .when(enabled, |button| {
             button
-                .tab_index(5)
                 .cursor_pointer()
                 .hover(move |style| style.bg(rgb(palette.selection)))
                 .focus(move |style| style.bg(rgb(palette.selection)))

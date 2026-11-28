@@ -829,7 +829,7 @@ mod tests {
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 450] /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R >>".into(),
             format!("<< /Length {} >>\nstream\n{text}endstream", text.len()),
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
-            "<< /Type /Annot /Subtype /Link /Rect [100 180 200 240] /Dest [4 0 R /Fit] >>".into(),
+            "<< /Type /Annot /Subtype /Link /Rect [100 315 200 375] /Dest [4 0 R /Fit] >>".into(),
         ];
         let mut bytes = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();
@@ -867,7 +867,12 @@ mod tests {
         Ok(BuildResult {
             arguments: Vec::new(),
             exit_code: Some(if broken { 1 } else { 0 }),
-            log: "Fixture build output".into(),
+            log: if broken {
+                "./sections/abstract.tex:2: Undefined control sequence.\nl.2"
+            } else {
+                "Fixture build output"
+            }
+            .into(),
             pdf: (!broken).then_some(pdf),
         })
     }
@@ -884,7 +889,14 @@ mod tests {
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
         let project = create_project(&projects, "Retained preview").unwrap();
-        let output = projects.join(&project.id).join(".refract-build/main.pdf");
+        let folder = projects.join(&project.id);
+        let output = folder.join(".refract-build/main.pdf");
+        fs::create_dir(folder.join("sections")).unwrap();
+        fs::write(
+            folder.join("sections/abstract.tex"),
+            "Introduction\nBroken line\n",
+        )
+        .unwrap();
         cx.update(initialize_app);
         let mut library = None;
         let (_, cx) = cx.add_window_view(|window, cx| {
@@ -982,6 +994,22 @@ mod tests {
         cx.update(|_, app| {
             let pane = &library.read(app).selection.as_ref().unwrap().build.preview;
             assert_eq!(pane.page, 1);
+        });
+
+        click(cx, "preview-error-log");
+        cx.refresh().unwrap();
+        assert!(cx.debug_bounds("preview-error-output").is_some());
+        click(cx, "preview-error-log");
+        click(cx, "preview-error-source");
+        cx.update(|window, app| {
+            let view = library.read(app);
+            let selection = view.selection.as_ref().unwrap();
+            assert_eq!(selection.file.as_deref(), Some("sections/abstract.tex"));
+            let editor = view.active_editor().unwrap();
+            assert_eq!(
+                crate::editor_find_view::selected_bytes(&editor, window, app),
+                "Introduction\n".len().."Introduction\nBroken line".len()
+            );
         });
     }
 

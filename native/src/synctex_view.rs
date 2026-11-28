@@ -225,7 +225,9 @@ impl Library {
         });
         window.defer(cx, move |window, app| {
             if focus.is_focused(window) {
-                window.dispatch_action(Box::new(SelectToEndOfLine), app);
+                // A source jump can open a tab whose input is absent from the current frame.
+                window.draw(app).clear();
+                focus.dispatch_action(&SelectToEndOfLine, window, app);
             }
         });
     }

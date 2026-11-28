@@ -2003,7 +2003,7 @@ impl Library {
                         } else {
                             width - sidebar
                         };
-                        body.child(self.compile_pane(&selection.build, pane_width, palette, cx))
+                        body.child(self.compile_pane(selection, pane_width, palette, cx))
                     }),
             )
     }

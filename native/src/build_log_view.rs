@@ -115,9 +115,7 @@ impl Library {
                                 .tree
                                 .as_ref()
                                 .and_then(|tree| tree.as_ref().ok())
-                                .is_some_and(|tree| {
-                                    tree_has_file(tree, &selection.expanded_folders, &source.file)
-                                })
+                                .is_some_and(|tree| tree_has_file(tree, &source.file))
                         });
                         div()
                             .id(SharedString::from(format!("diagnostic-{index}")))
@@ -325,13 +323,9 @@ fn diagnostic_color(level: DiagnosticLevel, palette: Palette) -> u32 {
     }
 }
 
-fn tree_has_file(
-    tree: &[ProjectEntry],
-    expanded: &std::collections::HashSet<String>,
-    file: &str,
-) -> bool {
+pub(super) fn tree_has_file(tree: &[ProjectEntry], file: &str) -> bool {
     tree.iter().any(|entry| match &entry.children {
-        Some(children) => expanded.contains(&entry.path) && tree_has_file(children, expanded, file),
+        Some(children) => tree_has_file(children, file),
         None => entry.path == file,
     })
 }
