@@ -1,4 +1,4 @@
-use super::{Library, Navigation, Palette};
+use super::{Library, Palette};
 use gpui::{
     Context, Entity, FocusHandle, FontWeight, KeyDownEvent, Keystroke, PromptLevel, Window, div,
     prelude::*, px, rgb, svg,
@@ -127,10 +127,7 @@ impl Library {
                         library.set_projects(projects, cx);
                         if library.selection.is_none()
                             && library.project_open_sequence == sequence
-                            && !matches!(
-                                library.navigation_after_save,
-                                Some(Navigation::CloseWindow)
-                            )
+                            && !library.preparing_exit()
                         {
                             if let Some(project) = project {
                                 library.open_project(project, window, cx);

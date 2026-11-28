@@ -1,6 +1,6 @@
-# Refract native preview
+# Refract native desktop
 
-This opt-in Rust and GPUI app opens the existing Refract project library in list or grid view. Create a project with **New project**, or select its name in the workspace to rename it. The workspace opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 32 MiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
+The Rust and GPUI app opens the existing Refract project library in list or grid view. Create a project with **New project**, or select its name in the workspace to rename it. The workspace opens the root LaTeX document first and lets you browse nested folders and edit UTF-8 text files up to 32 MiB in separate tabs. Edits save automatically and update existing comment anchors. Use Save or Ctrl+S (Cmd+S on macOS) to retry a failed save. Closing a tab or leaving the workspace waits for pending saves and asks before discarding edits that could not be saved.
 
 Use **Search** to filter project names in either library view. **Sort** offers newest first, oldest first, name, and recently edited. Refract remembers the selected order and library view across native launches. Use **Duplicate** in a project’s library menu to open a copy with its files, comments, version history, and LaTeX settings. **Delete** moves the project to **Deleted projects**, where it can be restored for up to 30 days.
 
@@ -36,14 +36,14 @@ Versions lists existing and newly captured snapshots. Refract captures a snapsho
 
 When opening a project, the preview retries cleanup of temporary restore data recorded by Electron. It shows a notice if a stage still contains data that could not be verified or removed.
 
-From the repository root, use stable Rust and the platform’s GPUI build dependencies to build the preview. On Windows, use the MSVC toolchain. Running the binary opens a desktop window.
+From the repository root, use stable Rust and the platform’s GPUI build dependencies. On Windows, use the MSVC toolchain. Running the binary opens a desktop window.
 
 ```sh
 cargo build --locked --manifest-path native/Cargo.toml
 cargo run --locked --manifest-path native/Cargo.toml
 ```
 
-The preview looks in the platform's application configuration directory for the `Refract/projects` folder. For a custom profile or a source checkout using a different profile directory, set `REFRACT_DATA_DIR` to the folder containing `projects`.
+Refract uses its existing configuration profile. On Windows, the default is `%APPDATA%\Refract`. On macOS and Linux, Refract uses the existing `refract` directory and also recognizes the `Refract` directory used by early native builds. If both contain projects, Refract opens the Electron profile by default. Set `REFRACT_DATA_DIR` to the folder containing `projects` to choose a profile explicitly.
 
 The workspace builds LaTeX from saved project files using the installed TeX toolchain. Use **Compile** to rebuild and **Download PDF** to save the result. Scroll through the compiled pages or use the page navigation and zoom controls. The preview renders the pages in view and releases their bitmaps as they scroll away. Use **Show in PDF** to jump from the current source line. Double-click a PDF page or focus it and press Enter to jump back to the source.
 
@@ -63,13 +63,13 @@ On first launch from an existing Refract profile, the native app imports the sav
 
 The native package workflows build Windows x64, macOS Intel and Apple Silicon, Debian and Ubuntu, and Arch installers as pull request artifacts. Verification installs packages in disposable runners or containers. Windows and macOS packages bundle the dependency setup helper. Linux packages declare TeX and SyncTeX dependencies for the system package manager.
 
-## Parity before replacing Electron
+## Verification against Electron
 
 The current Electron app is the reference for appearance and behavior. The Native preview workflow runs the existing renderer's interaction tests and uploads fixture screenshots of the library, settings, and workspace in light and dark themes, including the compact workspace layout. Run `node build/scripts/capture-electron-parity.cjs <output-folder>` after `npm run build` to capture the same reference on a machine with Microsoft Edge.
 
-The Linux job captures the native project library and workspace in a private Xvfb display. Download the `refract-native-reference` and `refract-electron-reference` artifacts from the same run to compare the 1440 × 900 library and workspace views and the 900 × 650 compact workspace.
+The Linux job captures the native library, Settings, and workspace in both themes in private Xvfb displays. Download the `refract-native-reference` and `refract-electron-reference` artifacts from the same run to compare the 1440 × 900 library and workspace views and the 900 × 650 compact workspace.
 
-Before changing the default app or shipping this crate, verify the GPUI build against these references and run equivalent workflows on Windows, macOS, and Linux. Compare views at the same viewport, scale, and theme. Include app chrome, keyboard and pointer interaction, focus, accessibility, and responsive layouts. Verify project and file management, editing, PDF preview and SyncTeX in both directions, versions and comments, chats and settings, and installation and updates. Confirm that existing projects and settings open in place.
+Compare views at the same viewport, scale, and theme. Include app chrome, keyboard and pointer interaction, focus, accessibility, and responsive layouts. Verify project and file management, editing, PDF preview and SyncTeX in both directions, versions and comments, chats and settings, and installation and updates. Confirm that existing projects and settings open in place on Windows, macOS, and Linux.
 
 Run the project-library tests without building GPUI or opening a window.
 

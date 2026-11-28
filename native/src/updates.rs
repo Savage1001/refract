@@ -1,6 +1,7 @@
 use crate::{METADATA_LIMIT, read_local_file};
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     cmp::Ordering,
     fs,
@@ -74,6 +75,14 @@ struct Asset {
     digest: Option<String>,
 }
 
+impl Asset {
+    fn sha256(&self) -> Option<&str> {
+        let digest = self.digest.as_deref()?.strip_prefix("sha256:")?;
+        (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then_some(digest)
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct UpdateCandidate {
     tag: String,
@@ -113,28 +122,53 @@ pub fn select_windows_update(
             if !eligible || version_order(&version, current) != Ordering::Greater {
                 return None;
             }
-            let asset_name = format!("Refract-Native-Setup-{version}.exe");
-            let mut matching = release
-                .assets
-                .iter()
-                .filter(|asset| asset.name == asset_name);
-            let asset = matching.next()?;
-            if matching.next().is_some() || !(1..=MAX_INSTALLER_BYTES).contains(&asset.size) {
-                return None;
-            }
-            let digest = asset.digest.as_deref()?.strip_prefix("sha256:")?;
-            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return None;
-            }
+            let (asset, sha256) = release.native_windows_installer(&version)?;
             Some(UpdateCandidate {
                 tag: tag.clone(),
                 version,
-                asset_name,
+                asset_name: asset.name.clone(),
                 size: asset.size,
-                sha256: digest.to_ascii_lowercase(),
+                sha256,
             })
         })
         .max_by(|a, b| version_order(&a.version, &b.version))
+}
+
+impl Release {
+    fn unique_asset(&self, name: &str) -> Option<&Asset> {
+        let mut matching = self.assets.iter().filter(|asset| asset.name == name);
+        let asset = matching.next()?;
+        matching.next().is_none().then_some(asset)
+    }
+
+    fn verified_installer(&self, name: &str) -> Option<(&Asset, String)> {
+        let asset = self.unique_asset(name)?;
+        if !(1..=MAX_INSTALLER_BYTES).contains(&asset.size) {
+            return None;
+        }
+        Some((asset, asset.sha256()?.to_ascii_lowercase()))
+    }
+
+    fn native_windows_installer(&self, version: &Version) -> Option<(&Asset, String)> {
+        let canonical = format!("Refract-Setup-{version}.exe");
+        self.verified_installer(&canonical)
+            .filter(|(_, digest)| {
+                // The checksum emitted by package.cts distinguishes a native
+                // installer from an Electron release with the same asset name.
+                let marker = format!("Refract-Native-Setup-{version}.{digest}.sha256");
+                let contents = format!("{digest}  {canonical}\n");
+                self.unique_asset(&marker).is_some_and(|asset| {
+                    asset.size == contents.len() as u64
+                        && asset.sha256().is_some_and(|checksum| {
+                            checksum.eq_ignore_ascii_case(&format!(
+                                "{:x}",
+                                Sha256::digest(contents.as_bytes())
+                            ))
+                        })
+                })
+            })
+            .or_else(|| self.verified_installer(&format!("Refract-Native-Setup-{version}.exe")))
+    }
 }
 
 fn supported_prerelease(pre: &str) -> bool {
@@ -212,6 +246,40 @@ mod tests {
         assert_eq!(beta.tag, "v1.3.0-pre-release-10");
         assert!(select_windows_update(&releases, UpdateTrack::Beta, beta.version()).is_none());
         assert!(select_windows_update(&releases, UpdateTrack::Stable, beta.version()).is_none());
+    }
+
+    #[test]
+    fn requires_a_checksum_marker_that_binds_the_canonical_installer_to_its_version() {
+        let current = Version::new(1, 0, 0);
+        let mut canonical = release("v2.0.0", false, false, false);
+        let digest = "a".repeat(64);
+        let marker = format!("Refract-Native-Setup-2.0.0.{digest}.sha256");
+        let contents = format!("{digest}  Refract-Setup-2.0.0.exe\n");
+        canonical.assets.push(Asset {
+            name: marker.clone(),
+            size: contents.len() as u64,
+            digest: Some(format!("sha256:{:x}", Sha256::digest(b"unrelated asset"))),
+        });
+        let pick = |release: &Release| {
+            select_windows_update(std::slice::from_ref(release), UpdateTrack::Stable, &current)
+        };
+        assert!(pick(&canonical).is_none());
+
+        let checksum = format!("sha256:{:x}", Sha256::digest(contents.as_bytes()));
+        canonical.assets[1].digest = Some(checksum.clone());
+        let update = pick(&canonical).unwrap();
+        assert_eq!(update.asset_name, "Refract-Setup-2.0.0.exe");
+        assert_eq!(update.sha256, digest);
+
+        canonical.assets.push(Asset {
+            name: marker,
+            size: contents.len() as u64,
+            digest: Some(checksum),
+        });
+        assert!(pick(&canonical).is_none());
+        canonical.assets.pop();
+        canonical.assets[0].digest = Some(format!("sha256:{}", "b".repeat(64)));
+        assert!(pick(&canonical).is_none());
     }
 
     #[test]

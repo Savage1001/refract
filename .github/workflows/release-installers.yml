@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Release commit SHA
+        description: Latest GitHub main commit SHA
         required: true
         type: string
       platform:
@@ -17,197 +17,44 @@ permissions:
   contents: read
 
 jobs:
-  windows:
-    if: inputs.platform == 'all'
-    runs-on: windows-latest
-    timeout-minutes: 45
-    env:
-      CI: 'true'
-      REFRACT_TEST_HIDDEN: '1'
+  source:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: refs/heads/main
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm run build:installer -- --publish never
-      - name: Verify Windows packaging and dependency setup
-        run: node --test build/test/distribution-boundary.test.cjs build/test/install-dependencies.test.cjs build/test/installer-dependencies.test.cjs build/test/updates.test.cjs
-      - name: Verify stable install, upgrade, and uninstall
-        shell: pwsh
+      - name: Require the current main commit
+        id: verify
+        env:
+          REQUESTED: ${{ inputs.ref }}
         run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ($version -notmatch '-') {
-            $env:REFRACT_TEST_INSTALLER = '1'
-            node --test build/test/installer.test.cjs
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-      - name: Match Windows asset names to GitHub update metadata
-        shell: pwsh
-        run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $channel = if ($version -match '-') { 'beta' } else { 'latest' }
-          $metadata = Get-Content "dist/$channel.yml" -Raw
-          $name = "Refract-Setup-$version.exe"
-          if ($metadata -notmatch [regex]::Escape($name)) {
-            throw "Release metadata does not reference $name"
-          }
-          Rename-Item -LiteralPath "dist/Refract Setup $version.exe" -NewName $name
-          Rename-Item -LiteralPath "dist/Refract Setup $version.exe.blockmap" -NewName "$name.blockmap"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-installer
-          path: |
-            dist/Refract-Setup-*.exe
-            dist/Refract-Setup-*.exe.blockmap
-            dist/*.yml
-            !dist/builder-*.yml
-          if-no-files-found: error
+          sha=$(git rev-parse HEAD)
+          if [[ "$REQUESTED" != "$sha" ]]; then
+            echo 'Build the release using the latest GitHub main SHA.' >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  windows:
+    if: inputs.platform == 'all'
+    needs: source
+    uses: ./.github/workflows/native-windows-package.yml
+    with:
+      release-ref: ${{ needs.source.outputs.sha }}
 
   macos:
     if: inputs.platform == 'all' || inputs.platform == 'macos-linux'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-            mach_arch: arm64
-          - runner: macos-15-intel
-            arch: x64
-            mach_arch: x86_64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
-    env:
-      CI: 'true'
-      REFRACT_TEST_HIDDEN: '1'
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm run build:mac -- --${{ matrix.arch }} -c.mac.identity=-
-      - name: Install the app and verify its managed TeX toolchain
-        run: |
-          pkg=(dist/Refract-*-mac-${{ matrix.arch }}.pkg)
-          name="$(basename "${pkg[0]}")"
-          source="$RUNNER_TEMP/refract-installer"
-          mkdir "$source"
-          cp "${pkg[0]}" "$source/"
-          dmg="dist/${name%.pkg}.dmg"
-          hdiutil create -volname 'Refract Installer' -srcfolder "$source" -format UDZO "$dmg"
-          hdiutil verify "$dmg"
-          mount="$RUNNER_TEMP/refract-dmg"
-          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount"
-          trap 'hdiutil detach "$mount"' EXIT
-          tex='/Library/Refract/dependencies/TinyTeX/bin/universal-darwin'
-          test ! -e "$tex"
-          sudo -n installer -verboseR -pkg "$mount/$name" -target /
-          for tool in pdflatex xelatex lualatex synctex kpsewhich bibtex biber; do
-            test -x "$tex/$tool"
-          done
-          inode="$(stat -f '%i' "$tex/synctex")"
-          sudo -n installer -verboseR -pkg "$mount/$name" -target /
-          test "$(stat -f '%i' "$tex/synctex")" = "$inode"
-          export REFRACT_TEST_PACKAGED_APP=/Applications/Refract.app/Contents/MacOS/Refract
-          lipo "$REFRACT_TEST_PACKAGED_APP" -verify_arch ${{ matrix.mach_arch }}
-          codesign --verify --deep --strict /Applications/Refract.app
-          node --test --test-name-pattern='^(packaged application (compiles a project|navigates between source and PDF)|macOS staging accepts only links confined to an Electron framework)$' build/test/packaged.test.cjs build/test/distribution-boundary.test.cjs
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: macos-${{ matrix.arch }}-installer
-          path: dist/Refract-*-mac-${{ matrix.arch }}.dmg
-          if-no-files-found: error
+    needs: source
+    uses: ./.github/workflows/native-macos-package.yml
+    with:
+      release-ref: ${{ needs.source.outputs.sha }}
 
   linux:
-    if: inputs.platform != 'arch'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    env:
-      CI: 'true'
-      REFRACT_TEST_HIDDEN: '1'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm run build:linux -- --x64
-      - name: Install Refract and its dependencies using apt
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xauth
-          ! dpkg -s texlive-binaries >/dev/null 2>&1
-          sudo apt-get install -y --no-install-recommends ./dist/Refract-*-linux-amd64.deb
-          command -v pdflatex xelatex lualatex synctex kpsewhich bibtex biber
-      - name: Test the installed Debian package
-        env:
-          REFRACT_TEST_PACKAGED_APP: /opt/Refract/refract
-        run: |
-          test "$(dpkg-deb -f dist/Refract-*-linux-amd64.deb Architecture)" = amd64
-          xvfb-run -a --server-args='-screen 0 1600x1000x24' node --test --test-name-pattern='^packaged application (compiles a project|navigates between source and PDF)$' build/test/packaged.test.cjs
-          sudo apt-get remove -y refract
-          test ! -e "$REFRACT_TEST_PACKAGED_APP"
-          command -v pdflatex synctex
-          node --test build/test/distribution-boundary.test.cjs
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: linux-x64-installers
-          path: dist/Refract-*-linux-amd64.deb
-          if-no-files-found: error
-
-  arch:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - name: Install Arch packaging tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libarchive-tools zstd
-      - run: npm run build:arch
-      - name: Install and verify the package in Arch Linux
-        run: |
-          docker run --rm --init -i -v "$PWD:/refract:ro" -w /refract archlinux:base bash -euxo pipefail -s <<'ARCH'
-          pacman -Syu --noconfirm --needed nodejs xorg-server-xvfb
-          useradd --create-home refract-test
-          package=(dist/Refract-*-archlinux-x64.pkg.tar.zst)
-          bsdtar -xOf "${package[0]}" .PKGINFO | grep -Fx 'arch = x86_64'
-          ! pacman -Q texlive-bin
-          pacman -U --noconfirm "${package[0]}"
-          pacman -Qd texlive-bin
-          command -v pdflatex xelatex lualatex synctex kpsewhich bibtex biber
-          runuser -u refract-test -- env REFRACT_TEST_HIDDEN=1 REFRACT_TEST_PACKAGED_APP=/opt/Refract/refract \
-            xvfb-run -a --server-args='-screen 0 1600x1000x24' node --test \
-            --test-name-pattern='^packaged application (compiles a project|navigates between source and PDF)$' build/test/packaged.test.cjs
-          pacman -R --noconfirm refract
-          test ! -e /opt/Refract/refract
-          command -v pdflatex synctex
-          ARCH
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: archlinux-x64-installer
-          path: dist/Refract-*-archlinux-x64.pkg.tar.zst
-          if-no-files-found: error
+    needs: source
+    uses: ./.github/workflows/native-linux-packages.yml
+    with:
+      release-ref: ${{ needs.source.outputs.sha }}
+      release-debian: ${{ inputs.platform != 'arch' }}

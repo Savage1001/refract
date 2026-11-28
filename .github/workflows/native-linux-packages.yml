@@ -12,6 +12,14 @@ on:
       - LICENSE
       - test/fixtures/parity-document.tex
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release-ref:
+        type: string
+        required: true
+      release-debian:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -30,6 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.release-ref || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -42,20 +51,56 @@ jobs:
       - name: Build on the Debian 12 library baseline
         run: cargo build --locked --release --manifest-path native/Cargo.toml --bin refract-native
       - name: Package the native executable for apt and pacman
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release-ref }}
         run: |
+          args=()
+          if [[ -n "$RELEASE_REF" ]]; then args+=(--release-assets); fi
           node --experimental-transform-types scripts/native-linux/package.cts \
-            native/target/release/refract-native dist/native-linux
+            native/target/release/refract-native dist/native-linux "${args[@]}"
+      - name: Build canonical packages for the Electron upgrade test
+        run: |
+          fixture=$(mktemp -d)
+          cp LICENSE package.json "$fixture/"
+          ln -s "$PWD/resources" "$fixture/resources"
+          mkdir "$fixture/native"
+          ln -s "$PWD/native/licenses" "$fixture/native/licenses"
+          # Use the next stable version after the pinned previous installer.
+          node -e 'const fs = require("node:fs"); const file = process.argv[1]; const manifest = JSON.parse(fs.readFileSync(file, "utf8")); manifest.version = "0.3.5"; fs.writeFileSync(file, JSON.stringify(manifest));' "$fixture/package.json"
+          checkout=$PWD
+          cd "$fixture"
+          node --experimental-transform-types "$checkout/scripts/native-linux/package.cts" \
+            "$checkout/native/target/release/refract-native" "$checkout/dist/native-linux-upgrade" --release-assets
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: refract-native-linux-packages
           path: dist/native-linux/Refract-*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-native-linux-upgrade-fixtures
+          path: dist/native-linux-upgrade/Refract-*
+          if-no-files-found: error
+          compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.release-ref != '' && inputs.release-debian
+        with:
+          name: linux-x64-installers
+          path: dist/native-linux/Refract-*-linux-amd64.deb
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.release-ref != ''
+        with:
+          name: archlinux-x64-installer
+          path: dist/native-linux/Refract-*-archlinux-x64.pkg.tar.zst
           if-no-files-found: error
 
   verify:
     name: install, use, and remove (${{ matrix.distro }})
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -72,31 +117,52 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.release-ref || github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: refract-native-linux-packages
           path: ${{ runner.temp }}/refract-native-linux-packages
-      - name: Verify a fresh installation in a disposable Linux container
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: refract-native-linux-upgrade-fixtures
+          path: ${{ runner.temp }}/refract-native-linux-upgrade
+      - name: Fetch the previous Electron installer
+        env:
+          PACKAGE_MANAGER: ${{ matrix.package-manager }}
+        run: |
+          if [[ "$PACKAGE_MANAGER" = apt ]]; then
+            asset=Refract-0.3.4-linux-amd64.deb
+            digest=4f8d453ee188ee2cfd817cf1ea19b47e3df132c275c49520a912edaaa02e636b
+          else
+            asset=Refract-0.3.4-archlinux-x64.pkg.tar.zst
+            digest=4dfadf3c6f7b3a219aab59a3ff1160d7ab273742bbc60707b65cf55eb7d4e785
+          fi
+          folder="$RUNNER_TEMP/refract-native-linux-upgrade"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 3 \
+            "https://github.com/Savage1001/refract/releases/download/v0.3.4/$asset" --output "$folder/$asset"
+          printf '%s  %s\n' "$digest" "$folder/$asset" | sha256sum --check
+      - name: Verify fresh installation and upgrade in a disposable Linux container
         env:
           IMAGE: ${{ matrix.image }}
           PACKAGE_MANAGER: ${{ matrix.package-manager }}
         run: |
           docker run --rm --init -i -e PACKAGE_MANAGER \
             -v "$RUNNER_TEMP/refract-native-linux-packages:/packages:ro" \
+            -v "$RUNNER_TEMP/refract-native-linux-upgrade:/upgrade:ro" \
             -v "$PWD/test/fixtures:/fixtures:ro" "$IMAGE" bash -euxo pipefail -s <<'LINUX'
           export DEBIAN_FRONTEND=noninteractive
           if [[ "$PACKAGE_MANAGER" = apt ]]; then
             apt-get update
             apt-get install -y --no-install-recommends desktop-file-utils x11-utils xauth xdotool xvfb
-            package=(/packages/Refract-*-native-linux-amd64.deb)
+            package=(/packages/Refract-*-linux-amd64.deb)
             test "$(dpkg-deb -f "${package[0]}" Package)" = refract
             test "$(dpkg-deb -f "${package[0]}" Architecture)" = amd64
             ! dpkg -s texlive-binaries
             apt-get install -y --no-install-recommends "${package[0]}"
           else
             pacman -Syu --noconfirm --needed desktop-file-utils vulkan-swrast xdotool xorg-xauth xorg-xprop xorg-server-xvfb
-            package=(/packages/Refract-*-native-archlinux-x64.pkg.tar.zst)
+            package=(/packages/Refract-*-archlinux-x64.pkg.tar.zst)
             bsdtar -xOf "${package[0]}" .PKGINFO | grep -Fx 'pkgname = refract'
             bsdtar -xOf "${package[0]}" .PKGINFO | grep -Fx 'arch = x86_64'
             ! pacman -Q texlive-bin
@@ -160,7 +226,7 @@ jobs:
             sleep 0.25
           done
           if [[ ! -s "$output.pdf" || ! -s "$output.synctex.gz" ]]; then
-            find "$XDG_CONFIG_HOME/Refract/projects" -maxdepth 3 -type f -print
+            find "$XDG_CONFIG_HOME/refract/projects" -maxdepth 3 -type f -print
             if [[ -f "$output.log" ]]; then tail -n 60 "$output.log"; fi
             echo 'The installed app did not generate its PDF and SyncTeX files' >&2
             exit 1
@@ -194,4 +260,39 @@ jobs:
           test "$installed_source" = "$fixture_source"
           command -v pdflatex
           command -v synctex
+
+          if [[ "$PACKAGE_MANAGER" = apt ]]; then
+            old=/upgrade/Refract-0.3.4-linux-amd64.deb
+            new=/upgrade/Refract-0.3.5-linux-amd64.deb
+            test "$(dpkg-deb -f "$old" Package)" = refract
+            test "$(dpkg-deb -f "$new" Package)" = refract
+            old_version=$(dpkg-deb -f "$old" Version)
+            new_version=$(dpkg-deb -f "$new" Version)
+            dpkg --compare-versions "$new_version" gt "$old_version"
+            apt-get install -y --no-install-recommends "$old"
+            test "$(dpkg-query -W -f='${Version}' refract)" = "$old_version"
+          else
+            old=/upgrade/Refract-0.3.4-archlinux-x64.pkg.tar.zst
+            new=/upgrade/Refract-0.3.5-archlinux-x64.pkg.tar.zst
+            read -r old_id old_version < <(pacman -Qp "$old")
+            read -r new_id new_version < <(pacman -Qp "$new")
+            test "$old_id" = refract
+            test "$new_id" = refract
+            test "$(vercmp "$new_version" "$old_version")" -gt 0
+            pacman -U --noconfirm "$old"
+            test "$(pacman -Q refract)" = "refract $old_version"
+          fi
+          test -x /opt/Refract/chrome-sandbox
+          test -f /usr/share/applications/refract.desktop
+          if [[ "$PACKAGE_MANAGER" = apt ]]; then
+            apt-get install -y --no-install-recommends "$new"
+            test "$(dpkg-query -W -f='${Version}' refract)" = "$new_version"
+          else
+            pacman -U --noconfirm "$new"
+            test "$(pacman -Q refract)" = "refract $new_version"
+          fi
+          test ! -e /opt/Refract/chrome-sandbox
+          test "$(readlink -f /usr/bin/refract)" = /opt/Refract/refract
+          desktop-file-validate /usr/share/applications/refract.desktop
+          cmp /fixtures/parity-document.tex "$profile/projects/2b98e215-1a9f-4f24-972b-000000000000/main.tex"
           LINUX

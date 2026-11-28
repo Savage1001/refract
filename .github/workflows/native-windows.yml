@@ -170,6 +170,7 @@ jobs:
           client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
           timeout 10s xdotool windowmove --sync "$client" 0 0
           xdotool windowsize "$client" 1440 900
+          timeout 10s xdotool windowfocus --sync "$client"
           xdotool mousemove --sync 0 0
           capture() {
             local screen=$1 expected_width=$2 expected_height=$3 width height colors sidebar_edge
@@ -206,7 +207,7 @@ jobs:
           }
           require_redraw() {
             local before=$1 after=$2 changed
-            changed=$(compare -metric AE "$output/$theme-$before.png" "$output/$theme-$after.png" null: 2>&1 || true)
+            read -r changed _ <<< "$(compare -metric AE "$output/$theme-$before.png" "$output/$theme-$after.png" null: 2>&1 || true)"
             if [[ ! $changed =~ ^[0-9]+$ ]] || (( changed < 10000 )); then
               echo "The $theme $after did not redraw: $changed changed pixels" >&2
               exit 1
@@ -217,7 +218,7 @@ jobs:
           sleep 0.4
           capture library-grid 1440 900
           require_redraw library-list library-grid
-          click 1078 187
+          click 999 187
           sleep 0.4
           capture settings 1440 900
           require_redraw library-grid settings

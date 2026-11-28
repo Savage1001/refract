@@ -45,6 +45,7 @@ mod file_move_view;
 mod file_search_view;
 mod file_transfer_view;
 mod file_trash_view;
+mod instance;
 mod outline_view;
 mod pdf_view;
 mod project_catalog_view;
@@ -193,6 +194,13 @@ enum Navigation {
     CloseFile(String),
     Projects,
     CloseWindow,
+    RestartForUpdate,
+}
+
+impl Navigation {
+    fn exits(&self) -> bool {
+        matches!(self, Self::CloseWindow | Self::RestartForUpdate)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -205,6 +213,12 @@ impl Library {
     fn new(projects_dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let path = projects_dir.clone();
         let load = cx.background_executor().spawn(async move {
+            if let Err(error) = refract_native::migrate_legacy_projects(&path) {
+                eprintln!(
+                    "Couldn’t import projects from the Refract prototype ({:?}).",
+                    error.kind()
+                );
+            }
             if let Err(error) = refract_native::legacy_profile::migrate_electron_profile(&path) {
                 eprintln!(
                     "Couldn’t import saved Refract preferences ({:?}).",
@@ -230,6 +244,7 @@ impl Library {
                         .with_file_name(".refract-native-workspace.json"),
                 );
                 library.set_projects(projects, cx);
+                library.resume_navigation(window, cx);
                 cx.notify();
             });
         })
@@ -991,9 +1006,10 @@ impl Library {
             && self.comment_write_task.is_none()
             && self.project_rename_task.is_none()
             && self.entry_write_task.is_none()
+            && (!self.preparing_exit() || self.ready_to_exit())
             && let Some(navigation) = self.navigation_after_save.take()
         {
-            let closing_window = matches!(navigation, Navigation::CloseWindow);
+            let closing_window = navigation.exits();
             self.request_navigation(navigation, window, cx);
             if closing_window {
                 return;
@@ -1002,6 +1018,18 @@ impl Library {
         if self.navigation_after_save.is_none() {
             self.start_queued_build(window, cx);
         }
+    }
+
+    fn preparing_exit(&self) -> bool {
+        self.navigation_after_save
+            .as_ref()
+            .is_some_and(Navigation::exits)
+    }
+
+    fn ready_to_exit(&self) -> bool {
+        self.projects.is_some()
+            && self.project_library_task.is_none()
+            && self.settings.ready_to_exit()
     }
 
     fn has_unsaved_changes(&self, navigation: &Navigation, cx: &App) -> bool {
@@ -1028,7 +1056,8 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.discard_prompt.is_some()
+        if self.preparing_exit()
+            || self.discard_prompt.is_some()
             || self.project_action_prompt.is_some()
             || self.entry_delete_prompt.is_some()
             || (self.rename_draft.is_some()
@@ -1036,9 +1065,12 @@ impl Library {
                 || self.entry_draft.is_some()
                 || self.move_draft.is_some()
                 || self.deleted_files_dialog.is_some())
-                && !matches!(navigation, Navigation::CloseWindow)
+                && !navigation.exits()
         {
             return;
+        }
+        if navigation.exits() {
+            self.settings.prepare_exit();
         }
         if (self.build_task.is_some() || self.sync_task.is_some())
             && !matches!(navigation, Navigation::CloseFile(_))
@@ -1053,7 +1085,7 @@ impl Library {
             || self.comment_write_task.is_some()
             || self.project_rename_task.is_some()
             || self.entry_write_task.is_some()
-            || self.project_library_task.is_some() && matches!(navigation, Navigation::CloseWindow)
+            || navigation.exits() && !self.ready_to_exit()
         {
             self.navigation_after_save = Some(navigation);
             return;
@@ -1093,12 +1125,23 @@ impl Library {
 
     fn navigate(&mut self, navigation: Navigation, window: &mut Window, cx: &mut Context<Self>) {
         if !matches!(&navigation, Navigation::CloseFile(_)) {
-            self.flush_chat_draft(cx);
+            let saved = self.flush_chat_draft(cx);
+            if !saved && navigation.exits() {
+                let _ = window.prompt(
+                    PromptLevel::Warning,
+                    "Refract could not finish closing safely.",
+                    Some("Refract couldn’t save your chat draft. Try again before closing."),
+                    &["Return to Refract"],
+                    cx,
+                );
+                return;
+            }
         }
         match navigation {
             Navigation::CloseFile(file) => self.close_file(&file, window, cx),
             Navigation::Projects => self.return_to_projects(window, cx),
             Navigation::CloseWindow => window.remove_window(),
+            Navigation::RestartForUpdate => self.launch_prepared_update(window, cx),
         }
     }
 
@@ -1257,7 +1300,12 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let width = f32::from(window.viewport_size().width);
-        let padding = (width * 0.05).clamp(24., 80.);
+        let narrow = width <= 800.;
+        let padding = if narrow {
+            18.
+        } else {
+            (width * 0.05).clamp(24., 80.)
+        };
         let columns = (((width - padding * 2.).min(1120.) + 16.) / 256.)
             .floor()
             .max(1.) as u16;
@@ -1267,8 +1315,8 @@ impl Library {
             .id("projects")
             .overflow_y_scroll()
             .px(px(padding))
-            .pt(px(86.))
-            .pb(px(44.))
+            .pt(px(if narrow { 66. } else { 86. }))
+            .pb(px(if narrow { 24. } else { 44. }))
             .text_size(px(13.))
             .on_click(cx.listener(|library, _, _, cx| library.dismiss_project_menu(cx)));
         let content = div()
@@ -1295,6 +1343,7 @@ impl Library {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .when(narrow, |header| header.flex_wrap().gap(px(16.)))
                     .mb(px(32.))
                     .child(
                         div()
@@ -2310,6 +2359,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Couldn’t locate the Refract profile. Set REFRACT_DATA_DIR to its folder.",
         )
     })?;
+    let Some(instance) = instance::Instance::claim(projects_dir.parent().unwrap_or(&projects_dir))?
+    else {
+        return Ok(());
+    };
+    let activations = instance.activations();
     let app = Application::new().with_assets(RefractAssets);
     app.run(move |cx: &mut App| {
         initialize_app(cx);
@@ -2333,34 +2387,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 library.update(cx, |library, cx| library.start_update_checks(window, cx));
                 let close_guard = library.downgrade();
                 window.on_window_should_close(cx, move |window, cx| {
-                    let Some(library) = close_guard.upgrade() else {
-                        return true;
-                    };
-                    library.update(cx, |library, cx| {
-                        library.flush_chat_draft(cx);
-                        library.cancel_assistant_turn();
-                        let close = Navigation::CloseWindow;
-                        if library.save_task.is_none()
-                            && library.save_queue.is_empty()
-                            && library.snapshot_task.is_none()
-                            && library.entry_write_task.is_none()
-                            && library.build_task.is_none()
-                            && library.sync_task.is_none()
-                            && library.project_library_task.is_none()
-                            && !library.snapshot_needed
-                            && !library.has_unsaved_changes(&close, cx)
-                        {
-                            return true;
-                        }
-                        library.request_navigation(close, window, cx);
-                        false
-                    })
+                    let guard = close_guard.clone();
+                    window.defer(cx, move |window, cx| {
+                        let _ = guard.update(cx, |library, cx| {
+                            library.request_navigation(Navigation::CloseWindow, window, cx);
+                        });
+                    });
+                    false
                 });
                 cx.new(|cx| Root::new(library, window, cx))
             },
         );
         match window {
-            Ok(_) => cx.activate(true),
+            Ok(window) => {
+                cx.activate(true);
+                cx.spawn(async move |cx| {
+                    while activations.wait().await {
+                        if window
+                            .update(cx, |_, window, cx| {
+                                cx.activate(true);
+                                window.activate_window();
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                        activations.acknowledge();
+                    }
+                })
+                .detach();
+            }
             Err(error) => {
                 eprintln!("Couldn’t open the Refract window: {error}");
                 std::process::exit(1);
@@ -2381,6 +2437,49 @@ mod tests {
         let bounds = cx.debug_bounds(selector).expect(selector);
         cx.simulate_click(bounds.center(), Modifiers::none());
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn closing_waits_for_project_writes(cx: &mut TestAppContext) {
+        let profile = tempfile::tempdir().unwrap();
+        let projects = profile.path().join("projects");
+        let marker = profile.path().join("write-completed");
+        let saved = marker.clone();
+        let (finish, wait) = async_channel::bounded::<()>(1);
+
+        cx.update(initialize_app);
+        let mut library = None;
+        let (_, view) = cx.add_window_view(|window, cx| {
+            let app = cx.new(|cx| Library::new(projects, window, cx));
+            library = Some(app.clone());
+            Root::new(app, window, cx)
+        });
+        let library = library.unwrap();
+        view.update(|window, app| {
+            library.update(app, |library, cx| {
+                library.entry_write_task = Some(cx.spawn_in(window, async move |library, cx| {
+                    wait.recv().await.unwrap();
+                    fs::write(saved, "Saved").unwrap();
+                    library
+                        .update_in(cx, |library, window, cx| {
+                            library.entry_write_task = None;
+                            library.resume_navigation(window, cx);
+                        })
+                        .unwrap();
+                }));
+                library.request_navigation(Navigation::CloseWindow, window, cx);
+                library.request_navigation(Navigation::Projects, window, cx);
+                assert!(library.preparing_exit());
+            });
+        });
+        cx.run_until_parked();
+        assert!(!marker.exists());
+        cx.update(|app| assert_eq!(app.windows().len(), 1));
+
+        finish.try_send(()).unwrap();
+        cx.run_until_parked();
+        assert_eq!(fs::read_to_string(marker).unwrap(), "Saved");
+        cx.update(|app| assert!(app.windows().is_empty()));
     }
 
     #[gpui::test]

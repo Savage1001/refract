@@ -49,6 +49,7 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
+          node --check build/scripts/benchmark-desktop-native.cjs
           npx --no-install install-electron
       - name: Build the native release executable
         run: cargo +stable build --locked --release --manifest-path native/Cargo.toml --bin refract-native

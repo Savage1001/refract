@@ -1,6 +1,8 @@
 use crate::{
     METADATA_LIMIT, Project, is_project_id, open_local_file, project_directory,
-    project_entries::checked_project_directory, read_local_file, stage_file, tex::LatexEngine,
+    project_entries::{checked_project_directory, rename_without_replacement},
+    read_local_file, stage_file,
+    tex::LatexEngine,
 };
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value};
@@ -12,8 +14,10 @@ use std::{
 use uuid::Uuid;
 
 mod archive;
+mod legacy;
 mod trash;
 pub use archive::ProjectArchive;
+pub use legacy::migrate_legacy_projects;
 pub use trash::{DeletedProject, list_deleted_projects, restore_deleted_project, trash_project};
 
 const DEFAULT_SOURCE: &str = r"\documentclass[11pt]{article}
@@ -99,18 +103,7 @@ fn publish_project(
         .tempdir_in(&root)?;
     prepare(stage.path())?;
     write_new_file(&stage.path().join(".refract.json"), &metadata)?;
-    let target = root.join(&project.id);
-    match target.symlink_metadata() {
-        Ok(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "Project identifier already exists",
-            ));
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    fs::rename(stage.path(), target)?;
+    rename_without_replacement(stage.path(), &root.join(&project.id))?;
     let _ = stage.keep();
     Ok(project)
 }

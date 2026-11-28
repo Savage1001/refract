@@ -28,7 +28,7 @@ const root = process.cwd();
 const description = 'LaTeX editor with a live PDF preview';
 const archiveOwner = ['--uid', '0', '--gid', '0', '--uname', 'root', '--gname', 'root'];
 
-function packageLinux(binary: string, destination: string): void {
+function packageLinux(binary: string, destination: string, releaseAssets: boolean): void {
   verifyX64Elf(binary);
   const manifest: Manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const { name, version, build } = manifest;
@@ -72,8 +72,9 @@ function packageLinux(binary: string, destination: string): void {
 
     // Keep the package and launcher names used by the Electron installers.
     // The TeX entries in the existing distribution manifest include SyncTeX.
-    const debName = `Refract-${version}-native-linux-amd64.deb`;
-    const archName = `Refract-${version}-native-archlinux-x64.pkg.tar.zst`;
+    const artifactPrefix = `${build.productName}-${version}${releaseAssets ? '' : '-native'}`;
+    const debName = `${artifactPrefix}-linux-amd64.deb`;
+    const archName = `${artifactPrefix}-archlinux-x64.pkg.tar.zst`;
     buildDebian(payload, stage, manifest, installPath, debName);
     buildArch(payload, stage, manifest, installPath, archName);
     for (const file of [debName, archName]) {
@@ -237,8 +238,9 @@ function payloadBytes(directory: string): number {
   }, 0);
 }
 
-const [binary, destination, extra] = process.argv.slice(2);
-if (process.platform !== 'linux' || !binary || !destination || extra !== undefined) {
-  throw new Error('On Linux, pass a built refract-native executable and an output directory');
+const [binary, destination, mode, ...extra] = process.argv.slice(2);
+const releaseAssets = mode === '--release-assets';
+if (process.platform !== 'linux' || !binary || !destination || (mode !== undefined && !releaseAssets) || extra.length > 0) {
+  throw new Error('On Linux, pass a built refract-native executable, an output directory, and optionally --release-assets');
 }
-packageLinux(resolve(binary), resolve(destination));
+packageLinux(resolve(binary), resolve(destination), releaseAssets);

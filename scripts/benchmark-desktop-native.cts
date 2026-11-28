@@ -1,10 +1,16 @@
-import { execFile, spawn } from 'node:child_process';
+import childProcess = require('node:child_process');
 import type { ChildProcess } from 'node:child_process';
-import { access, copyFile, mkdir, mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { arch, release, tmpdir } from 'node:os';
-import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
-import { promisify } from 'node:util';
+import filesystem = require('node:fs/promises');
+import os = require('node:os');
+import path = require('node:path');
+import timers = require('node:timers/promises');
+import util = require('node:util');
+
+const { execFile, spawn } = childProcess;
+const { access, copyFile, mkdir, mkdtemp, open, readdir, readFile, rm, writeFile } = filesystem;
+const { arch, release, tmpdir } = os;
+const { setTimeout: delay } = timers;
+const { promisify } = util;
 
 const run = promisify(execFile);
 const root = path.resolve(__dirname, '../..');

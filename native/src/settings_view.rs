@@ -1,4 +1,4 @@
-use super::{Library, Palette, deleted_projects_view::recovery_button};
+use super::{Library, Navigation, Palette, deleted_projects_view::recovery_button};
 use crate::account_settings_view::{AccountControls, AccountSection};
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, FontWeight, KeyDownEvent, SharedString, Subscription,
@@ -160,6 +160,17 @@ impl SettingsView {
         if let Some(dialog) = &self.dialog {
             *dialog.borrow_mut() = self.dialog_contents();
         }
+    }
+
+    pub(super) fn prepare_exit(&self) {
+        self.account.cancel_setup();
+        if let Some(work) = &self.work {
+            work.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub(super) fn ready_to_exit(&self) -> bool {
+        self.work.is_none() && self.save.is_none() && !self.account.busy()
     }
 }
 
@@ -335,7 +346,7 @@ impl Library {
     }
 
     fn change_update_track(&mut self, track: UpdateTrack, window: &Window, cx: &mut Context<Self>) {
-        if track == self.settings.track || self.settings.save.is_some() {
+        if self.preparing_exit() || track == self.settings.track || self.settings.save.is_some() {
             return;
         }
         let profile = self.settings.profile.clone();
@@ -363,6 +374,7 @@ impl Library {
                 library.settings.track_select.update(cx, |state, cx| {
                     state.set_selected_value(&selected, window, cx);
                 });
+                library.resume_navigation(window, cx);
                 cx.notify();
             });
         }));
@@ -390,7 +402,7 @@ impl Library {
     }
 
     fn check_updates(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.settings.work.is_some() || self.settings.save.is_some() {
+        if self.preparing_exit() || self.settings.work.is_some() || self.settings.save.is_some() {
             return;
         }
         let Some(updater) = self.settings.updater.clone() else {
@@ -440,7 +452,7 @@ impl Library {
                     });
                 }
                 let result = operation.await;
-                let _ = library.update_in(cx, |library, _, cx| {
+                let _ = library.update_in(cx, |library, window, cx| {
                     let settings = &mut library.settings;
                     settings.work = None;
                     settings.downloading = None;
@@ -453,6 +465,7 @@ impl Library {
                         Ok(None) => "You are up to date. Checking every 10 minutes.".into(),
                         Err(error) => format!("{error}. Updates will retry in 10 minutes."),
                     };
+                    library.resume_navigation(window, cx);
                     cx.notify();
                 });
             }),
@@ -461,14 +474,12 @@ impl Library {
     }
 
     fn restart_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.can_create_project()
-            || self.settings.account.busy()
-            || self.settings.work.is_some()
-            || self.settings.save.is_some()
-            || self.navigation_after_save.is_some()
-        {
-            return;
+        if self.settings.prepared.is_some() {
+            self.request_navigation(Navigation::RestartForUpdate, window, cx);
         }
+    }
+
+    pub(super) fn launch_prepared_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(installer) = self.settings.prepared.take() else {
             return;
         };

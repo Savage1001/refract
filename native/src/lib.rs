@@ -44,8 +44,8 @@ pub use project_entries::{
 };
 pub use project_management::{
     DeletedProject, ProjectArchive, ProjectSetting, create_project, duplicate_project,
-    list_deleted_projects, rename_project, restore_deleted_project, trash_project,
-    update_project_setting,
+    list_deleted_projects, migrate_legacy_projects, rename_project, restore_deleted_project,
+    trash_project, update_project_setting,
 };
 
 const METADATA_LIMIT: usize = 64 * 1024;

@@ -288,6 +288,14 @@ impl AccountControls {
         self.work.is_some()
     }
 
+    pub(super) fn cancel_setup(&self) {
+        if self.can_cancel
+            && let Some(work) = &self.work
+        {
+            work.cancel.store(true, Ordering::Release);
+        }
+    }
+
     pub(super) fn section(&self) -> AccountSection {
         AccountSection {
             selector: self.selector.clone(),
@@ -483,6 +491,9 @@ impl Library {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
+        if self.preparing_exit() {
+            return;
+        }
         let account = &mut self.settings.account;
         if account.work.is_some() {
             return;
@@ -552,7 +563,10 @@ impl Library {
                             Err(error) => Some(error.to_string()),
                         };
                         account.apply_status(status, window, cx);
-                        library.refresh_account_models(window, cx);
+                        if !library.preparing_exit() {
+                            library.refresh_account_models(window, cx);
+                        }
+                        library.resume_navigation(window, cx);
                         cx.notify();
                     });
                 }),

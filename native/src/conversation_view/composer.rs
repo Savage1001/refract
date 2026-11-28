@@ -83,17 +83,17 @@ impl Library {
         }));
     }
 
-    pub(crate) fn flush_chat_draft(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn flush_chat_draft(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(selection) = &mut self.selection else {
-            return;
+            return true;
         };
         let pane = &mut selection.conversation;
         let Some(composer) = &mut pane.composer else {
-            return;
+            return true;
         };
         composer.save_timer = None;
         if !composer.dirty {
-            return;
+            return true;
         }
         let draft = ConversationDraft {
             text: composer.input.read(cx).value().to_string(),
@@ -102,10 +102,14 @@ impl Library {
         };
         match save_conversation_draft(&self.projects_dir, &selection.project, &pane.active, &draft)
         {
-            Ok(()) => composer.dirty = false,
+            Ok(()) => {
+                composer.dirty = false;
+                true
+            }
             Err(error) => {
                 pane.error = Some(format!("Couldn’t save chat draft. {error}"));
                 cx.notify();
+                false
             }
         }
     }

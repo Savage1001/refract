@@ -37,7 +37,7 @@ function existsInRegistry(key: string, view: '32' | '64'): boolean {
     stdio: 'ignore',
     windowsHide: true,
   });
-  if (result.error || ![0, 1].includes(result.status)) {
+  if (result.error || (result.status !== 0 && result.status !== 1)) {
     throw new Error('Could not check the existing Refract registration', { cause: result.error });
   }
   return result.status === 0;
@@ -59,12 +59,17 @@ async function checkRunningGuard(
   }
 }
 
-async function verifyInstaller(output: string): Promise<void> {
+async function verifyInstaller(output: string, mode?: string, electronOutput?: string): Promise<void> {
   if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true'
     || process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
     throw new Error('The lifecycle test requires a disposable GitHub-hosted Windows runner.');
   }
-  if (!output) throw new Error('Pass the native installer output directory.');
+  const releaseAssets = mode === '--release-assets';
+  if (!output || (mode !== undefined && !releaseAssets)) {
+    throw new Error('Pass the native installer output directory, followed by optional --release-assets.');
+  }
+  const { APPDATA: appData, SystemRoot: systemRoot } = process.env;
+  if (!appData || !systemRoot) throw new Error('The Windows runner did not provide APPDATA and SystemRoot.');
 
   const manifest = JSON.parse(await fs.readFile(path.resolve(__dirname, '../../package.json'), 'utf8')) as {
     version: string;
@@ -92,12 +97,12 @@ async function verifyInstaller(output: string): Promise<void> {
   const localAppData = path.join(root, 'local');
   await fs.mkdir(localAppData);
   const env = { ...process.env, LOCALAPPDATA: localAppData };
-  const project = path.join(process.env.APPDATA, productName, 'projects', 'installer-fixture.tex');
-  await assert.rejects(fs.access(path.join(process.env.APPDATA, productName)), { code: 'ENOENT' });
+  const project = path.join(appData, productName, 'projects', 'installer-fixture.tex');
+  await assert.rejects(fs.access(path.join(appData, productName)), { code: 'ENOENT' });
   await fs.mkdir(path.dirname(project), { recursive: true });
   await fs.writeFile(project, 'Fixture project');
 
-  const installer = path.resolve(output, `${productName}-Native-Setup-${version}.exe`);
+  const installer = path.resolve(output, `${productName}${releaseAssets ? '' : '-Native'}-Setup-${version}.exe`);
   const executable = path.join(installDir, `${productName}.exe`);
   const fontLicense = path.join(installDir, 'Inter-OFL.txt');
   const installedVersion = path.join(installDir, 'refract-native-installed');
@@ -123,7 +128,7 @@ async function verifyInstaller(output: string): Promise<void> {
 
   console.log('Checking refusal to install or uninstall while Refract is running');
   const blocker = path.join(root, `${productName}.exe`);
-  await fs.copyFile(path.join(process.env.SystemRoot, 'System32', 'ping.exe'), blocker);
+  await fs.copyFile(path.join(systemRoot, 'System32', 'ping.exe'), blocker);
   await fs.copyFile(uninstaller, uninstallerCopy);
   const uninstallArgs = ['/S', `_?=${installDir}`];
   await checkRunningGuard(blocker, async () => {
@@ -159,9 +164,37 @@ async function verifyInstaller(output: string): Promise<void> {
   assert.equal(await fs.readFile(project, 'utf8'), 'Fixture project');
   assert.equal(await fs.readFile(unrelated, 'utf8'), 'Not owned by installer');
   assert.equal(await fs.readFile(texMarker, 'utf8'), 'Existing toolchain');
+
+  if (electronOutput) {
+    console.log('Upgrading the existing Electron installer to the native release asset');
+    const electronInstaller = path.resolve(electronOutput, `${productName} Setup ${version}.exe`);
+    const previousInstall = path.join(root, 'Installed Electron');
+    const archive = path.join(previousInstall, 'resources', 'app.asar');
+    const updateTrack = path.join(appData, productName, 'update-settings.json');
+    await fs.writeFile(updateTrack, '{"track":"beta"}\n');
+    assert.equal(await run(electronInstaller, ['/S', `/D=${previousInstall}`], env), 0);
+    verifyRegistration(true);
+    await fs.access(archive);
+
+    assert.equal(await run(installer, ['/S', '--updated'], env), 0);
+    verifyRegistration(true);
+    await fs.access(path.join(previousInstall, `${productName}.exe`));
+    assert.equal((await fs.readFile(path.join(previousInstall, 'refract-native-installed'), 'utf8')).trim(), version);
+    await assert.rejects(fs.access(archive), { code: 'ENOENT' });
+    assert.equal(await fs.readFile(project, 'utf8'), 'Fixture project');
+    assert.equal(await fs.readFile(updateTrack, 'utf8'), '{"track":"beta"}\n');
+    assert.equal(await fs.readFile(texMarker, 'utf8'), 'Existing toolchain');
+
+    await fs.copyFile(path.join(previousInstall, `Uninstall ${productName}.exe`), uninstallerCopy);
+    assert.equal(await run(uninstallerCopy, ['/S', `_?=${previousInstall}`], env), 0);
+    verifyRegistration(false);
+    assert.equal(await fs.readFile(project, 'utf8'), 'Fixture project');
+    assert.equal(await fs.readFile(updateTrack, 'utf8'), '{"track":"beta"}\n');
+    assert.equal(await fs.readFile(texMarker, 'utf8'), 'Existing toolchain');
+  }
 }
 
-verifyInstaller(process.argv[2]).catch((error: unknown) => {
+verifyInstaller(process.argv[2], process.argv[3], process.argv[4]).catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });

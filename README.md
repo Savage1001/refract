@@ -34,7 +34,7 @@ Download the `arm64` DMG for Apple silicon or the `x64` DMG for Intel Macs from 
 
 Refract discovers its toolchain under `/Library/Refract/dependencies`. Existing MacTeX remains available as a fallback. For a custom TeX installation, launch Refract with `REFRACT_TEX_BIN` set to the absolute path to its executable directory. Download new macOS builds from GitHub Releases. The in-app updater and managed Codex download are currently available on Windows.
 
-Run `npm run build:mac` on macOS to build an installer package for the host architecture. The **Release installers** workflow builds the Windows, macOS, and Linux installers from a specified release commit and saves them as artifacts.
+The [Release installers workflow](.github/workflows/release-installers.yml) builds the Rust and GPUI installers from the latest GitHub `main` commit and saves them as artifacts. It produces Windows x64, macOS Intel and Apple silicon, Debian and Ubuntu, and Arch Linux packages.
 
 ## Linux
 
@@ -49,45 +49,32 @@ Refract looks for `pdflatex` on `PATH` and uses the other TeX tools from the sam
 
 ### Linux package settings
 
-The Electron Builder settings live in [`package.json`](package.json) under `build.linux`, `build.deb`, and `build.pacman`. Both packages install the `refract` executable at `/opt/Refract/refract`, use `resources/logo.png` for the icon, and register the launcher in the `Office` category. The package maintainer is Savage1001, using the GitHub noreply address recorded in the build configuration.
+Both packages install the `refract` executable at `/opt/Refract/refract`, use `resources/logo.png` for the icon, and register the launcher in the `Office` category. Package construction and dependencies are defined in the [Linux packaging script](scripts/native-linux/package.cts).
 
-| Distribution | Electron Builder target | Release artifact | Build command |
-| --- | --- | --- | --- |
-| Debian and Ubuntu | `deb` | `dist/Refract-<version>-linux-amd64.deb` | `npm run build:linux -- --x64` |
-| Arch Linux | `pacman`, with Zstandard compression | `dist/Refract-<version>-archlinux-x64.pkg.tar.zst` | `npm run build:arch` |
+| Distribution | Release filename |
+| --- | --- |
+| Debian and Ubuntu | `Refract-<version>-linux-amd64.deb` |
+| Arch Linux | `Refract-<version>-archlinux-x64.pkg.tar.zst` |
 
-Run `npm ci` before building. The Arch build also requires `bsdtar` and `zstd` (`libarchive-tools` and `zstd` on the Ubuntu build runner).
-
-**Debian and Ubuntu dependencies**
-
-- Desktop libraries and tools include `libgtk-3-0`, `libnotify4`, `libnss3`, `libxss1`, `libxtst6`, `xdg-utils`, `libatspi2.0-0`, `libuuid1`, `libsecret-1-0`, `libgbm1`, and either `libasound2` or `libasound2t64`.
-- TeX and bibliography dependencies include `texlive-binaries` (including SyncTeX), `texlive-latex-base`, `texlive-latex-recommended`, `texlive-xetex`, `texlive-luatex`, `lmodern`, and `biber`.
-
-**Arch Linux dependencies**
-
-- Desktop libraries and tools include `alsa-lib`, `at-spi2-core`, `gtk3`, `libcups`, `libdrm`, `libnotify`, `libsecret`, `libxss`, `libxtst`, `mesa`, `nss`, and `xdg-utils`.
-- TeX and bibliography dependencies include `texlive-bin` (including SyncTeX), `texlive-latex`, `texlive-latexrecommended`, `texlive-xetex`, `texlive-luatex`, `texlive-fontsrecommended`, `otf-latin-modern`, `texlive-bibtexextra`, and `biber`.
-
-The [Release installers workflow](.github/workflows/release-installers.yml) verifies the Debian package on Ubuntu and the Arch package in a clean `archlinux:base` container. Both jobs check the package architecture, install the package with its dependencies, test LaTeX compilation and SyncTeX navigation headlessly with Xvfb, and confirm that removing Refract leaves TeX and SyncTeX available. The verified packages are uploaded as `linux-x64-installers` and `archlinux-x64-installer`.
+The [Linux package workflow](.github/workflows/native-linux-packages.yml) verifies fresh installation, LaTeX compilation, SyncTeX output, and upgrade from Electron in Debian, Ubuntu, and Arch containers. It verifies that removing Refract preserves projects and the TeX toolchain.
 
 ## Development on Windows
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution and verification guidance. Refract is available under the [MIT License](LICENSE); third-party components have their own licenses.
 
-Install Node.js 22.12 or newer, then run:
+Use stable Rust with the MSVC toolchain. See [native development and verification](native/README.md) for the build, tests, and platform setup.
 
 ```powershell
-npm ci
-$env:REFRACT_TEX_BIN = 'C:\path\to\TeXLive\bin\windows'
-powershell -ExecutionPolicy Bypass -File scripts/setup-tex.ps1
-npm start
+cargo run --locked --manifest-path native/Cargo.toml --bin refract-native
 ```
 
 Starting with 0.3.1-pre-release-2, the Windows installer automatically downloads checksum-verified TinyTeX and SyncTeX into `%LOCALAPPDATA%\Refract\dependencies` (internet access required). Refract discovers the complete toolchain automatically; no separate TeX installation or environment changes are required. Existing complete installations are reused, and uninstall preserves them. Setup failures return a nonzero installer exit code and write `setup-error.log` in that directory; rerun the installer to retry. For a custom, separately installed TeX Live or TinyTeX distribution, set `REFRACT_TEX_BIN` to its absolute Windows executable directory and restart Refract. This override takes priority over managed TeX. Additional document-specific packages can be installed separately. The Codex CLI and OpenCode CLI remain optional, separately installed and authenticated integrations.
 
 Refract packages contain no TeX distribution or replacement SyncTeX binary. Compilation remains local and can work offline with already installed packages. Electron and application dependencies retain their own notices. See [the distribution boundary and historical cleanup requirements](docs/third-party-review.md).
 
-To keep a runnable development build ready during longer work sessions, run `npm run build` after source changes. With dependencies, Electron, and the external TeX environment set up, `npx electron .` starts that build; `npm start` rebuilds and starts it. Generated files and dependencies are local to each checkout and are not committed.
+### Electron reference checks
+
+Install Node.js 22.12 or newer and run `npm ci` to use the Electron reference. `npm start` builds and starts that reference. Generated files and dependencies are local to each checkout.
 
 TypeScript sources are compiled into `build/` before starting, testing, or packaging. TypeScript checking runs during the build; stronger types and strict checking remain work to do.
 
@@ -115,7 +102,7 @@ To test compiler selection with a signed-in Codex CLI and a configured TeX insta
 
 The same setting runs `build/test/desktop.test.cjs` against the packaged executable. Select individual workflows with Node's `--test-name-pattern` option; tests that depend on development-only fixtures may not apply to a package. `build/test/packaged.test.cjs` also exercises packaged workflows when the build is present.
 
-Projects and chat history are stored in the application's Electron user-data directory. Back up that directory before removing the app. The Codex CLI retains its own session records separately.
+Projects and chat history continue to use the existing Refract profile. Back up that directory before removing the app. The Codex CLI retains its own session records separately.
 
 Refract requests Codex's workspace-write sandbox for both new and resumed conversations. It shows activity while the assistant works, saves recovery snapshots before and after an operation, and blocks conflicting changes to that project while it runs. Use Stop to request cancellation; partial changes remain in the project and are included in the recovery snapshot. If Codex has created a session before stopping or failing, Refract retains it for the next message. Closing the app waits for an active operation and its final snapshot. Recovery after forced termination still needs verification.
 

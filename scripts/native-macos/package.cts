@@ -4,7 +4,8 @@ import path = require('node:path');
 
 const repository = path.resolve(__dirname, '../..');
 const binaries = path.join(repository, 'native', 'target', 'release');
-const output = path.join(repository, 'dist', 'native-macos');
+const distributions = path.join(repository, 'dist');
+const output = path.join(distributions, 'native-macos');
 const helper = 'refract-install-dependencies';
 
 interface AppMetadata {
@@ -51,7 +52,17 @@ function minimumMacOS(binary: string, architecture: string): string {
   return minimum;
 }
 
-function packageApp(stage: string, metadata: AppMetadata, archiveArch: string, machArch: string): void {
+function packageReleaseImage(stage: string, pkg: string, stem: string): void {
+  const source = path.join(stage, 'image');
+  fs.mkdirSync(source);
+  fs.copyFileSync(pkg, path.join(source, `${stem}.pkg`));
+  const image = path.join(stage, `${stem}.dmg`);
+  run('/usr/bin/hdiutil', 'create', '-volname', 'Refract Installer', '-srcfolder', source, '-format', 'UDZO', image);
+  run('/usr/bin/hdiutil', 'verify', image);
+  fs.renameSync(image, path.join(distributions, `${stem}.dmg`));
+}
+
+function packageApp(stage: string, metadata: AppMetadata, archiveArch: string, machArch: string, releaseAssets: boolean): void {
   const { appId, productName } = metadata.build;
   const [shortVersion, prerelease] = metadata.version.split('-pre-release-');
   const bundleVersion = prerelease ? `${shortVersion}b${prerelease}` : shortVersion;
@@ -131,10 +142,15 @@ function packageApp(stage: string, metadata: AppMetadata, archiveArch: string, m
 `);
   const artifact = `${productName}-native-${metadata.version}-mac-${archiveArch}.pkg`;
   run('/usr/bin/productbuild', '--distribution', distribution, '--package-path', stage, path.join(stage, artifact));
-  fs.renameSync(path.join(stage, artifact), path.join(output, artifact));
+  const pkg = path.join(output, artifact);
+  fs.renameSync(path.join(stage, artifact), pkg);
+  if (releaseAssets) packageReleaseImage(stage, pkg, `${productName}-${metadata.version}-mac-${archiveArch}`);
 }
 
 function main(): void {
+  const args = process.argv.slice(2);
+  const releaseAssets = args.length === 1 && args[0] === '--release-assets';
+  if (args.length && !releaseAssets) throw new Error('Expected no arguments or --release-assets');
   if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) {
     throw new Error('Build the macOS package on an Apple Silicon or Intel Mac');
   }
@@ -146,7 +162,7 @@ function main(): void {
   fs.mkdirSync(output, { recursive: true });
   const stage = fs.mkdtempSync(path.join(output, 'stage-'));
   try {
-    packageApp(stage, metadata, process.arch, process.arch === 'arm64' ? 'arm64' : 'x86_64');
+    packageApp(stage, metadata, process.arch, process.arch === 'arm64' ? 'arm64' : 'x86_64', releaseAssets);
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }

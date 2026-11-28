@@ -1,4 +1,4 @@
-use super::{Library, Navigation, Palette};
+use super::{Library, Palette};
 use gpui::{
     Context, Entity, KeyDownEvent, PathPromptOptions, SharedString, Window, div, prelude::*, px,
     rgb, svg,
@@ -45,6 +45,7 @@ impl Library {
     ) -> impl IntoElement {
         div()
             .flex()
+            .flex_none()
             .items_center()
             .gap(px(6.))
             .child(self.settings_button(palette, cx))
@@ -59,17 +60,25 @@ impl Library {
             .track_focus(&self.import_focus)
             .rounded_md()
             .flex()
+            .flex_none()
             .items_center()
             .justify_center()
-            .size(px(36.))
-            .text_color(rgb(palette.text))
-            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Import").build(window, cx))
+            .h(px(36.))
+            .w(px(106.))
+            .mr(px(9.))
+            .gap(px(6.))
+            .text_size(px(13.))
+            .text_color(rgb(palette.muted))
+            .tooltip(|window, cx| {
+                gpui_component::tooltip::Tooltip::new("Import ZIP").build(window, cx)
+            })
             .child(
                 svg()
                     .path("refract/import.svg")
-                    .size(px(20.))
-                    .text_color(rgb(palette.text)),
+                    .size(px(18.))
+                    .text_color(rgb(palette.muted)),
             )
+            .child("Import ZIP")
             .when(!enabled, |button| button.opacity(0.5))
             .when(enabled, |button| {
                 button
@@ -123,12 +132,7 @@ impl Library {
             let _ = library.update_in(cx, |library, window, cx| {
                 library.project_library_task = None;
                 match inspected {
-                    Ok(Some(archive))
-                        if !matches!(
-                            library.navigation_after_save,
-                            Some(Navigation::CloseWindow)
-                        ) =>
-                    {
+                    Ok(Some(archive)) if !library.preparing_exit() => {
                         library.import_inspected_archive(archive, sequence, window, cx);
                     }
                     Ok(_) => {}
@@ -250,10 +254,7 @@ impl Library {
                     Ok(project)
                         if library.selection.is_none()
                             && library.project_open_sequence == sequence
-                            && !matches!(
-                                library.navigation_after_save,
-                                Some(Navigation::CloseWindow)
-                            ) =>
+                            && !library.preparing_exit() =>
                     {
                         library.open_project(project, window, cx);
                     }
