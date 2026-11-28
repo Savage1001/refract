@@ -2,13 +2,9 @@ use super::RasterizedPage;
 use crate::asset_image;
 use image::RgbaImage;
 use refract_native::pdf_raster::{PageRequest, portable};
-use std::{io, path::Path, sync::Arc};
+use std::{io, sync::Arc};
 
-pub(super) use portable::read_page_sizes;
-
-pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<RasterizedPage> {
-    build_frame(portable::render_file(path, request)?)
-}
+pub(super) use portable::read_page_sizes_from_bytes as read_page_sizes;
 
 pub(crate) fn render_asset_page(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<RasterizedPage> {
     raster_pdf_bytes(bytes, PageRequest::project_file(index))

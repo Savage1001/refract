@@ -5,7 +5,7 @@ use super::{
 use crate::account_settings_view::AccountAction;
 use gpui::{
     Context, Corner, Entity, FontWeight, Render, Subscription, Task, WeakEntity, Window, div,
-    prelude::*, px, rgb,
+    prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     Disableable, Selectable, Sizable,
@@ -243,7 +243,8 @@ impl ModelPicker {
             && (error.starts_with("Download the Codex runtime")
                 || error.starts_with("Sign in with ChatGPT")
                 || error.starts_with("Your ChatGPT session ended.")
-                || error.starts_with("ChatGPT plan usage was not granted."))
+                || error.starts_with("ChatGPT plan usage was not granted.")
+                || error == refract_native::managed_codex::UNSUPPORTED_PLATFORM)
     }
 
     pub(super) fn ready_to_send(&self) -> bool {
@@ -681,6 +682,15 @@ impl Library {
                     Button::new("model-picker-trigger")
                         .ghost()
                         .small()
+                        .child(
+                            svg()
+                                .path(match kind {
+                                    Provider::Codex => "refract/openai.svg",
+                                    Provider::OpenCode => "refract/opencode.svg",
+                                })
+                                .size(px(16.))
+                                .text_color(rgb(palette.text)),
+                        )
                         .child(
                             div()
                                 .text_size(px(12.))

@@ -355,7 +355,7 @@ pub(super) fn recovery_button(
     palette: Palette,
     enabled: bool,
     activate: impl Fn(&mut Window, &mut App) + Clone + 'static,
-) -> impl IntoElement {
+) -> impl IntoElement + Styled {
     let keyboard = activate.clone();
     div()
         .id(id)

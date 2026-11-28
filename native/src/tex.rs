@@ -33,6 +33,7 @@ const SYNC_FILES: [&str; 4] = [
 ];
 const BUILD_LOG_LIMIT: usize = 250_000;
 const THUMBNAIL_PDF_LIMIT: u64 = 64 * 1024 * 1024;
+const RETAINED_PDF_LIMIT: u64 = 128 * 1024 * 1024;
 
 const DRAFT_WRAPPER: &str = r"\PassOptionsToPackage{draft}{graphics}
 \PassOptionsToPackage{draft}{graphicx}
@@ -103,6 +104,24 @@ pub fn save_compiled_pdf(source: &Path, destination: &Path) -> io::Result<()> {
         io::copy(&mut pdf, file)?;
         Ok(())
     })
+}
+
+/// Keep a bounded, immutable copy of the output before the next build can replace it.
+pub fn read_compiled_pdf_for_preview(path: &Path) -> io::Result<Vec<u8>> {
+    let file = build_file(path)?;
+    let too_large = || invalid("The compiled PDF is too large to retain in the preview");
+    if file.metadata()?.len() > RETAINED_PDF_LIMIT {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    file.take(RETAINED_PDF_LIMIT + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > RETAINED_PDF_LIMIT {
+        return Err(too_large());
+    }
+    if !bytes.starts_with(b"%PDF-") {
+        return Err(invalid("Invalid PDF data"));
+    }
+    Ok(bytes)
 }
 
 pub fn compiled_pdf_for_thumbnail(

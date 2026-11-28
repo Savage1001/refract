@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:notify", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf", "pdf-links", "pdf-text", "windows-updater", "codex-account", "legacy-profile"]
+desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:notify", "dep:raw-window-handle", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf", "pdf-links", "pdf-text", "windows-updater", "codex-account", "legacy-profile"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 legacy-profile = ["dep:rusty-leveldb"]
 portable-pdf = ["dep:hayro"]
@@ -67,8 +67,9 @@ cc = { version = "1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 dunce = "=1.0.5"
+raw-window-handle = { version = "=0.6.2", optional = true }
 ring = { version = "=0.17.14", optional = true }
-windows = { version = "=0.61.3", optional = true, features = ["Data_Pdf", "Foundation", "Graphics_Imaging", "Storage_Streams", "Win32_System_WinRT"] }
+windows = { version = "=0.61.3", optional = true, features = ["Data_Pdf", "Foundation", "Graphics_Imaging", "Storage_Streams", "Wdk_System_SystemServices", "Win32_System_SystemInformation", "Win32_System_WinRT", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
 windows-sys = { version = "=0.61.2", features = ["Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 zeroize = { version = "=1.9.2", optional = true }
 

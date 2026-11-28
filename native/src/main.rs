@@ -56,7 +56,10 @@ mod project_thumbnails;
 mod settings_view;
 mod source_theme;
 mod synctex_view;
+mod tracked_label;
 mod version_view;
+#[cfg(windows)]
+mod window_chrome;
 mod workspace_layout_view;
 mod workspace_tools;
 use asset_view::{AssetPreview, LoadedFile, load_file};
@@ -1196,6 +1199,7 @@ impl Library {
 #[derive(Clone, Copy)]
 struct Palette {
     canvas: u32,
+    library: u32,
     sidebar: u32,
     surface: u32,
     text: u32,
@@ -1214,6 +1218,7 @@ impl Palette {
         match window.appearance() {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self {
                 canvas: 0x0a0a0a,
+                library: 0x000000,
                 sidebar: 0x000000,
                 surface: 0x111111,
                 text: 0xf5f5f5,
@@ -1227,6 +1232,7 @@ impl Palette {
             },
             _ => Self {
                 canvas: 0xfcfcfc,
+                library: 0xfcfcfc,
                 sidebar: 0xfafafa,
                 surface: 0xffffff,
                 text: 0x27272a,
@@ -1259,7 +1265,7 @@ impl Render for Library {
         };
         self.settings.refresh_dialog();
         let dialog = Root::render_dialog_layer(window, cx);
-        Self::find_shortcuts(cx)
+        let root = Self::find_shortcuts(cx)
             .id("library")
             .track_focus(&self.focus_handle)
             .capture_key_down(cx.listener(|library, event: &gpui::KeyDownEvent, _, cx| {
@@ -1282,13 +1288,25 @@ impl Render for Library {
             }))
             .size_full()
             .flex()
-            .bg(rgb(palette.canvas))
+            .bg(rgb(if self.selection.is_some() {
+                palette.canvas
+            } else {
+                palette.library
+            }))
             .text_color(rgb(palette.text))
             .text_size(px(13.))
             .line_height(gpui::DefiniteLength::Fraction(1.5))
             .child(view)
             .children(self.entry_menu_layer(palette, cx))
-            .children(dialog)
+            .when(self.settings.dialog_open(), |root| {
+                root.child(div().absolute().inset_0().bg(gpui::rgba(0x00000066)))
+            })
+            .children(dialog);
+        #[cfg(windows)]
+        let root = root
+            .relative()
+            .children(window_chrome::overlay(window, self.selection.is_none()));
+        root
     }
 }
 
@@ -1351,7 +1369,7 @@ impl Library {
                             .line_height(px(42.))
                             .mb(px(19.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Your projects"),
+                            .child(tracked_label::tracked_label("Your projects", -0.025)),
                     )
                     .child(self.project_library_actions(palette, cx)),
             )
@@ -1416,8 +1434,14 @@ impl Library {
                                             .line_height(px(16.5))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(rgb(palette.muted))
-                                            .child(div().flex_1().child("NAME"))
-                                            .child(div().w(px(210.)).child("CREATED")),
+                                            .child(
+                                                div().flex_1().child(tracked_label::tracked_label(
+                                                    "NAME", 0.07,
+                                                )),
+                                            )
+                                            .child(div().w(px(210.)).child(
+                                                tracked_label::tracked_label("CREATED", 0.07),
+                                            )),
                                     )
                                 })
                                 .child(
@@ -1425,11 +1449,9 @@ impl Library {
                                         .when(self.catalog.is_grid(), |list| {
                                             list.grid().grid_cols(columns).gap(px(16.)).pt(px(16.))
                                         })
-                                        .children(
-                                            projects.into_iter().map(|project| {
-                                                self.project_row(project, palette, cx)
-                                            }),
-                                        ),
+                                        .children(projects.into_iter().map(|project| {
+                                            self.project_row(project, !narrow, palette, cx)
+                                        })),
                                 )
                         })
                 }
@@ -1569,6 +1591,7 @@ impl Library {
     fn project_row(
         &self,
         project: &Project,
+        show_date: bool,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -1640,28 +1663,31 @@ impl Library {
             .child(
                 div()
                     .flex()
-                    .flex_1()
                     .min_w(px(0.))
-                    .when(grid, |body| body.pr(px(24.)))
+                    .when(grid, |body| body.w_full().flex_none().gap(px(16.)))
+                    .when(!grid, |body| body.flex_1().gap(px(14.)))
                     .items_center()
-                    .gap(px(14.))
                     .child(project_icon)
                     .child(
                         div()
                             .min_w(px(0.))
                             .flex()
+                            .flex_1()
                             .flex_col()
                             .child(
                                 div()
                                     .when(!grid, |name| name.truncate())
                                     .text_size(px(14.))
+                                    .line_height(px(21.))
                                     .font_weight(FontWeight(550.))
                                     .child(project.name.clone()),
                             )
                             .when(grid, |name| {
                                 name.child(
                                     div()
+                                        .mt(px(6.))
                                         .text_size(px(12.))
+                                        .line_height(px(18.))
                                         .text_color(rgb(palette.muted))
                                         .child("Open project →"),
                                 )
@@ -1670,12 +1696,23 @@ impl Library {
             )
             .child(
                 div()
-                    .when(!grid, |date| date.w(px(140.)).flex_none())
-                    .text_size(px(12.))
-                    .text_color(rgb(palette.muted))
-                    .children(date),
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(16.))
+                    .when(grid, |footer| footer.w_full().justify_between())
+                    .when(show_date, |footer| {
+                        footer.child(
+                            div()
+                                .when(!grid, |date| date.w(px(140.)).flex_none())
+                                .text_size(px(12.))
+                                .line_height(px(18.))
+                                .text_color(rgb(palette.muted))
+                                .children(date),
+                        )
+                    })
+                    .child(self.project_actions(project, palette, cx)),
             )
-            .child(self.project_actions(project, palette, cx))
             .on_click(cx.listener(move |library, _, window, cx| {
                 library.open_project(click_project.clone(), window, cx);
             }))
@@ -1716,7 +1753,7 @@ impl Library {
             .focus(move |style| style.bg(rgb(palette.selection)))
             .hover(move |style| style.bg(rgb(palette.selection)))
             .child(img(self.logo.clone()).size(px(28.)).rounded(px(7.)))
-            .child("Refract")
+            .child(tracked_label::tracked_label("Refract", -0.02))
             .on_click(cx.listener(|library, _, window, cx| {
                 library.request_navigation(Navigation::Projects, window, cx)
             }))
@@ -1750,6 +1787,16 @@ impl Library {
                             .px(px(18.))
                             .when(collapsed, |bar| bar.justify_center())
                             .when(!collapsed, |bar| bar.justify_between().child(home))
+                            .map(|bar| {
+                                #[cfg(windows)]
+                                let bar = bar.when(!collapsed && !window.is_fullscreen(), |bar| {
+                                    bar.child(window_chrome::drag_space(
+                                        px(WORKSPACE_HEADER_HEIGHT - 11.),
+                                        px(0.),
+                                    ))
+                                });
+                                bar
+                            })
                             .child(self.sidebar_collapse_button(palette, cx)),
                     )
                     .child(
@@ -1763,7 +1810,17 @@ impl Library {
                             .overflow_hidden()
                             .border_b_1()
                             .border_color(rgb(palette.border))
-                            .child(self.project_name_control(&selection.project, palette, cx)),
+                            .child(self.project_name_control(&selection.project, palette, cx))
+                            .map(|title| {
+                                #[cfg(windows)]
+                                let title = title.when(!window.is_fullscreen(), |title| {
+                                    title.child(window_chrome::drag_space(
+                                        px(WORKSPACE_HEADER_HEIGHT),
+                                        window_chrome::resize_strip(window),
+                                    ))
+                                });
+                                title
+                            }),
                     )
                     .child(
                         div()
@@ -1772,6 +1829,12 @@ impl Library {
                             .h_full()
                             .gap(px(6.))
                             .pr_3()
+                            .map(|actions| {
+                                #[cfg(windows)]
+                                let actions =
+                                    actions.pr(px(12.) + window_chrome::controls_width(window));
+                                actions
+                            })
                             .flex_none()
                             .border_b_1()
                             .border_color(rgb(palette.border))
@@ -1819,10 +1882,10 @@ impl Library {
                                             .pb_2()
                                             .px(px(10.))
                                             .text_size(px(11.))
-                                            .line_height(px(16.))
+                                            .line_height(px(16.5))
                                             .font_weight(FontWeight(650.))
                                             .text_color(rgb(palette.muted))
-                                            .child("PROJECT"),
+                                            .child(tracked_label::tracked_label("PROJECT", 0.12)),
                                     )
                                     .children(self.project_action_error.clone())
                                     .child(self.project_sidebar_tabs(selection, palette, cx))
@@ -1900,11 +1963,7 @@ impl Library {
             .flex_col()
             .p_4()
             .gap_2()
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Version history"),
-            );
+            .child(tool_heading("Versions"));
         let list = div()
             .id("version-list")
             .flex_1()
@@ -2291,7 +2350,15 @@ fn dialog_title(text: impl Into<SharedString>) -> impl gpui::IntoElement {
         .text_size(px(18.))
         .line_height(px(27.))
         .font_weight(FontWeight::SEMIBOLD)
-        .child(text.into())
+        .child(tracked_label::tracked_label(text, -0.025))
+}
+
+fn tool_heading(text: &'static str) -> impl gpui::IntoElement {
+    div()
+        .text_size(px(18.))
+        .line_height(px(27.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(tracked_label::tracked_label(text, -0.02))
 }
 
 fn collect_expanded_folders(entries: &[ProjectEntry], expanded: &mut HashSet<String>) {
@@ -2377,6 +2444,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let window = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                #[cfg(windows)]
+                titlebar: Some(window_chrome::titlebar_options()),
                 #[cfg(target_os = "linux")]
                 app_id: Some("refract".into()),
                 ..Default::default()

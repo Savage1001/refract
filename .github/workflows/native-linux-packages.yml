@@ -294,5 +294,6 @@ jobs:
           test ! -e /opt/Refract/chrome-sandbox
           test "$(readlink -f /usr/bin/refract)" = /opt/Refract/refract
           desktop-file-validate /usr/share/applications/refract.desktop
-          cmp /fixtures/parity-document.tex "$profile/projects/2b98e215-1a9f-4f24-972b-000000000000/main.tex"
+          upgraded_source=$(sha256sum < "$profile/projects/2b98e215-1a9f-4f24-972b-000000000000/main.tex")
+          test "$upgraded_source" = "$fixture_source"
           LINUX

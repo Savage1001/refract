@@ -2,8 +2,8 @@ use super::{
     Library, Palette, ProjectEntry, Selection, monospace_font, workspace_tools::tool_button,
 };
 use gpui::{
-    Context, Entity, FontWeight, HighlightStyle, SharedString, StyledText, Subscription, Window,
-    div, prelude::*, px, rgb,
+    Context, Entity, HighlightStyle, SharedString, StyledText, Subscription, Window, div,
+    prelude::*, px, rgb,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use refract_native::tex::diagnostics::{DiagnosticLevel, diagnostic_level, diagnostic_source};
@@ -152,11 +152,7 @@ impl Library {
             .flex_col()
             .p_4()
             .gap_2()
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Build output"),
-            )
+            .child(crate::tool_heading("Build output"))
             .child(div().text_color(rgb(palette.muted)).child(summary))
             .child(diagnostics)
             .children(

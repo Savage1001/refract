@@ -29,7 +29,7 @@ impl Library {
             return;
         };
         let preview = &mut selection.build.preview;
-        if preview.loading_document || preview.layout.pages.is_empty() {
+        if preview.layout.pages.is_empty() {
             return;
         }
         let index = preview
@@ -175,7 +175,6 @@ impl Library {
     pub(crate) fn pdf_controls(
         &self,
         view: &PdfViewport,
-        ready: bool,
         pane_width: f32,
         palette: Palette,
         cx: &Context<Self>,
@@ -184,7 +183,6 @@ impl Library {
         if count == 0 {
             return None;
         }
-        let ready = ready && !view.loading_document;
         let narrow = pane_width <= 650.;
         let show_labels = pane_width > 575.;
         let group_margin = if narrow { 6. } else { 12. };
@@ -222,7 +220,7 @@ impl Library {
                             pdf_button(
                                 "pdf-prev",
                                 "Previous page",
-                                ready && view.page > 0,
+                                view.page > 0,
                                 palette,
                                 cx,
                                 |library, window, cx| library.change_pdf_page(-1, window, cx),
@@ -235,14 +233,14 @@ impl Library {
                                 .items_center()
                                 .justify_center()
                                 .min_w(px(40.))
-                                .child(self.pdf_page_number(view, ready, palette, cx))
+                                .child(self.pdf_page_number(view, palette, cx))
                                 .child(format!(" / {count}")),
                         )
                         .child(
                             pdf_button(
                                 "pdf-next",
                                 "Next page",
-                                ready && view.page < count - 1,
+                                view.page < count - 1,
                                 palette,
                                 cx,
                                 |library, window, cx| library.change_pdf_page(1, window, cx),
@@ -263,7 +261,7 @@ impl Library {
                             pdf_button(
                                 "pdf-zoom-out",
                                 "Zoom out",
-                                ready && zoom > 25,
+                                zoom > 25,
                                 palette,
                                 cx,
                                 |library, window, cx| library.step_pdf_zoom(-25, window, cx),
@@ -281,7 +279,7 @@ impl Library {
                             pdf_button(
                                 "pdf-zoom-in",
                                 "Zoom in",
-                                ready && zoom < 250,
+                                zoom < 250,
                                 palette,
                                 cx,
                                 |library, window, cx| library.step_pdf_zoom(25, window, cx),
@@ -300,7 +298,7 @@ impl Library {
                             pdf_button(
                                 "pdf-fit-width",
                                 "Fit PDF to width",
-                                ready,
+                                true,
                                 palette,
                                 cx,
                                 |library, window, cx| {
@@ -315,7 +313,7 @@ impl Library {
                             pdf_button(
                                 "pdf-fit-page",
                                 "Fit PDF page to view",
-                                ready,
+                                true,
                                 palette,
                                 cx,
                                 Self::fit_pdf_page,
@@ -331,7 +329,6 @@ impl Library {
     fn pdf_page_number(
         &self,
         view: &PdfViewport,
-        ready: bool,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -363,7 +360,7 @@ impl Library {
         pdf_button(
             "pdf-current-page",
             "Go to page",
-            ready,
+            true,
             palette,
             cx,
             Self::edit_pdf_page,
@@ -372,10 +369,9 @@ impl Library {
         .text_center()
         .text_size(px(12.))
         .child((view.page + 1).to_string())
-        .when_some(
-            view.page_focus.as_ref().filter(|_| ready),
-            |button, focus| button.track_focus(focus),
-        )
+        .when_some(view.page_focus.as_ref(), |button, focus| {
+            button.track_focus(focus)
+        })
         .into_any_element()
     }
 }

@@ -55,9 +55,9 @@ jobs:
         run: |
           node --experimental-strip-types scripts/native-windows/package.cts native/target/release/refract-native.exe native/target/release/refract-install-dependencies.exe native/target/installer/windows-release-assets --release-assets
       - name: Package the existing Electron application for the upgrade test
-        run: npm run build:installer -- --publish never -c.directories.output=native/target/installer/electron-baseline
+        run: npm run build:installer -- --publish never
       - name: Verify silent install, upgrade, and uninstall
-        run: node --experimental-strip-types scripts/native-windows/verify.cts native/target/installer/windows-release-assets --release-assets native/target/installer/electron-baseline
+        run: node --experimental-strip-types scripts/native-windows/verify.cts native/target/installer/windows-release-assets --release-assets dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.release-ref == ''
         with:

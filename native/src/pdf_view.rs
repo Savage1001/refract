@@ -7,11 +7,11 @@ use gpui_component::tooltip::Tooltip;
 use refract_native::{
     pdf_raster::{
         MAX_RASTER_PIXELS, PageRequest, PageSize,
-        links::{LinkTarget, PdfLink, read_document_links},
+        links::{LinkTarget, PdfLink, document_links_from_bytes},
         stack::{INSET, PageSlot, PageStack, per_page_budget},
-        text::{TextPage, read_page_text},
+        text::{TextPage, page_text_from_bytes},
     },
-    tex::synctex::PdfPosition,
+    tex::{read_compiled_pdf_for_preview, synctex::PdfPosition},
 };
 use std::{cell::Cell, collections::BTreeMap, io, ops::Range, path::Path, rc::Rc, sync::Arc};
 
@@ -55,7 +55,10 @@ pub(super) struct PdfViewport {
     viewport: Size<Pixels>,
     measurement: Rc<Cell<Option<(Point<Pixels>, Size<Pixels>)>>>,
     generation: u64,
-    request_document: bool,
+    document: Option<Arc<Vec<u8>>>,
+    pending_document: Option<Arc<Vec<u8>>>,
+    document_generation: u64,
+    committed_document_generation: u64,
     loading_document: bool,
     error: Option<String>,
     last_sync: Option<PdfPosition>,
@@ -74,27 +77,44 @@ pub(super) struct RasterizedPage {
 }
 
 enum PdfWork {
-    ReadDocument,
-    RenderPage(PageRequest, bool),
+    ReadDocument(Arc<Vec<u8>>),
+    RenderPage(Arc<Vec<u8>>, PageRequest, bool),
 }
 
 enum PdfUpdate {
-    Document(io::Result<Vec<PageSize>>, Vec<Vec<PdfLink>>),
+    Document(Arc<Vec<u8>>, io::Result<Vec<PageSize>>, Vec<Vec<PdfLink>>),
     Page(PageRequest, io::Result<RasterizedPage>, Option<TextPage>),
 }
 
+pub(super) fn capture_built_pdf(path: &Path) -> io::Result<Arc<Vec<u8>>> {
+    read_compiled_pdf_for_preview(path).map(Arc::new)
+}
+
 impl Library {
-    pub(super) fn load_built_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn load_built_pdf(
+        &mut self,
+        result: io::Result<Arc<Vec<u8>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(selection) = &mut self.selection {
-            let available = selection.build.pdf().is_some();
             let preview = &mut selection.build.preview;
-            preview.generation = preview.generation.wrapping_add(1);
-            preview.request_document = available;
-            preview.loading_document = available;
-            preview.error = None;
-            preview.page_edit = None;
-            if available && preview.page_focus.is_none() {
-                preview.page_focus = Some(cx.focus_handle().tab_index(5).tab_stop(true));
+            preview.document_generation = preview.document_generation.wrapping_add(1);
+            match result {
+                Ok(bytes) => {
+                    preview.pending_document = Some(bytes);
+                    preview.loading_document = true;
+                    preview.error = None;
+                    if preview.page_focus.is_none() {
+                        preview.page_focus = Some(cx.focus_handle().tab_index(5).tab_stop(true));
+                    }
+                }
+                Err(error) => {
+                    preview.pending_document = None;
+                    preview.loading_document = false;
+                    preview.error = Some(error.to_string());
+                    preview.clear_sync();
+                }
             }
         }
         self.start_pdf_frame(window, cx);
@@ -109,45 +129,47 @@ impl Library {
     }
 
     fn start_pdf_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pdf_task.is_some() || self.build_task.is_some() {
+        if self.pdf_task.is_some() {
             return;
         }
         let visible = self.pdf_is_visible(window);
         let Some(selection) = &mut self.selection else {
             return;
         };
-        let Some(path) = selection.build.pdf().map(Path::to_owned) else {
-            return;
-        };
         let preview = &mut selection.build.preview;
-        let work = if std::mem::take(&mut preview.request_document) {
-            PdfWork::ReadDocument
+        let work = if let Some(document) = preview.pending_document.take() {
+            PdfWork::ReadDocument(document)
         } else if visible
-            && !preview.loading_document
+            && let Some(document) = preview.document.as_ref()
             && let Some(index) = preview.next_visible_page()
         {
             let needs_text = !preview.text_pages.contains_key(&index);
-            PdfWork::RenderPage(preview.request(index, window.scale_factor()), needs_text)
+            PdfWork::RenderPage(
+                document.clone(),
+                preview.request(index, window.scale_factor()),
+                needs_text,
+            )
         } else {
             return;
         };
         let sequence = self.project_open_sequence;
         let generation = preview.generation;
+        let document_generation = preview.document_generation;
         let work = cx.background_executor().spawn(async move {
             match work {
-                PdfWork::ReadDocument => {
-                    let sizes = read_page_sizes(&path);
+                PdfWork::ReadDocument(document) => {
+                    let sizes = read_page_sizes(document.clone());
                     let links = if sizes.is_ok() {
-                        read_document_links(&path).unwrap_or_default()
+                        document_links_from_bytes(document.clone()).unwrap_or_default()
                     } else {
                         Vec::new()
                     };
-                    PdfUpdate::Document(sizes, links)
+                    PdfUpdate::Document(document, sizes, links)
                 }
-                PdfWork::RenderPage(request, needs_text) => {
-                    let image = render_page(&path, request);
+                PdfWork::RenderPage(document, request, needs_text) => {
+                    let image = raster_pdf_bytes(document.clone(), request);
                     let text = (needs_text && image.is_ok())
-                        .then(|| read_page_text(&path, request.index).unwrap_or_default());
+                        .then(|| page_text_from_bytes(document, request.index).unwrap_or_default());
                     PdfUpdate::Page(request, image, text)
                 }
             }
@@ -159,16 +181,21 @@ impl Library {
                 let visible = library.pdf_is_visible(window);
                 if let Some(selection) = &mut library.selection
                     && library.project_open_sequence == sequence
-                    && selection.build.pdf().is_some()
-                    && selection.build.preview.generation == generation
                 {
                     let pane = &mut selection.build.preview;
                     match update {
-                        PdfUpdate::Document(sizes, links) => {
-                            pane.set_document(sizes, window);
-                            pane.links = links;
+                        PdfUpdate::Document(document, sizes, links)
+                            if pane.document_generation == document_generation =>
+                        {
+                            if pane.set_document(sizes, window) {
+                                pane.document = Some(document);
+                                pane.committed_document_generation = document_generation;
+                                pane.links = links;
+                            }
                         }
-                        PdfUpdate::Page(request, frame, text) if visible => {
+                        PdfUpdate::Page(request, frame, text)
+                            if visible && pane.generation == generation =>
+                        {
                             if let Some(text) = text
                                 && pane.visible.contains(&(request.index as usize))
                             {
@@ -176,7 +203,7 @@ impl Library {
                             }
                             pane.accept_page(request, frame);
                         }
-                        PdfUpdate::Page(..) => {}
+                        _ => {}
                     }
                 }
                 library.start_pdf_frame(window, cx);
@@ -201,13 +228,11 @@ impl Library {
             }
             if preview.viewport != viewport {
                 preview.viewport = viewport;
-                if !preview.loading_document {
-                    let zoom = match preview.zoom {
-                        Zoom::FitPage(_) => preview.fit_page_zoom().unwrap_or(preview.zoom),
-                        zoom => zoom,
-                    };
-                    preview.resize_pages(zoom, window);
-                }
+                let zoom = match preview.zoom {
+                    Zoom::FitPage(_) => preview.fit_page_zoom().unwrap_or(preview.zoom),
+                    zoom => zoom,
+                };
+                preview.resize_pages(zoom, window);
             }
             preview.update_visible(window);
         }
@@ -297,13 +322,8 @@ impl PdfViewport {
         }
     }
 
-    fn set_document(&mut self, result: io::Result<Vec<PageSize>>, window: &mut Window) {
+    fn set_document(&mut self, result: io::Result<Vec<PageSize>>, window: &mut Window) -> bool {
         self.loading_document = false;
-        self.text_pages.clear();
-        self.text_selection = None;
-        self.release(window);
-        self.failed_pages.clear();
-        self.visible = 0..0;
         if self.viewport.height <= px(0.) || self.viewport.width <= px(0.) {
             self.viewport = size(
                 px(PDF_PANE_WIDTH),
@@ -322,17 +342,24 @@ impl PdfViewport {
         });
         match document {
             Ok((sizes, layout)) => {
+                self.generation = self.generation.wrapping_add(1);
+                self.text_pages.clear();
+                self.text_selection = None;
+                self.release(window);
+                self.failed_pages.clear();
+                self.error = None;
                 let old_offset = self.scroll.offset();
                 self.sizes = sizes;
                 self.layout = layout;
                 self.scroll_to(-f32::from(old_offset.x), -f32::from(old_offset.y));
                 self.apply_sync_jump(window);
                 self.update_visible(window);
+                true
             }
             Err(error) => {
-                self.sizes.clear();
-                self.layout = PageStack::default();
+                self.clear_sync();
                 self.error = Some(error.to_string());
+                false
             }
         }
     }
@@ -473,12 +500,15 @@ impl PdfViewport {
         &self,
         status: Option<&'static str>,
         palette: Palette,
-        ready: bool,
+        sync_ready: bool,
         cx: &Context<Library>,
     ) -> impl IntoElement {
         let scroll = self.scroll.clone();
         let measurement = self.measurement.clone();
         let view = cx.weak_entity();
+        let sync_ready = sync_ready
+            && !self.loading_document
+            && self.document_generation == self.committed_document_generation;
         div()
             .flex()
             .flex_col()
@@ -546,7 +576,7 @@ impl PdfViewport {
                                             .unwrap_or_default(),
                                         self,
                                         self.last_sync,
-                                        ready && !self.loading_document,
+                                        sync_ready,
                                         palette,
                                         cx,
                                     )
@@ -573,7 +603,7 @@ fn render_page_slot(
     links: &[PdfLink],
     preview: &PdfViewport,
     last_sync: Option<PdfPosition>,
-    ready: bool,
+    sync_ready: bool,
     palette: Palette,
     cx: &Context<Library>,
 ) -> impl IntoElement + ParentElement {
@@ -596,7 +626,7 @@ fn render_page_slot(
                 .h(px(frame.height))
         }))
         .children(selection::highlights(preview, index, slot))
-        .when(ready, |image| {
+        .when(preview.document.is_some(), |image| {
             let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
             let layout = bounds.clone();
             let selection_bounds = bounds.clone();
@@ -611,7 +641,8 @@ fn render_page_slot(
                     MouseButton::Left,
                     cx.listener(move |library, event: &MouseDownEvent, window, cx| {
                         let bounds = bounds.get();
-                        if event.click_count == 2
+                        if sync_ready
+                            && event.click_count == 2
                             && bounds.size.width > px(0.)
                             && bounds.size.height > px(0.)
                         {
@@ -651,7 +682,9 @@ fn render_page_slot(
                             }
                         } else if event.keystroke.key == "escape" {
                             library.clear_pdf_selection(cx);
-                        } else if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                        } else if sync_ready
+                            && (event.keystroke.key == "enter" || event.keystroke.key == "space")
+                        {
                             let position = last_sync
                                 .filter(|position| position.page == page)
                                 .unwrap_or(PdfPosition {
@@ -731,7 +764,7 @@ impl Library {
 #[cfg(windows)]
 mod windows_pdf;
 #[cfg(windows)]
-use windows_pdf::{read_page_sizes, render_page};
+use windows_pdf::read_page_sizes;
 
 #[cfg(windows)]
 pub(super) use windows_pdf::{raster_pdf_bytes, render_asset_page};
@@ -739,9 +772,9 @@ pub(super) use windows_pdf::{raster_pdf_bytes, render_asset_page};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod portable_pdf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(super) use portable_pdf::{raster_pdf_bytes, render_asset_page};
+use portable_pdf::read_page_sizes;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use portable_pdf::{read_page_sizes, render_page};
+pub(super) use portable_pdf::{raster_pdf_bytes, render_asset_page};
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub(super) fn render_asset_page(_: Arc<Vec<u8>>, _: u32) -> io::Result<RasterizedPage> {
@@ -760,15 +793,7 @@ pub(super) fn raster_pdf_bytes(_: Arc<Vec<u8>>, _: PageRequest) -> io::Result<Ra
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn render_page(_: &Path, _: PageRequest) -> io::Result<RasterizedPage> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "Inline PDF rendering is unavailable on this platform.",
-    ))
-}
-
-#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn read_page_sizes(_: &Path) -> io::Result<Vec<PageSize>> {
+fn read_page_sizes(_: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Inline PDF rendering is unavailable on this platform.",
@@ -778,8 +803,159 @@ fn read_page_sizes(_: &Path) -> io::Result<Vec<PageSize>> {
 #[cfg(all(test, feature = "ui-tests"))]
 mod tests {
     use super::*;
-    use crate::asset_image;
-    use gpui::TestAppContext;
+    use crate::{asset_image, initialize_app};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui_component::Root;
+    use refract_native::{Project, create_project, tex::BuildResult};
+    use std::{fs, io::Write, sync::atomic::AtomicBool};
+
+    fn two_page_pdf() -> Vec<u8> {
+        let text = "BT /F1 12 Tf 30 390 Td (Retained text) Tj ET\n";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".into(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 450] /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R /Annots [7 0 R] >>".into(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 450] /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R >>".into(),
+            format!("<< /Length {} >>\nstream\n{text}endstream", text.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+            "<< /Type /Annot /Subtype /Link /Rect [100 180 200 240] /Dest [4 0 R /Fit] >>".into(),
+        ];
+        let mut bytes = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            writeln!(bytes, "{} 0 obj\n{object}\nendobj", index + 1).unwrap();
+        }
+        let xref = bytes.len();
+        writeln!(bytes, "xref\n0 8\n0000000000 65535 f ").unwrap();
+        for offset in offsets {
+            writeln!(bytes, "{offset:010} 00000 n ").unwrap();
+        }
+        writeln!(
+            bytes,
+            "trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+        )
+        .unwrap();
+        bytes
+    }
+
+    fn compile_then_fail(
+        projects: &Path,
+        project: &Project,
+        _: &AtomicBool,
+    ) -> io::Result<BuildResult> {
+        let folder = projects.join(&project.id);
+        let pdf = folder.join(".refract-build/main.pdf");
+        let broken = fs::read_to_string(folder.join("main.tex"))?.contains("Broken build");
+        if broken {
+            fs::remove_file(&pdf)?;
+        } else {
+            fs::create_dir_all(pdf.parent().unwrap())?;
+            fs::write(&pdf, two_page_pdf())?;
+        }
+        Ok(BuildResult {
+            arguments: Vec::new(),
+            exit_code: Some(if broken { 1 } else { 0 }),
+            log: "Fixture build output".into(),
+            pdf: (!broken).then_some(pdf),
+        })
+    }
+
+    fn click(cx: &mut VisualTestContext, id: &'static str) {
+        cx.refresh().unwrap();
+        let bounds = cx.debug_bounds(id).expect(id);
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn failed_recompile_keeps_the_previous_pdf_interactive(cx: &mut TestAppContext) {
+        let profile = tempfile::tempdir().unwrap();
+        let projects = profile.path().join("projects");
+        let project = create_project(&projects, "Retained preview").unwrap();
+        let output = projects.join(&project.id).join(".refract-build/main.pdf");
+        cx.update(initialize_app);
+        let mut library = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| Library::new(projects, window, cx));
+            library = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let library = library.unwrap();
+        cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                view.test_compiler = Some(compile_then_fail);
+                view.open_project(project, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            let view = library.read(app);
+            assert!(view.selection.as_ref().unwrap().build.pdf().is_some());
+            view.active_editor()
+                .unwrap()
+                .update(app, |input, cx| input.focus(window, cx));
+        });
+        cx.simulate_input("Broken build");
+        cx.run_until_parked();
+        assert!(!output.exists());
+        cx.update(|_, app| {
+            let build = &library.read(app).selection.as_ref().unwrap().build;
+            assert!(build.pdf().is_none());
+            assert_eq!(build.preview.layout.pages.len(), 2);
+            assert_eq!(build.preview.links[0][0].target, LinkTarget::Page(1));
+        });
+
+        click(cx, "pdf-next");
+        let (first, last) = cx.update(|_, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().build.preview;
+            assert_eq!(pane.page, 1);
+            assert!(pane.frames.contains_key(&1));
+            let text = pane.text_pages.get(&1).unwrap();
+            assert_eq!(text.text(0..text.len()), "Retained text");
+            let first = text.bounds(0..1).next().unwrap();
+            let last = text.bounds(text.len() - 1..text.len()).next().unwrap();
+            (first, last)
+        });
+        let page = cx.debug_bounds("pdf-page-1").unwrap();
+        let glyph = |x: f32, y: f32| page.origin + point(page.size.width * x, page.size.height * y);
+        let start = glyph(
+            first.left * 0.75 + first.right * 0.25,
+            (first.top + first.bottom) * 0.5,
+        );
+        let end = glyph(
+            last.left * 0.25 + last.right * 0.75,
+            (last.top + last.bottom) * 0.5,
+        );
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        });
+        cx.update(|_, app| {
+            assert_eq!(
+                app.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("Retained text")
+            );
+        });
+        click(cx, "pdf-zoom-in");
+        cx.update(|_, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().build.preview;
+            assert_eq!(pane.zoom.percentage(), 125);
+            assert!(!pane.frames.is_empty());
+        });
+        click(cx, "pdf-prev");
+        click(cx, "pdf-link-0");
+        cx.update(|_, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().build.preview;
+            assert_eq!(pane.page, 1);
+        });
+    }
 
     #[gpui::test]
     fn page_navigation_centers_source_jumps_and_releases_offscreen_bitmaps(

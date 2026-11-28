@@ -67,7 +67,7 @@ The native package workflows build Windows x64, macOS Intel and Apple Silicon, D
 
 The current Electron app is the reference for appearance and behavior. The Native preview workflow runs the existing renderer's interaction tests and uploads fixture screenshots of the library, settings, and workspace in light and dark themes, including the compact workspace layout. Run `node build/scripts/capture-electron-parity.cjs <output-folder>` after `npm run build` to capture the same reference on a machine with Microsoft Edge.
 
-The Linux job captures the native library, Settings, and workspace in both themes in private Xvfb displays. Download the `refract-native-reference` and `refract-electron-reference` artifacts from the same run to compare the 1440 × 900 library and workspace views and the 900 × 650 compact workspace.
+The Linux job captures the native library, Settings, and workspace in both themes in private Xvfb displays. Compare `refract-native-reference` with `refract-electron-reference-linux` from the same run to keep the operating system and its available fonts consistent. The reference artifacts include the computed font settings and bounds for key labels. Both runs capture the 1440 × 900 library and workspace views and the 900 × 650 compact workspace.
 
 Compare views at the same viewport, scale, and theme. Include app chrome, keyboard and pointer interaction, focus, accessibility, and responsive layouts. Verify project and file management, editing, PDF preview and SyncTeX in both directions, versions and comments, chats and settings, and installation and updates. Confirm that existing projects and settings open in place on Windows, macOS, and Linux.
 

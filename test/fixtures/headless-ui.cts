@@ -7,9 +7,10 @@ interface ReviewProject { id:string; name:string; rootFile:string; created:strin
 interface ReviewComment { id:string; file:string; quote:string; text:string; resolved:boolean; created:string; replies:{text:string}[] }
 interface ReviewState { projects:ReviewProject[]; files:Record<string,string>; comments:ReviewComment[]; counters:Record<string,number>; delay:number }
 interface ReviewWindow extends Window { store:Record<string,unknown>; fixture:ReviewState }
+interface ReviewDocument { pdf:string; source:string; version?:string }
 
 // The real renderer runs against an isolated IPC fixture, with no Electron or native windows.
-function installFixture(data:{pdf:string; source:string}):void {
+function installFixture(data:ReviewDocument):void {
  const w = window as unknown as ReviewWindow;
  const created = '2026-01-01T12:00:00.000Z';
  const names = ['Spectral methods for fluid dynamics','Conference paper - autumn notes','A short introduction to graph theory'];
@@ -34,12 +35,16 @@ function installFixture(data:{pdf:string; source:string}):void {
   }; return make('');
  };
  let updateTrack: 'stable' | 'beta' = 'stable';
+ const updateStatus = () => data.version ? {
+  track:updateTrack, phase:'disabled', message:`Installed: ${data.version}. Automatic updates are available in the installed Windows app.`
+ } : {track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};
  w.store = {
   onShutdownNotice:()=>{}, onImportRoot:()=>{},
   updateRestart:async()=>{await pause('updateRestart');},
-  updateCheck:async()=>{await pause('updateCheck');return {track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
-  updateStatus:async()=>({track:updateTrack,phase:'idle',message:'You are up to date. Checking every 10 minutes.'}),
-  updateTrack:async(track:'stable' | 'beta')=>{updateTrack=track;return {track,phase:'idle',message:'You are up to date. Checking every 10 minutes.'};},
+  updateCheck:async()=>{await pause('updateCheck');return updateStatus();},
+  updateStatus:async()=>updateStatus(),
+  updateTrack:async(track:'stable' | 'beta')=>{updateTrack=track;return updateStatus();},
+  ...(data.version ? {codexAccountStatus:async()=>({mode:'account',phase:'idle',installed:false,signedIn:false,hasRegistration:false})} : {}),
   list:async()=>structuredClone(projects), projectPreview:async()=>null,
   create:async(name:string)=>{await pause('create');const value={...projects[0],id:`project-${projects.length}`,name};projects.push(value);return value;},
   rename:async(id:string,name:string)=>{await pause('rename');project(id).name=name;return project(id);},
@@ -56,7 +61,8 @@ function installFixture(data:{pdf:string; source:string}):void {
   versionCompare:async()=>[{name:'main.tex',status:'changed',previous:data.source.replace('Introduction','Background and scope'),current:data.source}],
   chatLoad:async(id:string)=>id==='project-1'?structuredClone(chat):{sessionId:null,messages:[]},
   chatList:async()=>[{id:'default',title:'Research conversation'}], onChatProgress:()=>{}, onProjectEngineChanged:()=>{},
-  discoverProviders:async()=>({codex:true,opencode:true}),
+  discoverProviders:async()=>data.version ? {codex:false,opencode:false,codexMode:'account',codexSetupRequired:true,codexSignInRequired:true}
+   : {codex:true,opencode:true},
   discoverCodexModels:async()=>({ok:true,models:[{id:'model-a',model:'model-a',displayName:'Research model',description:'Sample model for UI verification',supportedReasoningEfforts:[{effort:'low',description:''},{effort:'medium',description:''},{effort:'high',description:''}],defaultReasoningEffort:'medium',isDefault:true}]}),
   discoverOpenCodeModels:async()=>({ok:true,models:[{id:'opencode/research',name:'Research model',variants:['low','high']}]}),
   codexPreferencesLoad:async()=>structuredClone(preferences), codexPreferencesSave:async(value:typeof preferences)=>{preferences=structuredClone(value);},
@@ -98,11 +104,11 @@ function fixtureDocument(pageCount: number): {pdf:string;source:string} {
  return {pdf:Buffer.from(pdf, 'ascii').toString('base64'),source};
 }
 
-async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: {pdf:string;source:string},
-  options: Pick<BrowserContextOptions, 'reducedMotion' | 'recordVideo' | 'viewport'> & {pageCount?:number} = {}) {
- const browser=await playwright.chromium.launch({channel:'msedge',headless:true,args:['--allow-file-access-from-files']});
+async function openHeadlessUi(colorScheme:'light'|'dark'='light', fixtureData?: ReviewDocument,
+  options: Pick<BrowserContextOptions, 'reducedMotion' | 'recordVideo' | 'viewport'> & {pageCount?:number; channel?:'msedge'|'chromium'} = {}) {
+ const {pageCount = 1, channel = 'msedge', ...contextOptions} = options;
+ const browser=await playwright.chromium.launch({channel,headless:true,args:['--allow-file-access-from-files']});
  try {
-  const {pageCount = 1, ...contextOptions} = options;
   const context=await browser.newContext({viewport:{width:1440,height:900},colorScheme,locale:'en-US',timezoneId:'UTC', ...contextOptions});
   await context.route(/^https?:/,route=>route.abort());
   await context.addInitScript(installFixture,fixtureData ?? fixtureDocument(pageCount));

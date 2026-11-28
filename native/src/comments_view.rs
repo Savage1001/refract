@@ -1,8 +1,8 @@
 use super::{Library, Palette, Selection};
 use chrono::{DateTime, Local};
 use gpui::{
-    App, Context, Entity, EntityInputHandler, FontWeight, KeyBinding, KeyDownEvent, SharedString,
-    Subscription, Window, actions, div, prelude::*, px, rgb,
+    App, Context, Entity, EntityInputHandler, KeyBinding, KeyDownEvent, SharedString, Subscription,
+    Window, actions, div, prelude::*, px, rgb,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use refract_native::comments::{Comment, CommentSelection, CommentUpdate, update_comments};
@@ -232,11 +232,7 @@ impl Library {
             .flex_col()
             .p_4()
             .gap_2()
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("All Comments"),
-            );
+            .child(crate::tool_heading("All Comments"));
         let Some(drafts) = self.comment_drafts.get(&selection.project.id) else {
             return panel;
         };

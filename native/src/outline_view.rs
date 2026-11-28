@@ -284,7 +284,7 @@ impl Library {
                             .size(px(14.))
                             .text_color(rgb(palette.muted)),
                     )
-                    .child("OUTLINE")
+                    .child(crate::tracked_label::tracked_label("OUTLINE", 0.05))
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.outline.expanded = !view.outline.expanded;
                         cx.notify();

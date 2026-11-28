@@ -12,6 +12,7 @@ use std::{
     io::{self, Read},
     ops::Range,
     path::Path,
+    sync::Arc,
 };
 
 const FILE_LIMIT: u64 = 128 * 1024 * 1024;
@@ -106,10 +107,17 @@ pub fn read_page_text(path: &Path, index: u32) -> io::Result<TextPage> {
     if bytes.len() as u64 > FILE_LIMIT {
         return Err(invalid_pdf());
     }
+    page_text_from_bytes(Arc::new(bytes), index)
+}
+
+pub fn page_text_from_bytes(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<TextPage> {
+    if bytes.len() as u64 > FILE_LIMIT {
+        return Err(invalid_pdf());
+    }
     std::panic::catch_unwind(move || extract(bytes, index)).unwrap_or_else(|_| Err(invalid_pdf()))
 }
 
-fn extract(bytes: Vec<u8>, index: u32) -> io::Result<TextPage> {
+fn extract(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<TextPage> {
     let pdf = Pdf::new(bytes).map_err(|_| invalid_pdf())?;
     let page = pdf.pages().get(index as usize).ok_or_else(invalid_pdf)?;
     let (width, height) = page.render_dimensions();
@@ -284,7 +292,7 @@ mod tests {
         )
         .unwrap();
 
-        let page = extract(bytes, 0).unwrap();
+        let page = page_text_from_bytes(Arc::new(bytes), 0).unwrap();
         assert_eq!(page.text(0..page.len()), "Text selection\nSecond line");
         let first = page.bounds(0..1).next().unwrap();
         assert!(first.left >= 0.09 && first.left <= 0.11);

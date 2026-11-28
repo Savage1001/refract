@@ -4,43 +4,21 @@ use refract_native::{
     file_preview::ImageKind,
     pdf_raster::{PageSize, page_layout},
 };
-use std::{path::Path, sync::Arc, thread};
+use std::{sync::Arc, thread};
 use windows::{
     Data::Pdf::{PdfDocument, PdfPageRenderOptions},
     Graphics::Imaging::BitmapEncoder,
-    Storage::{
-        StorageFile,
-        Streams::{DataReader, DataWriter, InMemoryRandomAccessStream},
-    },
+    Storage::Streams::{DataReader, DataWriter, InMemoryRandomAccessStream},
     Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize},
-    core::{HRESULT, HSTRING},
+    core::HRESULT,
 };
 
 const RPC_E_CHANGED_MODE: HRESULT = HRESULT(0x8001_0106u32 as i32);
 
-pub(super) fn render_page(path: &Path, request: PageRequest) -> io::Result<RasterizedPage> {
+pub(super) fn read_page_sizes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
     with_mta(|| {
-        let document = open_file(path)?;
-        render_document(&document, request)
-            .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
-    })
-}
-
-fn open_file(path: &Path) -> io::Result<PdfDocument> {
-    // WinRT requires an absolute Windows path with backslashes.
-    let path = dunce::canonicalize(path)?;
-    let path = HSTRING::from(path.as_os_str());
-    let load = || -> windows::core::Result<PdfDocument> {
-        let file = StorageFile::GetFileFromPathAsync(&path)?.get()?;
-        PdfDocument::LoadFromFileAsync(&file)?.get()
-    };
-    load().map_err(io::Error::other)
-}
-
-pub(super) fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
-    with_mta(|| {
-        let pdf = open_file(path)?;
         let read = || -> windows::core::Result<Vec<PageSize>> {
+            let (_stream, pdf) = open_stream(&bytes)?;
             (0..pdf.PageCount()?)
                 .map(|index| {
                     let size = pdf.GetPage(index)?.Size()?;
@@ -64,25 +42,26 @@ pub(crate) fn raster_pdf_bytes(
     request: PageRequest,
 ) -> io::Result<RasterizedPage> {
     with_mta(|| {
-        render_asset(&bytes, request)
+        let (_stream, document) = open_stream(&bytes).map_err(io::Error::other)?;
+        render_document(&document, request)
             .map_err(|error| io::Error::other(format!("Couldn’t render PDF page. {error}")))
     })
 }
 
-fn render_asset(
-    bytes: &[u8],
-    request: PageRequest,
-) -> Result<RasterizedPage, Box<dyn std::error::Error>> {
+fn open_stream(bytes: &[u8]) -> windows::core::Result<(InMemoryRandomAccessStream, PdfDocument)> {
     let stream = InMemoryRandomAccessStream::new()?;
     let writer = DataWriter::CreateDataWriter(&stream.GetOutputStreamAt(0)?)?;
     writer.WriteBytes(bytes)?;
     if writer.StoreAsync()?.get()? as usize != bytes.len() {
-        return Err("The input PDF stream is incomplete.".into());
+        return Err(windows::core::Error::new(
+            HRESULT(0x80070026_u32 as i32),
+            "The input PDF stream is incomplete.",
+        ));
     }
     writer.DetachStream()?;
     stream.Seek(0)?;
     let document = PdfDocument::LoadFromStreamAsync(&stream)?.get()?;
-    render_document(&document, request)
+    Ok((stream, document))
 }
 
 fn render_document(
@@ -170,12 +149,10 @@ impl Drop for Apartment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, io::Write};
+    use std::io::Write;
 
     #[test]
     fn renders_and_fits_a_page_without_opening_a_window() {
-        let profile = tempfile::tempdir().unwrap();
-        let path = profile.path().join("fixture.pdf");
         let mut pdf = b"%PDF-1.4\n".to_vec();
         let stream = "0.2 0.4 0.7 rg\n10 30 170 100 re f\n";
         let objects = [
@@ -200,15 +177,15 @@ mod tests {
             "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
         )
         .unwrap();
-        fs::write(&path, &pdf).unwrap();
-        let sizes = read_page_sizes(&path).unwrap();
+        let pdf = Arc::new(pdf);
+        let sizes = read_page_sizes(pdf.clone()).unwrap();
         assert_eq!(sizes.len(), 2);
         for (size, (width, height)) in sizes.iter().zip([(300., 200.), (200., 300.)]) {
             assert!((size.width - width).abs() < 0.01);
             assert!((size.height - height).abs() < 0.01);
         }
-        let frame = render_page(
-            &path,
+        let frame = raster_pdf_bytes(
+            pdf.clone(),
             PageRequest {
                 index: 5,
                 width: Some(320.),
@@ -223,7 +200,7 @@ mod tests {
         assert!((frame.width - 200.).abs() < 0.01);
         assert!((frame.height - 300.).abs() < 0.01);
         assert_eq!(frame.image.as_bytes(0).unwrap().len(), 250 * 375 * 4);
-        let asset = render_asset_page(Arc::new(pdf), 1).unwrap();
+        let asset = render_asset_page(pdf, 1).unwrap();
         assert_eq!((asset.current, asset.count), (1, 2));
         assert!((asset.width - 200.).abs() < 0.01);
         assert_eq!(asset.image.as_bytes(0).unwrap().len(), 300 * 450 * 4);

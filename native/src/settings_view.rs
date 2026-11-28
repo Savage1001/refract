@@ -1,8 +1,8 @@
 use super::{Library, Navigation, Palette, deleted_projects_view::recovery_button};
 use crate::account_settings_view::{AccountControls, AccountSection};
 use gpui::{
-    AnyElement, Context, Entity, FocusHandle, FontWeight, KeyDownEvent, SharedString, Subscription,
-    Task, WeakEntity, Window, div, prelude::*, px, rgb, svg,
+    AnyElement, Context, Entity, FocusHandle, FontWeight, KeyDownEvent, Pixels, SharedString,
+    Subscription, Task, WeakEntity, Window, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     WindowExt,
@@ -13,7 +13,7 @@ use refract_native::updates::{
     CHECK_INTERVAL, PreparedUpdate, UpdateTrack, WindowsUpdater, installed_version,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -24,6 +24,8 @@ use std::{
 
 const DISABLED: &str = "Automatic updates are available in the installed Windows app.";
 const TRACK_DESCRIPTION: &str = "Stable receives stable releases. Pre-release receives the newest pre-release or stable version. Updates are checked every 10 minutes and download automatically. Install them when you choose Restart to update.";
+const DIALOG_PADDING: Pixels = px(28.);
+const TITLE_GAP: Pixels = px(24.);
 
 #[derive(Clone)]
 struct TrackChoice(UpdateTrack);
@@ -150,7 +152,7 @@ impl SettingsView {
             error: self.error.clone(),
             downloading: self.downloading,
             track_saving: self.save.is_some(),
-            check_available: self.updater.is_some() && !busy,
+            check_available: !busy,
             restart_visible: self.prepared.is_some(),
             restart_available: self.prepared.is_some() && !busy,
         }
@@ -160,6 +162,10 @@ impl SettingsView {
         if let Some(dialog) = &self.dialog {
             *dialog.borrow_mut() = self.dialog_contents();
         }
+    }
+
+    pub(super) fn dialog_open(&self) -> bool {
+        self.dialog.is_some()
     }
 
     pub(super) fn prepare_exit(&self) {
@@ -184,10 +190,18 @@ impl SettingsDialog {
             .gap(px(8.))
             .debug_selector(|| "settings-dialog".into())
             .child(self.account.contents(library.clone(), palette))
-            .child(div().font_weight(FontWeight::MEDIUM).child("Update track"))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .line_height(px(18.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child("Update track"),
+            )
             .child(
                 Select::new(&self.track_select)
                     .w_full()
+                    .h(px(36.))
+                    .text_size(px(13.))
                     .border_color(rgb(palette.input_border))
                     .disabled(self.track_saving),
             )
@@ -236,10 +250,13 @@ impl SettingsDialog {
                     .flex()
                     .flex_wrap()
                     .justify_end()
-                    .gap(px(8.))
-                    .pt(px(12.))
+                    .gap(px(6.))
+                    .mt(px(16.))
+                    .pt(px(16.))
+                    .border_t_1()
+                    .border_color(rgb(palette.border))
                     .when(self.restart_visible, |actions| {
-                        actions.child(recovery_button(
+                        actions.child(settings_action(
                             "restart-update",
                             "Restart to update",
                             &self.restart_focus,
@@ -252,7 +269,7 @@ impl SettingsDialog {
                             },
                         ))
                     })
-                    .child(recovery_button(
+                    .child(settings_action(
                         "check-updates",
                         "Check for updates",
                         &self.check_focus,
@@ -263,7 +280,7 @@ impl SettingsDialog {
                                 check.update(app, |library, cx| library.check_updates(window, cx));
                         },
                     ))
-                    .child(recovery_button(
+                    .child(settings_action(
                         "close-settings",
                         "Close",
                         &self.close_focus,
@@ -279,6 +296,25 @@ impl SettingsDialog {
             )
             .into_any_element()
     }
+}
+
+fn settings_action(
+    id: &'static str,
+    label: &'static str,
+    focus: &FocusHandle,
+    palette: Palette,
+    enabled: bool,
+    activate: impl Fn(&mut Window, &mut gpui::App) + Clone + 'static,
+) -> impl IntoElement {
+    recovery_button(id, label, focus, palette, enabled, activate)
+        .flex()
+        .items_center()
+        .justify_center()
+        .min_w(px(76.))
+        .h(px(36.))
+        .text_size(px(12.))
+        .line_height(px(18.))
+        .border_color(rgb(palette.input_border))
 }
 
 impl Library {
@@ -320,17 +356,44 @@ impl Library {
         let owner = cx.weak_entity();
         let contents = Rc::new(RefCell::new(self.settings.dialog_contents()));
         self.settings.dialog = Some(contents.clone());
+        let measured_height = Rc::new(Cell::new(None::<Pixels>));
         window.open_dialog(cx, move |dialog, window, _| {
             let close = owner.clone();
+            let viewport = window.viewport_size();
+            let max_height = viewport.height * 0.85;
+            let dialog_chrome = DIALOG_PADDING * 2. + px(27.) + TITLE_GAP + px(2.);
+            let height = measured_height
+                .get()
+                .map_or(px(480.), |content_height| content_height + dialog_chrome)
+                .min(max_height);
+            let width = (viewport.width - px(48.)).max(px(0.)).min(px(440.));
+            let measurement = measured_height.clone();
+            let palette = Palette::for_window(window);
             dialog
                 .title(crate::dialog_title("Settings"))
-                .w(px(440.))
+                .w(width)
+                .max_h(max_height)
+                .margin_top((viewport.height - height) / 2.)
+                .p(DIALOG_PADDING)
+                .gap(TITLE_GAP)
+                .rounded(px(12.))
+                .bg(rgb(palette.surface))
+                .border_color(rgb(palette.input_border))
                 .close_button(false)
+                .overlay(false)
                 .overlay_closable(false)
                 .child(
-                    contents
-                        .borrow()
-                        .contents(owner.clone(), Palette::for_window(window)),
+                    div()
+                        .flex_none()
+                        .on_children_prepainted(move |bounds, window, _| {
+                            if let Some(content) = bounds.first()
+                                && measurement.replace(Some(content.size.height))
+                                    != Some(content.size.height)
+                            {
+                                window.refresh();
+                            }
+                        })
+                        .child(contents.borrow().contents(owner.clone(), palette)),
                 )
                 .on_close(move |_, window, app| {
                     let _ = close.update(app, |library, cx| library.settings_closed(window, cx));

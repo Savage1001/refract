@@ -96,6 +96,10 @@ fn configure(
     active_line: u32,
 ) {
     config.mono_font_family = Some(crate::monospace_font().into());
+    config.colors.ring = Some(match config.mode {
+        gpui_component::ThemeMode::Dark => "#346bf1".into(),
+        _ => "#1b4ed8".into(),
+    });
     let style = config
         .highlight
         .get_or_insert_with(|| defaults.style.clone());

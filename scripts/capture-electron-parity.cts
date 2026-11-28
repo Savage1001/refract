@@ -6,16 +6,29 @@ import type { Page } from 'playwright';
 
 const desktop = { width: 1440, height: 900 };
 const compact = { width: 900, height: 650 };
+const workspaceText = ['.brand-home span', '#project-name', '.sidebar-label', '#file-search-input',
+  '.file-tabs button', '#numbers', '#source', '.outline-label', '.chat-title', '#chat-messages > strong',
+  '#chat-input', '.model-trigger-label', '.model-trigger-options', '#compile'];
+const typography = {
+  'library-list': ['.homepage-brand', '.project-header h1', '#import', '#new', '#search', '.table-head', '.project-label', '.project-date'],
+  'library-grid': ['.homepage-brand', '.project-header h1', '#import', '#new', '.project-label', '.project-date'],
+  settings: ['#settings-title', '#settings-dialog label', '#codex-connection', '#update-track', '.settings-description', '#update-status', '.dialog-actions button'],
+  workspace: workspaceText,
+  'workspace-comments': ['#tool-comments', '#tool-body', '#tool-body input', '#tool-body textarea'],
+  'workspace-compact': workspaceText,
+} satisfies Record<string, string[]>;
 
 interface CaptureDocument {
   pdf: string;
   source: string;
+  version: string;
 }
 
-async function captureTheme(output: string, theme: 'light' | 'dark', document: CaptureDocument): Promise<void> {
+async function captureTheme(output: string, theme: 'light' | 'dark', document: CaptureDocument, channel: 'msedge' | 'chromium'): Promise<void> {
   const { browser, page, errors } = await fixture.openHeadlessUi(theme, document, {
     viewport: desktop,
     reducedMotion: 'reduce',
+    channel,
   });
   page.setDefaultTimeout(10_000);
   const project = page.getByRole('button', { name: 'Open Spectral methods for fluid dynamics', exact: true });
@@ -57,28 +70,42 @@ async function captureTheme(output: string, theme: 'light' | 'dark', document: C
   }
 }
 
-async function capture(page: Page, output: string, theme: string, screen: string): Promise<void> {
-  await page.evaluate(async () => { await document.fonts.ready; });
-  await page.screenshot({
-    path: path.join(output, `${theme}-${screen}.png`),
-    animations: 'disabled',
-    caret: 'hide',
-    scale: 'css',
-  });
+async function capture(page: Page, output: string, theme: string, screen: keyof typeof typography): Promise<void> {
+  const samples = await page.evaluate(async selectors => {
+    await document.fonts.ready;
+    return selectors.flatMap(selector => {
+      const element = Array.from(document.querySelectorAll(selector)).find(node => node.getClientRects().length > 0);
+      if (!element) return [];
+      const { fontFamily, fontSize, fontWeight, fontStyle, lineHeight, letterSpacing, color } = getComputedStyle(element);
+      return [{ selector, fontFamily, fontSize, fontWeight, fontStyle, lineHeight, letterSpacing, color,
+        bounds: element.getBoundingClientRect().toJSON() as Pick<DOMRectReadOnly, 'x' | 'y' | 'width' | 'height'> }];
+    });
+  }, typography[screen]);
+  const filename = path.join(output, `${theme}-${screen}`);
+  await Promise.all([
+    fs.writeFile(`${filename}.json`, `${JSON.stringify(samples, null, 2)}\n`),
+    page.screenshot({ path: `${filename}.png`, animations: 'disabled', caret: 'hide', scale: 'css' }),
+  ]);
 }
 
 async function main(): Promise<void> {
   const output = process.argv[2];
-  if (!output) throw new Error('Pass an output folder for the screenshots.');
+  const browser = process.argv[3];
+  if (!output || (browser !== undefined && browser !== '--chromium')) {
+    throw new Error('Pass an output folder for the screenshots, followed by optional --chromium.');
+  }
   const documentsDir = path.resolve(__dirname, '../../test/fixtures');
-  const [source, pdf] = await Promise.all([
+  const [source, pdf, manifest] = await Promise.all([
     fs.readFile(path.join(documentsDir, 'parity-document.tex'), 'utf8'),
     fs.readFile(path.join(documentsDir, 'parity-document.pdf.b64'), 'ascii'),
+    fs.readFile(path.resolve(__dirname, '../../package.json'), 'utf8'),
   ]);
-  const document = { source: source.replace(/\r\n/g, '\n'), pdf: pdf.replace(/\s+/g, '') };
+  const metadata = JSON.parse(manifest) as { version?: unknown };
+  assert.equal(typeof metadata.version, 'string', 'Expected the Refract version in package.json');
+  const document = { source: source.replace(/\r\n/g, '\n'), pdf: pdf.replace(/\s+/g, ''), version: metadata.version as string };
   await fs.mkdir(output, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
-    await captureTheme(output, theme, document);
+    await captureTheme(output, theme, document, browser === '--chromium' ? 'chromium' : 'msedge');
   }
 }
 

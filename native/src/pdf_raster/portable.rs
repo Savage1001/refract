@@ -26,7 +26,20 @@ pub fn render_file(path: &Path, request: PageRequest) -> io::Result<Page> {
 }
 
 pub fn read_page_sizes(path: &Path) -> io::Result<Vec<PageSize>> {
-    let pdf = open_pdf(Arc::new(fs::read(path)?))?;
+    read_page_sizes_from_bytes(Arc::new(fs::read(path)?))
+}
+
+pub fn read_page_sizes_from_bytes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
+    std::panic::catch_unwind(move || read_sizes(bytes)).unwrap_or_else(|_| {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Couldn’t open PDF.",
+        ))
+    })
+}
+
+fn read_sizes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSize>> {
+    let pdf = open_pdf(bytes)?;
     Ok(pdf
         .pages()
         .iter()

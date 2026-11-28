@@ -141,7 +141,7 @@ function buildDebian(payload: string, stage: string, manifest: Manifest, program
     const loaded = ['libfontconfig1', 'libwayland-client0', 'libvulkan1'];
     const dependencies = [
       shared, ...loaded.filter((dependency) => !linkedNames.has(dependency)),
-      'mesa-vulkan-drivers | vulkan-icd', 'xdg-utils', 'xdg-desktop-portal-gtk',
+      'mesa-vulkan-drivers | vulkan-icd', 'fonts-liberation', 'xdg-utils', 'xdg-desktop-portal-gtk',
       ...texDependencies(build.deb.depends),
     ];
     writeFileSync(join(metadata, 'control'), [
@@ -183,7 +183,7 @@ function buildArch(payload: string, stage: string, manifest: Manifest, program: 
   const dependencies = [
     'glibc', 'libgcc', 'libstdc++', 'fontconfig', 'libx11', 'libxcb',
     'libxkbcommon', 'libxkbcommon-x11', 'wayland', 'vulkan-icd-loader',
-    'vulkan-driver', 'xdg-utils', 'xdg-desktop-portal-gtk', ...texDependencies(build.pacman.depends),
+    'vulkan-driver', 'ttf-liberation', 'xdg-utils', 'xdg-desktop-portal-gtk', ...texDependencies(build.pacman.depends),
   ];
   const installedSize = payloadBytes(payload);
   writeFileSync(join(payload, '.PKGINFO'), [

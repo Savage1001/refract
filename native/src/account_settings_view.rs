@@ -356,12 +356,16 @@ impl AccountSection {
             .border_color(rgb(palette.border))
             .child(
                 div()
+                    .text_size(px(12.))
+                    .line_height(px(18.))
                     .font_weight(FontWeight::MEDIUM)
                     .child("Codex connection"),
             )
             .child(
                 Select::new(&self.selector)
                     .w_full()
+                    .h(px(36.))
+                    .text_size(px(13.))
                     .border_color(rgb(palette.input_border))
                     .disabled(self.busy),
             )

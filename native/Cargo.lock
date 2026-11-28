@@ -5310,6 +5310,7 @@ dependencies = [
  "katex-native",
  "markdown",
  "notify",
+ "raw-window-handle",
  "regex",
  "resvg",
  "ring",

@@ -233,9 +233,6 @@ impl Library {
             .id("project-actions")
             .relative()
             .flex_none()
-            .when(self.catalog.is_grid(), |actions| {
-                actions.absolute().right(px(12.)).top(px(12.))
-            })
             .on_click(|_, _, cx| cx.stop_propagation())
             .on_key_down(
                 cx.listener(move |library, event: &KeyDownEvent, window, cx| {

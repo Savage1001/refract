@@ -1,8 +1,7 @@
 use super::{Library, Palette, Selection};
 use chrono::{DateTime, Local};
 use gpui::{
-    Context, Entity, FontWeight, KeyDownEvent, SharedString, Subscription, Window, div, prelude::*,
-    px, rgb,
+    Context, Entity, KeyDownEvent, SharedString, Subscription, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::{
     checkbox::Checkbox,
@@ -240,11 +239,7 @@ impl Library {
             .flex_col()
             .gap_3()
             .p_4()
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Project Info"),
-            )
+            .child(crate::tool_heading("Project Info"))
             .child(fact(
                 "Name",
                 div().truncate().child(project.name.clone()),

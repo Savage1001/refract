@@ -1,4 +1,4 @@
-use super::pdf_view::PdfViewport;
+use super::pdf_view::{PdfViewport, capture_built_pdf};
 use super::{Library, Navigation, Palette};
 use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb, svg};
 use gpui_component::{WindowExt, tooltip::Tooltip};
@@ -59,7 +59,7 @@ impl WorkspaceBuild {
 
 impl Library {
     pub(super) fn start_queued_build(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pdf_task.is_some() || !self.project_writes_idle() || window.has_active_dialog(cx) {
+        if !self.project_writes_idle() || window.has_active_dialog(cx) {
             return;
         }
         // GPUI tests use a fixture compiler so opening a project never launches TeX.
@@ -94,10 +94,17 @@ impl Library {
         let cancel = Arc::new(AtomicBool::new(false));
         let run_cancel = cancel.clone();
         let compile = cx.background_executor().spawn(async move {
-            compiler(&projects, &project, &run_cancel).map_err(|error| error.to_string())
+            let result =
+                compiler(&projects, &project, &run_cancel).map_err(|error| error.to_string());
+            let preview = result
+                .as_ref()
+                .ok()
+                .and_then(|result| result.pdf.as_deref())
+                .map(capture_built_pdf);
+            (result, preview)
         });
         let task = cx.spawn_in(window, async move |library, cx| {
-            let result = compile.await;
+            let (result, preview) = compile.await;
             let _ = library.update_in(cx, |library, window, cx| {
                 library.build_task = None;
                 if let Some(selection) = &mut library.selection
@@ -106,7 +113,9 @@ impl Library {
                     && !selection.build.queued
                 {
                     selection.build.outcome = Some(result);
-                    library.load_built_pdf(window, cx);
+                    if let Some(preview) = preview {
+                        library.load_built_pdf(preview, window, cx);
+                    }
                 }
                 library.start_next_save(window, cx);
                 if library.snapshot_timer.is_none() {
@@ -242,13 +251,7 @@ impl Library {
                             )
                             .child(compile_label),
                     )
-                    .children(self.pdf_controls(
-                        &build.preview,
-                        build.pdf().is_some(),
-                        pane_width - 1.,
-                        palette,
-                        cx,
-                    ))
+                    .children(self.pdf_controls(&build.preview, pane_width - 1., palette, cx))
                     .child(
                         preview_button(
                             "download-pdf",

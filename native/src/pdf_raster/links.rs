@@ -7,6 +7,7 @@ use std::{
     fs::File,
     io::{self, Read},
     path::Path,
+    sync::Arc,
 };
 use url::Url;
 
@@ -41,6 +42,13 @@ pub fn read_document_links(path: &Path) -> io::Result<Vec<Vec<PdfLink>>> {
     if bytes.len() as u64 > MAX_PDF_BYTES {
         return Err(invalid_pdf());
     }
+    document_links_from_bytes(Arc::new(bytes))
+}
+
+pub fn document_links_from_bytes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<Vec<PdfLink>>> {
+    if bytes.len() as u64 > MAX_PDF_BYTES {
+        return Err(invalid_pdf());
+    }
     std::panic::catch_unwind(move || parse_document_links(bytes))
         .unwrap_or_else(|_| Err(invalid_pdf()))
 }
@@ -52,7 +60,7 @@ fn invalid_pdf() -> io::Error {
     )
 }
 
-fn parse_document_links(bytes: Vec<u8>) -> io::Result<Vec<Vec<PdfLink>>> {
+fn parse_document_links(bytes: Arc<Vec<u8>>) -> io::Result<Vec<Vec<PdfLink>>> {
     let pdf = Pdf::new(bytes).map_err(|_| invalid_pdf())?;
     let catalog = pdf.xref().get::<Dict<'_>>(pdf.xref().root_id());
     let base = catalog.as_ref().and_then(|dict| {
@@ -286,7 +294,7 @@ mod tests {
             "trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
         )
         .unwrap();
-        let links = parse_document_links(bytes).unwrap();
+        let links = document_links_from_bytes(Arc::new(bytes)).unwrap();
         assert_eq!(links.iter().map(Vec::len).collect::<Vec<_>>(), [2, 0]);
         assert_eq!(
             links[0][0],
