@@ -333,7 +333,12 @@ impl AccountControls {
 }
 
 impl AccountSection {
-    pub(super) fn contents(&self, library: WeakEntity<Library>, palette: Palette) -> AnyElement {
+    pub(super) fn contents(
+        &self,
+        library: WeakEntity<Library>,
+        palette: Palette,
+        width: gpui::Pixels,
+    ) -> AnyElement {
         let account_button = |id: &'static str, label: String, action: AccountAction| {
             let owner = library.clone();
             account_action_button(id, label, palette).on_click(move |_, window, cx| {
@@ -364,6 +369,7 @@ impl AccountSection {
                 "settings-codex-connection",
                 &self.selector,
                 palette,
+                width,
                 self.busy,
             ))
             .when(self.display.mode == CodexMode::Account, |section| {

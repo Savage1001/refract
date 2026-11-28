@@ -183,16 +183,21 @@ impl SettingsView {
 }
 
 impl SettingsDialog {
-    fn contents(&self, library: WeakEntity<Library>, palette: Palette) -> AnyElement {
+    fn contents(
+        &self,
+        library: WeakEntity<Library>,
+        palette: Palette,
+        width: Pixels,
+    ) -> AnyElement {
         let check = library.clone();
         let restart = library.clone();
         div()
-            .w_full()
+            .w(width)
             .flex()
             .flex_col()
             .gap(px(8.))
             .debug_selector(|| "settings-dialog".into())
-            .child(self.account.contents(library.clone(), palette))
+            .child(self.account.contents(library.clone(), palette, width))
             .child(
                 div()
                     .text_size(px(12.))
@@ -204,6 +209,7 @@ impl SettingsDialog {
                 "settings-update-track",
                 &self.track_select,
                 palette,
+                width,
                 self.track_saving,
             ))
             .child(
@@ -304,16 +310,17 @@ pub(super) fn settings_select<D: SelectDelegate + 'static>(
     id: &'static str,
     state: &Entity<SelectState<D>>,
     palette: Palette,
+    width: Pixels,
     disabled: bool,
 ) -> impl IntoElement {
     div()
         .debug_selector(move || id.into())
-        .w_full()
+        .w(width)
         .h(px(36.))
         .flex_none()
         .child(
             Select::new(state)
-                .w_full()
+                .w(width)
                 .h_full()
                 .text_size(px(13.))
                 .text_color(rgb(palette.text))
@@ -394,7 +401,7 @@ impl Library {
             let width = (viewport.width - px(48.)).max(px(0.)).min(px(440.));
             let measurement = measured_height.clone();
             let measure_owner = owner.clone();
-            let track_select = contents.borrow().track_select.clone();
+            let content_width = (width - DIALOG_PADDING * 2. - px(2.)).max(px(0.));
             let palette = Palette::for_window(window);
             dialog
                 .title(crate::dialog_title("Settings"))
@@ -418,16 +425,17 @@ impl Library {
                                     != Some(content.size.height)
                             {
                                 let measure_owner = measure_owner.clone();
-                                let track_select = track_select.clone();
                                 window.defer(app, move |window, app| {
-                                    // Render the selector with its dialog width after the first measurement.
-                                    track_select.update(app, |_, cx| cx.notify());
                                     let _ = measure_owner.update(app, |_, cx| cx.notify());
                                     window.refresh();
                                 });
                             }
                         })
-                        .child(contents.borrow().contents(owner.clone(), palette)),
+                        .child(
+                            contents
+                                .borrow()
+                                .contents(owner.clone(), palette, content_width),
+                        ),
                 )
                 .on_close(move |_, window, app| {
                     let _ = close.update(app, |library, cx| library.settings_closed(window, cx));
@@ -623,6 +631,8 @@ mod tests {
             assert!(settings.updater.is_none());
         });
         let track = cx.debug_bounds("settings-update-track").unwrap();
+        let dialog = cx.debug_bounds("settings-dialog").unwrap();
+        assert_eq!(track.size.width, dialog.size.width);
         cx.simulate_click(
             gpui::point(track.right() - px(12.), track.center().y),
             Modifiers::none(),
