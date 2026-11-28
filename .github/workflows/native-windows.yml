@@ -359,7 +359,13 @@ jobs:
           wait_for_preference opencode-preferences.json '"model":"opencode/research"'
           capture_picker model-picker "$before" 10000
 
-          xdotool key --delay 90 Down Right Return
+          timeout 10s xdotool windowfocus --sync "$client"
+          for key in Down Right Return; do
+            xdotool key --clearmodifiers "$key"
+            # Separate keyboard input from frame capture so a failure shows where focus stopped.
+            sleep 0.3
+            import -window "$client" "$output/$theme-model-picker-after-${key,,}.png"
+          done
           wait_for_preference codex-preferences.json '"favorites":["model-a"]'
           click 230 452
           capture_picker model-picker-favorites "$output/$theme-model-picker.png" 200

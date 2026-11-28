@@ -360,7 +360,12 @@ impl AccountSection {
                     .font_weight(FontWeight::MEDIUM)
                     .child("Codex connection"),
             )
-            .child(settings_select(&self.selector, palette, self.busy))
+            .child(settings_select(
+                "settings-codex-connection",
+                &self.selector,
+                palette,
+                self.busy,
+            ))
             .when(self.display.mode == CodexMode::Account, |section| {
                 section
                     .child(

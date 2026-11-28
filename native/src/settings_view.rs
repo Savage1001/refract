@@ -201,6 +201,7 @@ impl SettingsDialog {
                     .child("Update track"),
             )
             .child(settings_select(
+                "settings-update-track",
                 &self.track_select,
                 palette,
                 self.track_saving,
@@ -300,20 +301,26 @@ impl SettingsDialog {
 }
 
 pub(super) fn settings_select<D: SelectDelegate + 'static>(
+    id: &'static str,
     state: &Entity<SelectState<D>>,
     palette: Palette,
     disabled: bool,
 ) -> impl IntoElement {
-    div().w_full().h(px(36.)).flex_none().child(
-        Select::new(state)
-            .w_full()
-            .h_full()
-            .text_size(px(13.))
-            .text_color(rgb(palette.text))
-            .bg(rgb(palette.surface))
-            .border_color(rgb(palette.input_border))
-            .disabled(disabled),
-    )
+    div()
+        .debug_selector(move || id.into())
+        .w_full()
+        .h(px(36.))
+        .flex_none()
+        .child(
+            Select::new(state)
+                .w_full()
+                .h_full()
+                .text_size(px(13.))
+                .text_color(rgb(palette.text))
+                .bg(rgb(palette.surface))
+                .border_color(rgb(palette.input_border))
+                .disabled(disabled),
+        )
 }
 
 fn settings_action(
@@ -387,6 +394,7 @@ impl Library {
             let width = (viewport.width - px(48.)).max(px(0.)).min(px(440.));
             let measurement = measured_height.clone();
             let measure_owner = owner.clone();
+            let track_select = contents.borrow().track_select.clone();
             let palette = Palette::for_window(window);
             dialog
                 .title(crate::dialog_title("Settings"))
@@ -410,7 +418,10 @@ impl Library {
                                     != Some(content.size.height)
                             {
                                 let measure_owner = measure_owner.clone();
+                                let track_select = track_select.clone();
                                 window.defer(app, move |window, app| {
+                                    // Render the selector with its dialog width after the first measurement.
+                                    track_select.update(app, |_, cx| cx.notify());
                                     let _ = measure_owner.update(app, |_, cx| cx.notify());
                                     window.refresh();
                                 });
@@ -610,8 +621,28 @@ mod tests {
             assert_eq!(selector.selected_value(), Some(&UpdateTrack::Beta));
             assert!(settings.account.focus_handle(app).is_focused(window));
             assert!(settings.updater.is_none());
+        });
+        let track = cx.debug_bounds("settings-update-track").unwrap();
+        cx.simulate_click(
+            gpui::point(track.right() - px(12.), track.center().y),
+            Modifiers::none(),
+        );
+        cx.refresh().unwrap();
+        cx.update(|window, app| {
+            use gpui::Focusable;
+            let settings = &library.read(app).settings;
+            assert!(
+                settings
+                    .track_select
+                    .read(app)
+                    .focus_handle(app)
+                    .is_focused(window)
+            );
+        });
+        cx.simulate_keystrokes("up enter");
+        cx.run_until_parked();
+        cx.update(|window, app| {
             library.update(app, |library, cx| {
-                library.change_update_track(UpdateTrack::Stable, window, cx);
                 library.account_action(
                     crate::account_settings_view::AccountAction::Select(CodexMode::Cli),
                     window,
