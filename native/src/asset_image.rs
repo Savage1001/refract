@@ -113,7 +113,7 @@ fn to_render_order(buffer: &mut RgbaImage) {
 }
 
 fn render_svg(bytes: &[u8]) -> io::Result<Arc<RenderImage>> {
-    use resvg::{tiny_skia, usvg};
+    use resvg::usvg;
 
     static FONTS: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
         let mut fonts = usvg::fontdb::Database::new();
@@ -129,16 +129,33 @@ fn render_svg(bytes: &[u8]) -> io::Result<Arc<RenderImage>> {
         ..Default::default()
     };
     let tree = usvg::Tree::from_data(bytes, &options).map_err(io::Error::other)?;
+    render_svg_tree(
+        &tree,
+        1.0_f32.min(4096. / tree.size().width().max(tree.size().height())),
+    )
+}
+
+pub(super) fn render_svg_icon(bytes: &[u8], pixels: f32) -> io::Result<Arc<RenderImage>> {
+    let tree =
+        resvg::usvg::Tree::from_data(bytes, &Default::default()).map_err(io::Error::other)?;
+    render_svg_tree(
+        &tree,
+        pixels / tree.size().width().max(tree.size().height()),
+    )
+}
+
+fn render_svg_tree(tree: &resvg::usvg::Tree, scale: f32) -> io::Result<Arc<RenderImage>> {
+    use resvg::tiny_skia;
+
     let width = tree.size().width();
     let height = tree.size().height();
-    let scale = 1.0_f32.min(4096.0 / width.max(height));
     let mut pixmap = tiny_skia::Pixmap::new(
         (width * scale).ceil() as u32,
         (height * scale).ceil() as u32,
     )
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid SVG dimensions"))?;
     resvg::render(
-        &tree,
+        tree,
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );

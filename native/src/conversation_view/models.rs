@@ -2,7 +2,7 @@ use super::{
     Library,
     assistant::{InstalledProvider, PreparedProvider},
 };
-use gpui::{Context, Task, WeakEntity, Window};
+use gpui::{AppContext, Context, Task, WeakEntity, Window};
 use icu_collator::{
     Collator, CollatorBorrowed, CollatorPreferences,
     options::{CollatorOptions, Strength},
@@ -321,31 +321,41 @@ impl ModelPicker {
         });
     }
 
-    fn choose(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn choose(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+        if self.loading.is_some() {
+            return false;
+        }
         let Some(catalog) = self.catalog() else {
-            return;
+            return false;
         };
         let Some(model) = catalog.models().iter().find(|model| model.id == id) else {
-            return;
+            return false;
         };
-        if catalog.preferences.model.as_deref() == Some(id) {
-            return;
+        if catalog.preferences.model.as_deref() != Some(id) {
+            let mut next = catalog.preferences.clone();
+            next.model = Some(id.into());
+            next.reasoning_effort = model.default_effort.clone();
+            self.save(next, true, cx);
         }
-        let mut next = catalog.preferences.clone();
-        next.model = Some(id.into());
-        next.reasoning_effort = model.default_effort.clone();
-        self.save(next, true, cx);
+        true
     }
 
-    fn favorite(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn set_favorite(&mut self, id: &str, favorite: bool, cx: &mut Context<Self>) {
         let Some(catalog) = self.catalog() else {
             return;
         };
         let mut next = catalog.preferences.clone();
-        if let Some(index) = next.favorites.iter().position(|value| value == id) {
-            next.favorites.remove(index);
-        } else {
-            next.favorites.push(id.to_owned());
+        match (
+            favorite,
+            next.favorites.iter().position(|value| value == id),
+        ) {
+            (false, Some(index)) => {
+                next.favorites.remove(index);
+            }
+            (true, None) if catalog.models().iter().any(|model| model.id == id) => {
+                next.favorites.push(id.to_owned());
+            }
+            _ => return,
         }
         self.save(next, false, cx);
     }
@@ -384,14 +394,15 @@ impl ModelPicker {
         affects_selection: bool,
         cx: &mut Context<Self>,
     ) {
+        let source = cx.entity();
         if self.loading.is_some()
             || self
                 .parent
                 .read_with(cx, |parent, _| {
-                    parent
-                        .selection
-                        .as_ref()
-                        .is_some_and(|selection| selection.conversation.running.is_some())
+                    parent.selection.as_ref().is_none_or(|selection| {
+                        let pane = &selection.conversation;
+                        pane.running.is_some() || pane.models.get(&self.kind) != Some(&source)
+                    })
                 })
                 .unwrap_or(true)
         {

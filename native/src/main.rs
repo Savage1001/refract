@@ -1344,7 +1344,7 @@ impl Render for Library {
             .line_height(gpui::DefiniteLength::Fraction(1.5))
             .child(view)
             .children(self.entry_menu_layer(palette, cx))
-            .children(self.model_menu_layer())
+            .children(self.model_menu_layer(window))
             .when(self.settings.dialog_open(), |root| {
                 root.child(div().absolute().inset_0().bg(gpui::rgba(0x00000066)))
             })

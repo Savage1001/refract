@@ -4,9 +4,9 @@ use super::{
 use crate::{Palette, account_settings_view::AccountAction, conversation_view::ConversationPane};
 use gpui::{
     AnyElement, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight,
-    KeyDownEvent, Pixels, Point, Render, ScrollHandle, SharedString, Size, Subscription,
-    WeakEntity, Window, anchored, canvas, deferred, div, point, prelude::*, px, rgb, rgba, size,
-    svg,
+    KeyDownEvent, Pixels, Point, Render, RenderImage, ScrollHandle, SharedString, Size,
+    Subscription, WeakEntity, Window, anchored, canvas, deferred, div, img, point, prelude::*, px,
+    rgb, rgba, size, svg,
 };
 use gpui_component::{
     Disableable, Sizable,
@@ -14,8 +14,18 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     tooltip::Tooltip,
 };
+use std::sync::{Arc, LazyLock};
 
 const PROVIDERS: [Provider; 2] = [Provider::Codex, Provider::OpenCode];
+const FILTERS: [Scope; 3] = [
+    Scope::Favorites,
+    Scope::Provider(Provider::Codex),
+    Scope::Provider(Provider::OpenCode),
+];
+
+#[path = "model_menu_keyboard.rs"]
+mod keyboard;
+use keyboard::{EffortFocus, Keyboard, ModelKey, ResultFocus, ResultItem, ResultRow};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Scope {
@@ -31,7 +41,9 @@ pub(in crate::conversation_view) struct ModelMenu {
     scroll: ScrollHandle,
     first: Provider,
     scope: Scope,
+    wait_for_opening_scope: bool,
     details: bool,
+    keyboard: Keyboard,
     _query_changes: Subscription,
     _focus_out: Subscription,
 }
@@ -73,15 +85,67 @@ pub(super) fn provider_label(provider: Provider) -> &'static str {
     }
 }
 
-fn provider_logo(provider: Provider, size: f32, color: u32) -> impl IntoElement {
-    svg()
-        .path(match provider {
-            Provider::Codex => "refract/openai.svg",
-            Provider::OpenCode => "refract/opencode.svg",
-        })
+fn provider_logo(provider: Provider, size: f32, palette: Palette) -> gpui::Div {
+    type Icon = LazyLock<Option<Arc<RenderImage>>>;
+    fn asset(bytes: &[u8]) -> Option<Arc<RenderImage>> {
+        crate::asset_image::render_svg_icon(bytes, 128.).ok()
+    }
+    static CODEX_LIGHT: Icon = LazyLock::new(|| {
+        asset(include_bytes!(
+            "../../../resources/provider-logos/openai-black.svg"
+        ))
+    });
+    static CODEX_DARK: Icon = LazyLock::new(|| {
+        asset(include_bytes!(
+            "../../../resources/provider-logos/openai-white.svg"
+        ))
+    });
+    static OPENCODE_LIGHT: Icon = LazyLock::new(|| {
+        asset(include_bytes!(
+            "../../../resources/provider-logos/opencode-light.svg"
+        ))
+    });
+    static OPENCODE_DARK: Icon = LazyLock::new(|| {
+        asset(include_bytes!(
+            "../../../resources/provider-logos/opencode-dark.svg"
+        ))
+    });
+
+    let dark = palette.canvas == 0x0a0a0a;
+    let art = match (provider, dark) {
+        (Provider::Codex, false) => &CODEX_LIGHT,
+        (Provider::Codex, true) => &CODEX_DARK,
+        (Provider::OpenCode, false) => &OPENCODE_LIGHT,
+        (Provider::OpenCode, true) => &OPENCODE_DARK,
+    };
+    let diameter = px(if provider == Provider::Codex {
+        size * 2.
+    } else {
+        size
+    });
+    let logo = match art.as_ref() {
+        Some(image) => img(image.clone())
+            .size(diameter)
+            .flex_none()
+            .into_any_element(),
+        None => svg()
+            .path(match provider {
+                Provider::Codex => "refract/openai.svg",
+                Provider::OpenCode => "refract/opencode.svg",
+            })
+            .size(diameter)
+            .flex_none()
+            .text_color(rgb(palette.text))
+            .into_any_element(),
+    };
+    div()
         .size(px(size))
         .flex_none()
-        .text_color(rgb(color))
+        .flex()
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
+        .child(logo)
 }
 
 fn popup_geometry(anchor: Bounds<Pixels>, viewport: Size<Pixels>) -> (Point<Pixels>, Size<Pixels>) {
@@ -113,11 +177,29 @@ fn popup_geometry(anchor: Bounds<Pixels>, viewport: Size<Pixels>) -> (Point<Pixe
     (point(x, y), size(width, height))
 }
 
+fn opening_scope(active: Option<Provider>, catalog: Option<&Catalog>) -> Scope {
+    let Some(provider) = active else {
+        return Scope::All;
+    };
+    if catalog.is_some_and(|catalog| {
+        catalog
+            .preferences
+            .model
+            .as_ref()
+            .is_some_and(|id| catalog.preferences.favorites.contains(id))
+    }) {
+        Scope::Favorites
+    } else {
+        Scope::Provider(provider)
+    }
+}
+
 impl ModelMenu {
     fn new(
         owner: WeakEntity<Library>,
         active: Option<Provider>,
         scope: Scope,
+        wait_for_opening_scope: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -126,13 +208,21 @@ impl ModelMenu {
         let exit = owner.clone();
         let focus_out = window.on_focus_out(&focus, cx, move |_, window, app| {
             let _ = exit.update(app, |library, cx| {
-                library.close_model_menu(false, window, cx)
+                let on_trigger = library
+                    .selection
+                    .as_ref()
+                    .and_then(|selection| selection.conversation.model_trigger.as_ref())
+                    .is_some_and(|trigger| trigger.is_focused(window));
+                if !on_trigger {
+                    library.close_model_menu(false, window, cx);
+                }
             });
         });
         let query_changes = cx.subscribe(&query, |menu, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 menu.scroll.set_offset(point(px(0.), px(0.)));
                 menu.details = false;
+                menu.keyboard.current = None;
             }
             cx.notify();
         });
@@ -143,7 +233,9 @@ impl ModelMenu {
             scroll: ScrollHandle::new(),
             first: active.unwrap_or(Provider::Codex),
             scope,
+            wait_for_opening_scope,
             details: false,
+            keyboard: Keyboard::new(cx),
             _query_changes: query_changes,
             _focus_out: focus_out,
         }
@@ -151,7 +243,9 @@ impl ModelMenu {
 
     fn switch_scope(&mut self, scope: Scope, window: &mut Window, cx: &mut Context<Self>) {
         self.scope = scope;
+        self.wait_for_opening_scope = false;
         self.details = false;
+        self.keyboard.current = None;
         self.scroll.set_offset(point(px(0.), px(0.)));
         self.query.update(cx, |input, cx| {
             input.set_value("", window, cx);
@@ -174,77 +268,74 @@ impl ModelMenu {
             .border_r_1()
             .border_color(rgb(colors.divider))
             .bg(rgb(colors.rail))
-            .children(
-                [
-                    Scope::Favorites,
-                    Scope::Provider(Provider::Codex),
-                    Scope::Provider(Provider::OpenCode),
-                ]
-                .into_iter()
-                .map(|scope| {
-                    let (id, label) = match scope {
-                        Scope::Favorites => ("filter-favorites", "Favorites"),
-                        Scope::Provider(Provider::Codex) => ("filter-codex", "Codex"),
-                        _ => ("filter-opencode", "OpenCode"),
-                    };
-                    div()
-                        .id(id)
-                        .debug_selector(move || id.into())
-                        .relative()
-                        .tab_index(1)
-                        .size(px(34.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(5.))
-                        .cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .focus(move |style| style.border_1().border_color(rgb(focus)))
-                        .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
-                        .when(self.scope == scope, |button| {
-                            button.child(
-                                div()
-                                    .absolute()
-                                    .right_0()
-                                    .top(px(7.))
-                                    .bottom(px(7.))
-                                    .w(px(3.))
-                                    .rounded(px(2.))
-                                    .bg(rgb(focus)),
-                            )
-                        })
-                        .child(match scope {
-                            Scope::Provider(provider) => {
-                                provider_logo(provider, 20., colors.base.text).into_any_element()
-                            }
-                            _ => svg()
-                                .path("refract/favorite-star.svg")
-                                .size(px(20.))
-                                .text_color(rgb(colors.base.text))
-                                .into_any_element(),
-                        })
-                        .on_click(cx.listener(move |menu, _, window, cx| {
+            .children(FILTERS.into_iter().enumerate().map(|(index, scope)| {
+                let (id, label) = match scope {
+                    Scope::Favorites => ("filter-favorites", "Favorites"),
+                    Scope::Provider(Provider::Codex) => ("filter-codex", "Codex"),
+                    _ => ("filter-opencode", "OpenCode"),
+                };
+                div()
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .relative()
+                    .tab_index(1)
+                    .track_focus(&self.keyboard.filters[index])
+                    .size(px(34.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(rgb(hover)))
+                    .focus(move |style| style.border_1().border_color(rgb(focus)))
+                    .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+                    .when(self.scope == scope, |button| {
+                        button.child(
+                            div()
+                                .absolute()
+                                .right_0()
+                                .top(px(7.))
+                                .bottom(px(7.))
+                                .w(px(3.))
+                                .rounded(px(2.))
+                                .bg(rgb(focus)),
+                        )
+                    })
+                    .child(match scope {
+                        Scope::Provider(provider) => {
+                            provider_logo(provider, 18., colors.base).into_any_element()
+                        }
+                        _ => svg()
+                            .path("refract/favorite-star.svg")
+                            .size(px(20.))
+                            .text_color(rgb(colors.base.text))
+                            .into_any_element(),
+                    })
+                    .on_click(
+                        cx.listener(move |menu, _, window, cx| {
                             menu.switch_scope(scope, window, cx)
-                        }))
-                        .on_key_down(cx.listener(move |menu, event: &KeyDownEvent, window, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space" | "right") {
-                                menu.switch_scope(scope, window, cx);
-                                window.prevent_default();
-                                cx.stop_propagation();
-                            }
-                        }))
-                }),
-            )
+                        }),
+                    )
+                    .on_key_down(cx.listener(move |menu, event: &KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            menu.switch_scope(scope, window, cx);
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        }
+                    }))
+            }))
     }
 
     fn results(
-        &self,
+        &mut self,
         colors: &MenuColors,
         active: Option<Provider>,
         handoff: Option<Provider>,
         sources: &[(Provider, Entity<ModelPicker>)],
+        compact: bool,
+        window: &mut Window,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> gpui::Stateful<gpui::Div> {
         let input = self.query.read(cx).value().to_lowercase();
         let terms: Vec<_> = input.split_whitespace().collect();
         let scope = if terms.is_empty() {
@@ -252,114 +343,107 @@ impl ModelMenu {
         } else {
             Scope::All
         };
-        let mut list = div()
-            .id("model-results")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .px(px(10.))
-            .pt(px(7.))
-            .pb(px(9.));
-        let other = if self.first == Provider::Codex {
+        let second = if self.first == Provider::Codex {
             Provider::OpenCode
         } else {
             Provider::Codex
         };
+        let mut entries = Vec::new();
         let mut groups = 0;
-        let mut rows = 0;
-        for provider in [self.first, other] {
+        let mut count = 0;
+        for provider in [self.first, second] {
             if matches!(scope, Scope::Provider(only) if only != provider) {
                 continue;
             }
             let Some((_, source)) = sources.iter().find(|(kind, _)| *kind == provider) else {
                 if scope == Scope::Provider(provider) {
-                    list = list.child(status(
-                        "Provider unavailable",
-                        "Install and authenticate this provider to use it.",
-                        colors,
+                    entries.push(ResultItem::Element(
+                        status(
+                            "Provider unavailable",
+                            "Install and authenticate this provider to use it.",
+                            colors,
+                        )
+                        .into_any_element(),
                     ));
                 }
                 continue;
             };
             let picker = source.read(cx);
-            if scope == Scope::All
-                && picker.provider.is_none()
-                && picker
-                    .catalog()
-                    .is_some_and(|catalog| catalog.options.is_err())
-            {
+            let catalog = picker.catalog();
+            let offline = picker.provider.is_none()
+                && catalog.is_some_and(|catalog| catalog.options.is_err());
+            if scope == Scope::All && offline {
                 continue;
             }
-            let catalog = picker.catalog();
-            let mut models = Vec::new();
+            let mut rows = Vec::new();
             if let Some(catalog) = catalog {
-                if scope == Scope::Favorites {
-                    models.extend(catalog.preferences.favorites.iter().map(|id| {
-                        catalog
-                            .models()
+                let make_row = |id: &str, model: Option<&super::Model>| {
+                    let available = model.is_some() && picker.loading.is_none();
+                    let (name, detail) = model.map_or_else(
+                        || {
+                            let displayed = format_model_name(id.rsplit('/').next().unwrap_or(id));
+                            let origin = if provider == Provider::OpenCode {
+                                open_code_source(id)
+                            } else {
+                                id.to_owned()
+                            };
+                            (displayed, Some(format!("{origin} \u{00b7} Unavailable")))
+                        },
+                        |model| (model.name.clone(), model.disambiguator.clone()),
+                    );
+                    ResultRow {
+                        key: ModelKey(provider, id.into()),
+                        name,
+                        detail,
+                        available,
+                        favorite: catalog
+                            .preferences
+                            .favorites
                             .iter()
-                            .find(|model| model.id == *id)
-                            .map_or_else(
-                                || {
-                                    let name =
-                                        format_model_name(id.rsplit('/').next().unwrap_or(id));
-                                    let detail = if provider == Provider::OpenCode {
-                                        open_code_source(id)
-                                    } else {
-                                        id.clone()
-                                    };
-                                    (None, id.clone(), name, Some(detail))
-                                },
-                                |model| {
-                                    (
-                                        Some(model),
-                                        model.id.clone(),
-                                        model.name.clone(),
-                                        model.disambiguator.clone(),
-                                    )
-                                },
-                            )
+                            .any(|favored| favored == id),
+                        active: active == Some(provider)
+                            && catalog.preferences.model.as_deref() == Some(id),
+                        handoff: available && handoff.is_some_and(|current| current != provider),
+                    }
+                };
+                if scope == Scope::Favorites {
+                    rows.extend(catalog.preferences.favorites.iter().map(|id| {
+                        make_row(id, catalog.models().iter().find(|model| model.id == *id))
                     }));
                 } else {
-                    models.extend(
+                    rows.extend(
                         catalog
                             .models()
                             .iter()
                             .filter(|model| model.matches_search(provider_label(provider), &terms))
-                            .map(|model| {
-                                (
-                                    Some(model),
-                                    model.id.clone(),
-                                    model.name.clone(),
-                                    model.disambiguator.clone(),
-                                )
-                            }),
+                            .map(|model| make_row(&model.id, Some(model))),
                     );
                 }
             }
             let notice = if scope == Scope::Favorites
-                && picker.provider.is_none()
-                && models.is_empty()
-                && catalog.is_some()
+                && offline
+                && rows.is_empty()
                 && picker.save_error.is_none()
             {
                 None
             } else {
                 self.provider_status(source, colors, cx)
             };
-            if models.is_empty() && notice.is_none() {
+            if rows.is_empty() && notice.is_none() {
                 continue;
             }
-            let mut group = div().when(groups > 0, |group| {
-                group
-                    .mt(px(5.))
-                    .pt(px(4.))
-                    .border_t_1()
-                    .border_color(rgb(colors.divider))
-            });
+            if groups > 0 {
+                entries.push(ResultItem::Element(
+                    div()
+                        .mt(px(5.))
+                        .mb(px(4.))
+                        .h(px(1.))
+                        .bg(rgb(colors.divider))
+                        .into_any_element(),
+                ));
+            }
             if matches!(scope, Scope::All | Scope::Favorites) {
-                group = group.child(
+                entries.push(ResultItem::Element(
                     div()
                         .flex()
                         .items_center()
@@ -370,37 +454,18 @@ impl ModelMenu {
                         .line_height(px(16.5))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(colors.muted))
-                        .child(provider_logo(provider, 14., colors.muted))
-                        .child(provider_label(provider)),
-                );
-            }
-            for (model, id, name, detail) in models {
-                let favorite =
-                    catalog.is_some_and(|catalog| catalog.preferences.favorites.contains(&id));
-                let selected = active == Some(provider)
-                    && catalog.is_some_and(|catalog| {
-                        catalog.preferences.model.as_deref() == Some(id.as_str())
-                    });
-                let can_choose = model.is_some() && picker.loading.is_none();
-                let detail = if model.is_none() {
-                    Some(detail.map_or_else(
-                        || "Unavailable".to_owned(),
-                        |detail| format!("{detail} · Unavailable"),
-                    ))
-                } else {
-                    detail
-                };
-                group = group.child(self.model_row(
-                    source, provider, id, name, detail, can_choose, favorite, selected, handoff,
-                    colors, cx,
+                        .child(provider_logo(provider, 16., colors.base))
+                        .child(provider_label(provider))
+                        .into_any_element(),
                 ));
-                rows += 1;
             }
+            count += rows.len();
+            entries.extend(rows.into_iter().map(ResultItem::Model));
+            entries.extend(notice.map(ResultItem::Element));
             groups += 1;
-            list = list.child(group.children(notice));
         }
-        if rows == 0 && !terms.is_empty() {
-            list = list.child(
+        if count == 0 && !terms.is_empty() {
+            entries.push(ResultItem::Element(
                 status(
                     "No matching models",
                     "Try another name or provider.",
@@ -414,22 +479,55 @@ impl ModelMenu {
                         .on_click(cx.listener(|menu, _, window, cx| {
                             menu.switch_scope(menu.scope, window, cx)
                         })),
-                ),
-            );
-        } else if groups == 0 && scope == Scope::Favorites {
-            list = list.child(status(
-                "No favorites yet",
-                "Use the star beside a model to find it here.",
-                colors,
+                )
+                .into_any_element(),
             ));
-        } else if groups == 0 && scope == Scope::All {
-            list = list.child(status(
-                "No providers found",
-                "Install and authenticate Codex or OpenCode to use the assistant.",
-                colors,
-            ));
+        } else if groups == 0 {
+            let message = match scope {
+                Scope::Favorites => Some((
+                    "No favorites yet",
+                    "Use the star beside a model to find it here.",
+                )),
+                Scope::All => Some((
+                    "No providers found",
+                    "Install and authenticate Codex or OpenCode to use the assistant.",
+                )),
+                Scope::Provider(_) => None,
+            };
+            if let Some((title, detail)) = message {
+                entries.push(ResultItem::Element(
+                    status(title, detail, colors).into_any_element(),
+                ));
+            }
         }
-        list
+        let search = self.query.read(cx).focus_handle(cx);
+        let tab_target = self.keyboard.rebuild_results(&entries, &search, window, cx);
+        let mut focus = self.keyboard.rows.iter();
+        let mut nth_choice = 0;
+        div()
+            .id("model-results")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .px(px(10.))
+            .pt(px(7.))
+            .pb(px(9.))
+            .children(entries.into_iter().map(|item| match item {
+                ResultItem::Element(element) => element,
+                ResultItem::Model(row) => {
+                    let focus = focus.next().expect("focus for each model row");
+                    let tab_stop = tab_target.as_ref() == Some(&row.key);
+                    let shortcut = if row.available {
+                        nth_choice += 1;
+                        (!compact && nth_choice <= 9).then_some(nth_choice)
+                    } else {
+                        None
+                    };
+                    self.model_row(row, focus, tab_stop, shortcut, colors, cx)
+                        .into_any_element()
+                }
+            }))
     }
 
     fn provider_status(
@@ -541,55 +639,136 @@ impl ModelMenu {
         Some(notice.into_any_element())
     }
 
+    fn editable_picker(&self, provider: Provider, app: &gpui::App) -> Option<Entity<ModelPicker>> {
+        self.owner
+            .read_with(app, |library, _| {
+                let pane = &library.selection.as_ref()?.conversation;
+                if pane.running.is_some() {
+                    return None;
+                }
+                pane.models.get(&provider).cloned()
+            })
+            .ok()
+            .flatten()
+    }
+
+    fn choose_key(&mut self, key: &ModelKey, cx: &mut Context<Self>) {
+        let Some(picker) = self.editable_picker(key.0, cx) else {
+            return;
+        };
+        if !picker.update(cx, |picker, cx| picker.choose(&key.1, cx)) {
+            return;
+        }
+        let _ = self.owner.update(cx, |library, cx| {
+            if let Some(selection) = &mut library.selection
+                && selection.conversation.provider != Some(key.0)
+            {
+                selection.conversation.provider = Some(key.0);
+                library.schedule_chat_draft_save(cx);
+                cx.notify();
+            }
+        });
+        self.keyboard.current = Some(key.clone());
+        cx.notify();
+    }
+
+    fn choose_effort(&self, provider: Provider, value: &str, cx: &mut Context<Self>) {
+        if let Some(picker) = self.editable_picker(provider, cx) {
+            picker.update(cx, |picker, cx| picker.choose_effort(value, cx));
+        }
+    }
+
+    fn set_favorite(&mut self, key: &ModelKey, favorite: bool, cx: &mut Context<Self>) {
+        if let Some(picker) = self.editable_picker(key.0, cx) {
+            picker.update(cx, |picker, cx| picker.set_favorite(&key.1, favorite, cx));
+            self.keyboard.current = Some(key.clone());
+            cx.notify();
+        }
+    }
+
     fn model_row(
         &self,
-        source: &Entity<ModelPicker>,
-        provider: Provider,
-        id: String,
-        name: String,
-        detail: Option<String>,
-        available: bool,
-        favorite: bool,
-        active: bool,
-        handoff: Option<Provider>,
+        row: ResultRow,
+        handles: &ResultFocus,
+        tab_stop: bool,
+        shortcut: Option<usize>,
         colors: &MenuColors,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let owner = self.owner.clone();
-        let chooser = source.clone();
-        let starred = source.downgrade();
-        let choice_id = id.clone();
-        let star_id = id.clone();
-        let row_id = format!("model/{}/{id}", provider.as_str());
+        let ResultRow {
+            key,
+            name,
+            detail,
+            available,
+            favorite,
+            active,
+            handoff,
+        } = row;
+        let row_id = format!("model/{}/{}", key.0.as_str(), key.1);
         let star_label = if favorite {
             format!("Remove {name} from favorites")
         } else {
             format!("Add {name} to favorites")
         };
-        let text = colors.base.text;
-        let hover = colors.selected;
+        let choice_click = key.clone();
+        let choice_key = key.clone();
+        let favorite_click = key.clone();
+        let muted = colors.muted;
+        let selection = colors.selected;
+        let ring = colors.focus;
         div()
             .id(SharedString::from(row_id.clone()))
             .debug_selector(move || row_id.clone())
+            .group("model-result")
             .flex()
             .items_center()
             .my(px(1.))
             .pr(px(5.))
             .rounded(px(5.))
-            .when(active, |row| row.bg(rgb(colors.selected)))
+            .when(active, |row| row.bg(rgb(selection)))
             .child(
-                Button::new("choose-model")
-                    .ghost()
-                    .with_size(gpui_component::Size::Size(px(33.)))
+                div()
+                    .id("choose-model")
                     .flex_1()
                     .min_w(px(0.))
                     .min_h(px(33.))
-                    .justify_start()
+                    .flex()
+                    .items_center()
                     .gap(px(7.))
-                    .px(px(6.))
-                    .disabled(!available)
-                    .tooltip(name.clone())
-                    .child(provider_logo(provider, 16., colors.muted))
+                    .px(px(7.))
+                    .py(px(4.))
+                    .rounded(px(5.))
+                    .tooltip({
+                        let name = name.clone();
+                        move |window, cx| Tooltip::new(name.clone()).build(window, cx)
+                    })
+                    .when(!available, |choice| choice.opacity(0.55))
+                    .when(available, |choice| {
+                        choice
+                            .tab_index(2)
+                            .tab_stop(tab_stop)
+                            .track_focus(&handles.choice)
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(rgb(selection)))
+                            .focus(move |style| {
+                                style.bg(rgb(selection)).border_1().border_color(rgb(ring))
+                            })
+                            .on_click(
+                                cx.listener(move |menu, _, _, cx| {
+                                    menu.choose_key(&choice_click, cx)
+                                }),
+                            )
+                            .on_key_down(cx.listener(
+                                move |menu, event: &KeyDownEvent, window, cx| {
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        menu.choose_key(&choice_key, cx);
+                                        window.prevent_default();
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
+                    })
+                    .child(provider_logo(key.0, 16., colors.base).opacity(0.72))
                     .child(
                         div()
                             .min_w(px(0.))
@@ -611,8 +790,8 @@ impl ModelMenu {
                                         line.child(
                                             div()
                                                 .text_size(px(11.))
-                                                .text_color(rgb(colors.muted))
-                                                .child("✓"),
+                                                .text_color(rgb(muted))
+                                                .child("\u{2713}"),
                                         )
                                     }),
                             )
@@ -620,51 +799,26 @@ impl ModelMenu {
                                 div()
                                     .text_size(px(11.))
                                     .line_height(px(16.5))
-                                    .text_color(rgb(colors.muted))
+                                    .text_color(rgb(muted))
                                     .child(detail)
                             })),
                     )
-                    .when(
-                        available && handoff.is_some_and(|current| current != provider),
-                        |button| {
-                            button.child(
-                                div()
-                                    .ml_auto()
-                                    .text_size(px(10.))
-                                    .text_color(rgb(colors.muted))
-                                    .child("Handoff"),
-                            )
-                        },
-                    )
-                    .on_click(move |_, _, app| {
-                        let current = owner
-                            .read_with(app, |library, _| {
-                                library.selection.as_ref().is_some_and(|selection| {
-                                    selection.conversation.running.is_none()
-                                        && selection.conversation.models.get(&provider)
-                                            == Some(&chooser)
-                                })
-                            })
-                            .unwrap_or(false);
-                        if !current {
-                            return;
-                        }
-                        chooser.update(app, |picker, cx| picker.choose(&choice_id, cx));
-                        let _ = owner.update(app, |library, cx| {
-                            if let Some(selection) = &mut library.selection
-                                && selection.conversation.provider != Some(provider)
-                            {
-                                selection.conversation.provider = Some(provider);
-                                library.schedule_chat_draft_save(cx);
-                                cx.notify();
-                            }
-                        });
+                    .when(handoff, |choice| {
+                        choice.child(
+                            div()
+                                .ml_auto()
+                                .text_size(px(10.))
+                                .text_color(rgb(muted))
+                                .child("Handoff"),
+                        )
                     }),
             )
             .child(
                 div()
                     .id("toggle-favorite")
                     .tab_index(2)
+                    .tab_stop(tab_stop || !available)
+                    .track_focus(&handles.star)
                     .w(px(25.))
                     .h(px(28.))
                     .flex_none()
@@ -675,38 +829,50 @@ impl ModelMenu {
                     .justify_center()
                     .text_size(px(15.))
                     .line_height(px(15.))
-                    .text_color(rgb(if favorite {
-                        colors.base.warning
-                    } else {
-                        colors.muted
-                    }))
-                    .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
-                    .tooltip(move |window, cx| Tooltip::new(star_label.clone()).build(window, cx))
-                    .child(if favorite { "★" } else { "☆" })
-                    .on_click({
-                        let source = starred.clone();
-                        let id = star_id.clone();
-                        move |_, _, app| {
-                            let _ = source.update(app, |picker, cx| picker.favorite(&id, cx));
-                        }
+                    .text_color(rgb(if favorite { colors.base.warning } else { muted }))
+                    .when(!favorite && !active && !tab_stop, |star| {
+                        star.opacity(0.)
+                            .group_hover("model-result", |style| style.opacity(1.))
                     })
-                    .on_key_down(cx.listener(move |_, event: &KeyDownEvent, window, cx| {
+                    .hover(move |style| style.bg(rgb(selection)))
+                    .focus(move |style| style.opacity(1.).border_1().border_color(rgb(ring)))
+                    .tooltip(move |window, cx| Tooltip::new(star_label.clone()).build(window, cx))
+                    .child(if favorite { "\u{2605}" } else { "\u{2606}" })
+                    .on_click(cx.listener(move |menu, _, _, cx| {
+                        menu.set_favorite(&favorite_click, !favorite, cx)
+                    }))
+                    .on_key_down(cx.listener(move |menu, event: &KeyDownEvent, window, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            let _ = starred.update(cx, |picker, cx| picker.favorite(&star_id, cx));
+                            menu.set_favorite(&key, !favorite, cx);
                             window.prevent_default();
                             cx.stop_propagation();
                         }
                     })),
             )
+            .children(shortcut.map(|number| {
+                div()
+                    .flex_none()
+                    .rounded(px(3.))
+                    .px(px(4.))
+                    .py(px(1.))
+                    .bg(rgb(colors.divider))
+                    .text_color(rgb(muted))
+                    .text_size(px(11.))
+                    .line_height(px(16.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(format!("Ctrl+{number}"))
+            }))
     }
 
     fn details(
-        &self,
+        &mut self,
         source: Option<&Entity<ModelPicker>>,
         colors: &MenuColors,
         width: Pixels,
+        window: &mut Window,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> gpui::Stateful<gpui::Div> {
+        let previous = std::mem::take(&mut self.keyboard.efforts);
         let mut pane = div()
             .w(width)
             .min_h(px(0.))
@@ -736,6 +902,21 @@ impl ModelMenu {
             ));
         };
         let codex = picker.kind == Provider::Codex;
+        let provider = picker.kind;
+        let ring = colors.focus;
+        let selection = colors.selected;
+        let chosen = catalog
+            .preferences
+            .reasoning_effort
+            .as_ref()
+            .filter(|item| model.efforts.contains(item))
+            .or_else(|| model.efforts.first());
+        let enabled = picker.loading.is_none();
+        let focus_details = (self.details && self.focus.is_focused(window))
+            || previous.iter().any(|item| {
+                item.focus.is_focused(window)
+                    && (item.provider != provider || !model.efforts.contains(&item.value))
+            });
         pane = pane
             .child(
                 div()
@@ -758,15 +939,53 @@ impl ModelMenu {
             );
         for effort in &model.efforts {
             let value = effort.clone();
-            let pick = source.downgrade();
+            let key_value = value.clone();
             let selected = catalog.preferences.reasoning_effort.as_ref() == Some(effort);
+            let focus = previous
+                .iter()
+                .find(|previous| previous.provider == provider && previous.value == *effort)
+                .map_or_else(|| cx.focus_handle(), |previous| previous.focus.clone());
+            if enabled {
+                if focus_details && chosen == Some(effort) {
+                    window.focus(&focus);
+                }
+                self.keyboard.efforts.push(EffortFocus {
+                    provider,
+                    value: value.clone(),
+                    focus: focus.clone(),
+                });
+            }
             pane = pane.child(
-                Button::new(SharedString::from(format!("effort/{effort}")))
-                    .ghost()
-                    .with_size(gpui_component::Size::Size(px(33.)))
+                div()
+                    .id(SharedString::from(format!("effort/{effort}")))
                     .w_full()
                     .h(px(33.))
-                    .justify_start()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .px(px(7.))
+                    .rounded(px(5.))
+                    .when(enabled, |button| {
+                        button
+                            .tab_index(3)
+                            .tab_stop(chosen == Some(effort))
+                            .track_focus(&focus)
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(rgb(selection)))
+                            .focus(move |style| style.border_1().border_color(rgb(ring)))
+                            .on_click(cx.listener(move |menu, _, _, cx| {
+                                menu.choose_effort(provider, &value, cx)
+                            }))
+                            .on_key_down(cx.listener(
+                                move |menu, event: &KeyDownEvent, window, cx| {
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        menu.choose_effort(provider, &key_value, cx);
+                                        window.prevent_default();
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
+                    })
                     .when(selected, |button| button.bg(rgb(colors.selected)))
                     .child(
                         div()
@@ -790,9 +1009,6 @@ impl ModelMenu {
                                 .text_color(rgb(colors.muted))
                                 .child("✓"),
                         )
-                    })
-                    .on_click(move |_, _, app| {
-                        let _ = pick.update(app, |picker, cx| picker.choose_effort(&value, cx));
                     }),
             );
         }
@@ -898,11 +1114,28 @@ impl Render for ModelMenu {
         else {
             return div().into_any_element();
         };
+        if self.wait_for_opening_scope
+            && let Some((_, source)) = sources
+                .iter()
+                .find(|(provider, _)| active == Some(*provider))
+            && let Some(catalog) = source.read(cx).catalog.as_ref()
+        {
+            self.scope = opening_scope(active, catalog.as_ref().ok());
+            self.wait_for_opening_scope = false;
+        }
         let colors = MenuColors::for_window(window);
         let (position, dimensions) = popup_geometry(anchor, window.viewport_size());
         let compact = dimensions.width < px(470.);
         let searching = !self.query.read(cx).value().trim().is_empty();
-        let owner = self.owner.clone();
+        if compact
+            && self
+                .keyboard
+                .efforts
+                .iter()
+                .any(|effort| effort.focus.is_focused(window))
+        {
+            self.details = true;
+        }
         let close = self.owner.clone();
         let click_out = self.owner.clone();
         let search_active = self.query.read(cx).focus_handle(cx).is_focused(window);
@@ -915,6 +1148,19 @@ impl Render for ModelMenu {
             .iter()
             .find(|(provider, _)| active == Some(*provider))
             .map(|(_, source)| source);
+        let show_catalog = !(compact && self.details);
+        let results = if show_catalog {
+            Some(self.results(&colors, active, handoff, &sources, compact, window, cx))
+        } else {
+            self.keyboard.rows.clear();
+            None
+        };
+        let details = if !compact || self.details {
+            Some(self.details(active_source, &colors, settings_width, window, cx))
+        } else {
+            self.keyboard.efforts.clear();
+            None
+        };
         let footer =
             div()
                 .h(px(44.))
@@ -937,8 +1183,13 @@ impl Render for ModelMenu {
                             .ghost()
                             .small()
                             .label(if self.details { "Models" } else { "Settings" })
-                            .on_click(cx.listener(|menu, _, _, cx| {
+                            .on_click(cx.listener(|menu, _, window, cx| {
                                 menu.details = !menu.details;
+                                if menu.details {
+                                    window.focus(&menu.focus);
+                                } else {
+                                    menu.query.update(cx, |input, cx| input.focus(window, cx));
+                                }
                                 cx.notify();
                             })),
                     )
@@ -994,14 +1245,7 @@ impl Render for ModelMenu {
                     spread_radius: px(0.),
                 },
             ])
-            .capture_key_down(cx.listener(move |_, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" {
-                    let _ =
-                        owner.update(cx, |library, cx| library.close_model_menu(true, window, cx));
-                    window.prevent_default();
-                    cx.stop_propagation();
-                }
-            }))
+            .capture_key_down(cx.listener(Self::handle_menu_key))
             .on_mouse_down_out(move |event, window, cx| {
                 if !anchor.contains(&event.position) {
                     let _ = click_out.update(cx, |library, cx| {
@@ -1014,10 +1258,10 @@ impl Render for ModelMenu {
                     .flex_1()
                     .min_h(px(0.))
                     .flex()
-                    .when(!searching && !(compact && self.details), |panel| {
+                    .when(!searching && show_catalog, |panel| {
                         panel.child(self.rail(&colors, compact, cx))
                     })
-                    .when(!(compact && self.details), |panel| {
+                    .when_some(results, |panel, results| {
                         panel.child(
                             div()
                                 .flex_1()
@@ -1050,12 +1294,10 @@ impl Render for ModelMenu {
                                                 ),
                                         ),
                                 )
-                                .child(self.results(&colors, active, handoff, &sources, cx)),
+                                .child(results),
                         )
                     })
-                    .when(!compact || self.details, |panel| {
-                        panel.child(self.details(active_source, &colors, settings_width, cx))
-                    }),
+                    .children(details),
             )
             .child(footer);
         deferred(anchored().position(position).child(panel))
@@ -1081,31 +1323,19 @@ impl Library {
             return;
         }
         let active = pane.provider;
-        let scope = active.map_or(Scope::All, |provider| {
-            if pane
-                .models
-                .get(&provider)
-                .and_then(|source| source.read(cx).catalog())
-                .is_some_and(|catalog| {
-                    catalog
-                        .preferences
-                        .model
-                        .as_ref()
-                        .is_some_and(|id| catalog.preferences.favorites.contains(id))
-                })
-            {
-                Scope::Favorites
-            } else {
-                Scope::Provider(provider)
-            }
-        });
+        let loaded = active
+            .and_then(|kind| pane.models.get(&kind))
+            .and_then(|source| source.read(cx).catalog.as_ref());
+        let scope = opening_scope(active, loaded.and_then(|catalog| catalog.as_ref().ok()));
+        let wait_for_opening_scope = active.is_some() && loaded.is_none();
         if cfg!(not(all(test, feature = "ui-tests"))) {
             for kind in PROVIDERS {
                 self.prepare_model_catalog(kind, cx);
             }
         }
         let parent = cx.weak_entity();
-        let menu = cx.new(|cx| ModelMenu::new(parent, active, scope, window, cx));
+        let menu =
+            cx.new(|cx| ModelMenu::new(parent, active, scope, wait_for_opening_scope, window, cx));
         let query = menu.read(cx).query.clone();
         if let Some(selection) = &mut self.selection {
             selection.conversation.model_menu = Some(menu);
@@ -1130,8 +1360,17 @@ impl Library {
         }
     }
 
-    pub(crate) fn model_menu_layer(&self) -> Option<impl IntoElement> {
-        self.selection.as_ref()?.conversation.model_menu.clone()
+    pub(crate) fn model_menu_layer(&mut self, window: &Window) -> Option<impl IntoElement> {
+        let selection = self.selection.as_ref()?;
+        if !self
+            .displayed_panes(selection, f32::from(window.viewport_size().width))
+            .agent
+            || self.settings.dialog_open()
+        {
+            self.selection.as_mut()?.conversation.model_menu = None;
+            return None;
+        }
+        selection.conversation.model_menu.clone()
     }
 
     pub(in crate::conversation_view) fn model_picker_button(
@@ -1222,7 +1461,7 @@ impl Library {
             )
             .children(
                 pane.provider
-                    .map(|provider| provider_logo(provider, 16., palette.text)),
+                    .map(|provider| provider_logo(provider, 16., palette)),
             )
             .child(
                 div()
@@ -1252,6 +1491,15 @@ impl Library {
                 .on_key_down(cx.listener(|library, event: &KeyDownEvent, window, cx| {
                     if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                         library.toggle_model_menu(window, cx);
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    } else if event.keystroke.key == "escape"
+                        && library
+                            .selection
+                            .as_ref()
+                            .is_some_and(|selection| selection.conversation.model_menu.is_some())
+                    {
+                        library.close_model_menu(true, window, cx);
                         window.prevent_default();
                         cx.stop_propagation();
                     }
@@ -1340,12 +1588,13 @@ mod tests {
                                 disambiguator: None,
                                 legacy_ids: Vec::new(),
                                 description: String::new(),
-                                efforts: Vec::new(),
-                                default_effort: None,
+                                efforts: vec!["low".into(), "high".into()],
+                                default_effort: Some("low".into()),
                                 is_default: true,
                             }]),
                             preferences: AssistantPreferences {
                                 model: Some(id.into()),
+                                reasoning_effort: Some("low".into()),
                                 favorites: vec![favorite.into()],
                                 ..Default::default()
                             },
@@ -1371,6 +1620,17 @@ mod tests {
         click(cx, "filter-favorites");
         assert!(cx.debug_bounds("model/codex/retired-codex").is_some());
         assert!(cx.debug_bounds("model/opencode/openai/research").is_some());
+        cx.simulate_keystrokes("down right enter");
+        cx.refresh().unwrap();
+        assert!(cx.debug_bounds("model/opencode/openai/research").is_none());
+        cx.update(|window, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().conversation;
+            let menu = pane.model_menu.as_ref().unwrap().read(app);
+            assert_eq!(pane.provider, Some(Provider::Codex));
+            assert!(menu.keyboard.rows[0].star.is_focused(window));
+            let input = menu.query.clone();
+            input.update(app, |input, cx| input.focus(window, cx));
+        });
         cx.simulate_input("Research");
         cx.run_until_parked();
         cx.refresh().unwrap();
@@ -1390,12 +1650,40 @@ mod tests {
             )
         });
 
-        click(cx, "model/opencode/openai/research");
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().conversation;
+            assert_eq!(pane.provider, Some(Provider::Codex));
+            assert!(
+                pane.model_menu.as_ref().unwrap().read(app).keyboard.rows[0]
+                    .choice
+                    .is_focused(window)
+            );
+        });
+        cx.simulate_keystrokes("ctrl-2");
+        cx.refresh().unwrap();
         cx.update(|window, app| {
             let pane = &library.read(app).selection.as_ref().unwrap().conversation;
             assert_eq!(pane.provider, Some(Provider::OpenCode));
-            let input = pane.model_menu.as_ref().unwrap().read(app).query.clone();
-            input.update(app, |input, cx| input.focus(window, cx));
+            let menu = pane.model_menu.as_ref().unwrap().read(app);
+            assert!(menu.keyboard.rows[1].choice.is_focused(window));
+            window.focus(&menu.keyboard.efforts[0].focus);
+        });
+        cx.simulate_keystrokes("right");
+        cx.update(|window, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().conversation;
+            let menu = pane.model_menu.as_ref().unwrap().read(app);
+            assert!(menu.keyboard.efforts[1].focus.is_focused(window));
+            let source = pane.models[&Provider::OpenCode].read(app);
+            assert_eq!(
+                source
+                    .catalog()
+                    .unwrap()
+                    .preferences
+                    .reasoning_effort
+                    .as_deref(),
+                Some("high")
+            );
         });
         cx.simulate_keystrokes("escape");
         cx.update(|window, app| {

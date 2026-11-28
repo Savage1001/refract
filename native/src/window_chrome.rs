@@ -1,7 +1,7 @@
 use gpui::{
-    Bounds, ContentMask, Hsla, IntoElement, MouseButton, PathBuilder, Pixels, TitlebarOptions,
-    Window, WindowAppearance, WindowControlArea, canvas, div, fill, point, prelude::*, px, rgb,
-    size, transparent_black,
+    Bounds, ContentMask, Hsla, IntoElement, MouseButton, Pixels, TitlebarOptions, Window,
+    WindowAppearance, WindowControlArea, canvas, div, fill, point, prelude::*, px, rgb, size,
+    transparent_black,
 };
 use gpui_component::tooltip::Tooltip;
 #[cfg(not(test))]
@@ -242,14 +242,30 @@ impl CaptionButton {
                 window.paint_quad(outline(front));
             }
             Self::Close => {
-                let inset = stroke / 2.;
-                let mut path = PathBuilder::stroke(stroke);
-                path.move_to(origin + point(inset, inset));
-                path.line_to(origin + point(extent - inset, extent - inset));
-                path.move_to(origin + point(extent - inset, inset));
-                path.line_to(origin + point(inset, extent - inset));
-                if let Ok(path) = path.build() {
-                    window.paint_path(path, color);
+                // Electron's close diagonals are rasterized without antialiasing.
+                // Fill each device-pixel row within half the diagonal stroke width.
+                let to_logical = |pixels: i32| px(pixels as f32 / scale);
+                let side = f32::from(extent * scale).round() as i32;
+                let stroke_pixels = f32::from(stroke * scale);
+                let width_adjustment = if color == Hsla::from(rgb(0xffffff)) {
+                    1.1
+                } else {
+                    1.05
+                };
+                let radius = (stroke_pixels * width_adjustment * std::f32::consts::FRAC_1_SQRT_2)
+                    .floor() as i32;
+                for row in 0..side {
+                    for center in [row, side - 1 - row] {
+                        let left = (center - radius).max(0);
+                        let right = (center + radius + 1).min(side);
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                origin + point(to_logical(left), to_logical(row)),
+                                size(to_logical(right - left), to_logical(1)),
+                            ),
+                            color,
+                        ));
+                    }
                 }
             }
         }

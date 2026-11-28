@@ -9,6 +9,7 @@ on:
       - scripts/capture-electron-parity.cts
       - scripts/legacy-profile-fixture.cts
       - test/fixtures/headless-ui.cts
+      - test/fixtures/native-picker-providers.cts
       - test/fixtures/parity-document.*
 
 permissions:
@@ -136,11 +137,22 @@ jobs:
       - name: Capture the native library and workspace offscreen
         if: runner.os == 'Linux'
         run: |
+          [[ "$GITHUB_ACTIONS" == true && "$RUNNER_ENVIRONMENT" == github-hosted ]]
           sudo apt-get install -y --no-install-recommends dbus-x11 dconf-gsettings-backend gsettings-desktop-schemas imagemagick mesa-vulkan-drivers xauth xdg-desktop-portal xdg-desktop-portal-gtk xdotool xvfb
           output="$RUNNER_TEMP/refract-native-reference"
           fixture="$(mktemp -d "$RUNNER_TEMP/refract-native-fixture.XXXXXX")"
           fixture_tools="$fixture/tex"
-          mkdir -p "$output" "$fixture_tools"
+          export REFRACT_CAPTURE_PROVIDER_BIN="$fixture/providers"
+          export REFRACT_CAPTURE_PROVIDER_FIXTURE="$(cd .. && pwd)/build/test/fixtures/native-picker-providers.cjs"
+          test -f "$REFRACT_CAPTURE_PROVIDER_FIXTURE"
+          mkdir -p "$output" "$fixture_tools" "$REFRACT_CAPTURE_PROVIDER_BIN"
+          for provider in codex opencode; do
+            cat > "$REFRACT_CAPTURE_PROVIDER_BIN/$provider" <<'PROVIDER'
+          #!/bin/sh
+          exec node "$REFRACT_CAPTURE_PROVIDER_FIXTURE" "$(basename "$0")" "$@"
+          PROVIDER
+            chmod +x "$REFRACT_CAPTURE_PROVIDER_BIN/$provider"
+          done
           export REFRACT_CAPTURE_PDF="$fixture/document.pdf"
           base64 --decode ../test/fixtures/parity-document.pdf.b64 > "$REFRACT_CAPTURE_PDF"
           # The screenshot must render the same PDF as the Electron reference.
@@ -185,14 +197,25 @@ jobs:
             echo "Portal reported $actual_scheme for $theme" >&2
             exit 1
           fi
-          ./target/debug/refract-native > "$output/native-$theme.log" 2>&1 &
-          app=$!
-          trap 'kill "$app" 2>/dev/null || true; wait "$app" 2>/dev/null || true' EXIT
-          client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
-          timeout 10s xdotool windowmove --sync "$client" 0 0
-          xdotool windowsize "$client" 1440 900
-          timeout 10s xdotool windowfocus --sync "$client"
-          xdotool mousemove --sync 0 0
+          app=
+          stop_app() {
+            if [[ -n "$app" ]]; then
+              kill "$app" 2>/dev/null || true
+              wait "$app" 2>/dev/null || true
+              app=
+            fi
+          }
+          trap stop_app EXIT
+          start_app() {
+            ./target/debug/refract-native > "$1" 2>&1 &
+            app=$!
+            client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
+            timeout 10s xdotool windowmove --sync "$client" 0 0
+            xdotool windowsize "$client" 1440 900
+            timeout 10s xdotool windowfocus --sync "$client"
+            xdotool mousemove --sync 0 0
+          }
+          start_app "$output/native-$theme.log"
           capture() {
             local screen=$1 expected_width=$2 expected_height=$3 width height colors sidebar_edge
             local shot="$output/$theme-$screen.png"
@@ -284,6 +307,64 @@ jobs:
           fi
           timeout 10s xdotool windowsize --sync "$client" 900 650
           capture workspace-compact 900 650
+
+          # Use a separate disposable profile so the earlier screenshots keep their account state.
+          stop_app
+          original_projects="$REFRACT_DATA_DIR/projects"
+          export REFRACT_DATA_DIR="$REFRACT_DATA_DIR-models"
+          mkdir -p "$REFRACT_DATA_DIR/codex-account"
+          cp -R "$original_projects" "$REFRACT_DATA_DIR/"
+          printf %s cli > "$REFRACT_DATA_DIR/codex-account/mode"
+          printf '%s\n' '{"model":null,"reasoningEffort":null,"favorites":[],"fastMode":false}' > "$REFRACT_DATA_DIR/codex-preferences.json"
+          printf '%s\n' '{"model":null,"reasoningEffort":null,"favorites":["opencode/research"]}' > "$REFRACT_DATA_DIR/opencode-preferences.json"
+          export PATH="$REFRACT_CAPTURE_PROVIDER_BIN:$PATH"
+          start_app "$output/native-$theme-models.log"
+
+          wait_for_preference() {
+            local file=$1 expected=$2
+            for attempt in {1..40}; do
+              if grep -Fq -- "$expected" "$REFRACT_DATA_DIR/$file"; then
+                return 0
+              fi
+              sleep 0.25
+            done
+            echo "The $theme native model picker did not write $expected to $file" >&2
+            return 1
+          }
+          capture_picker() {
+            local screen=$1 before=$2 minimum_change=$3 changed status outline_pixels
+            local shot="$output/$theme-$screen.png" outline='#D8D8D9'
+            if [[ "$theme" == dark ]]; then outline='#3A3A3A'; fi
+            for attempt in {1..24}; do
+              capture "$screen" 1440 900
+              status=0
+              changed=$(compare -metric AE "$before" "$shot" null: 2>&1) || status=$?
+              outline_pixels=$(convert "$shot" -crop 400x44+290+406 +repage -alpha off \
+                -fill black +opaque "$outline" -fill white -opaque "$outline" -format '%[fx:round(mean*w*h)]' info:)
+              if (( status <= 1 && outline_pixels >= 200 )) \
+                && awk -v minimum="$minimum_change" '$1 + 0 >= minimum { changed = 1 } END { exit !changed }' <<< "$changed"; then
+                return 0
+              fi
+              sleep 0.2
+            done
+            echo "The $theme $screen did not show the model popup ($outline_pixels outline pixels, $changed changed pixels)" >&2
+            return 1
+          }
+          (output="$REFRACT_DATA_DIR"; capture library-list 1440 900)
+          click 340 615
+          wait_for_preference codex-preferences.json '"model":"model-a"'
+          before="$REFRACT_DATA_DIR/before-model-picker.png"
+          import -window "$client" "$before"
+          click 725 844
+          wait_for_preference opencode-preferences.json '"model":"opencode/research"'
+          capture_picker model-picker "$before" 10000
+
+          xdotool key --delay 90 Down Right Return
+          wait_for_preference codex-preferences.json '"favorites":["model-a"]'
+          click 230 452
+          capture_picker model-picker-favorites "$output/$theme-model-picker.png" 200
+          xdotool type --clearmodifiers --delay 25 'research model'
+          capture_picker model-picker-search "$output/$theme-model-picker-favorites.png" 2000
           CAPTURE
           }
           capture_theme light prefer-light 2 '#FCFCFC' '#E4E4E7'
