@@ -3,7 +3,9 @@ use super::{
     Library, Navigation, Palette, Selection, build_log_view::tree_has_file, monospace_font,
     workspace_tools::tool_button,
 };
-use gpui::{Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb, svg};
+use gpui::{
+    ClickEvent, Context, FontWeight, KeyDownEvent, Task, Window, div, prelude::*, px, rgb, svg,
+};
 use gpui_component::{WindowExt, tooltip::Tooltip};
 use refract_native::tex::BuildResult;
 use refract_native::tex::diagnostics::diagnostic_source;
@@ -444,7 +446,11 @@ fn preview_button(
                 .cursor_pointer()
                 .hover(move |style| style.bg(rgb(palette.selection)))
                 .focus(move |style| style.bg(rgb(palette.selection)))
-                .on_click(cx.listener(move |library, _, window, cx| activate(library, window, cx)))
+                .on_click(cx.listener(move |library, event: &ClickEvent, window, cx| {
+                    if matches!(event, ClickEvent::Mouse(_)) {
+                        activate(library, window, cx);
+                    }
+                }))
                 .on_key_down(
                     cx.listener(move |library, event: &KeyDownEvent, window, cx| {
                         if event.keystroke.key == "enter" || event.keystroke.key == "space" {

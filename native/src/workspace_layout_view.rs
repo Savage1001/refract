@@ -1,7 +1,7 @@
 use super::{Library, Palette, Selection};
 use gpui::{
-    Context, DragMoveEvent, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, Window, div,
-    prelude::*, px, rgb, svg,
+    ClickEvent, Context, DragMoveEvent, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render,
+    Window, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::tooltip::Tooltip;
 use refract_native::workspace_layout::{Divider, Pane, PaneVisibility, WorkspaceLayout};
@@ -175,8 +175,10 @@ impl Library {
                         .hover(move |style| style.bg(rgb(palette.selection)))
                         .focus(move |style| style.border_1().border_color(rgb(palette.focus)))
                         .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.toggle_workspace_pane(pane, window, cx)
+                        .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
+                            if matches!(event, ClickEvent::Mouse(_)) {
+                                view.toggle_workspace_pane(pane, window, cx);
+                            }
                         }))
                         .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key == "enter" || event.keystroke.key == "space" {
@@ -217,9 +219,12 @@ impl Library {
             .hover(move |style| style.bg(rgb(palette.selection)))
             .focus(move |style| style.border_1().border_color(rgb(palette.focus)))
             .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
-            .on_click(cx.listener(|view, _, _, cx| {
-                view.workspace_layout.sidebar_collapsed = !view.workspace_layout.sidebar_collapsed;
-                cx.notify();
+            .on_click(cx.listener(|view, event: &ClickEvent, _, cx| {
+                if matches!(event, ClickEvent::Mouse(_)) {
+                    view.workspace_layout.sidebar_collapsed =
+                        !view.workspace_layout.sidebar_collapsed;
+                    cx.notify();
+                }
             }))
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "enter" || event.keystroke.key == "space" {
@@ -338,7 +343,7 @@ impl Library {
 mod tests {
     use super::*;
     use crate::{Root, initialize_app};
-    use gpui::{Modifiers, TestAppContext, point};
+    use gpui::{KeyUpEvent, Keystroke, Modifiers, TestAppContext, point};
     use refract_native::create_project;
 
     #[gpui::test]
@@ -383,6 +388,10 @@ mod tests {
             !PaneVisibility::read(&profile.path().join(".refract-native-workspace.json")).preview
         );
         cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.simulate_event(KeyUpEvent {
+            keystroke: Keystroke::parse("enter").unwrap(),
+        });
         cx.update(|window, app| assert!(library.read(app).pdf_is_visible(window)));
     }
 }

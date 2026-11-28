@@ -1,5 +1,5 @@
 use super::{Library, Palette, Selection};
-use gpui::{Context, KeyDownEvent, Window, div, prelude::*, px, rgb, svg};
+use gpui::{ClickEvent, Context, KeyDownEvent, Window, div, prelude::*, px, rgb, svg};
 use gpui_component::tooltip::Tooltip;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -226,7 +226,11 @@ where
         .hover(move |style| style.bg(rgb(palette.selection)))
         .focus(move |style| style.text_color(rgb(palette.focus)))
         .child(label)
-        .on_click(cx.listener(move |library, _, window, cx| activate(library, window, cx)))
+        .on_click(cx.listener(move |library, event: &ClickEvent, window, cx| {
+            if matches!(event, ClickEvent::Mouse(_)) {
+                activate(library, window, cx);
+            }
+        }))
         .on_key_down(
             cx.listener(move |library, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "enter" || event.keystroke.key == "space" {

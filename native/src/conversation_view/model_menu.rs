@@ -3,7 +3,7 @@ use super::{
 };
 use crate::{Palette, account_settings_view::AccountAction, conversation_view::ConversationPane};
 use gpui::{
-    AnyElement, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight,
+    AnyElement, Bounds, BoxShadow, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight,
     KeyDownEvent, Pixels, Point, Render, RenderImage, ScrollHandle, SharedString, Size,
     Subscription, WeakEntity, Window, anchored, canvas, deferred, div, img, point, prelude::*, px,
     rgb, rgba, size, svg,
@@ -228,6 +228,7 @@ impl ModelMenu {
             cx.notify();
         });
         // GPUI dispatches the input's bound actions before element key listeners.
+        // Controls handled here accept only pointer clicks to avoid GPUI's key-up click.
         let menu = cx.weak_entity();
         let menu_focus = focus.clone();
         let keys = cx.intercept_keystrokes(move |event, window, app| {
@@ -323,11 +324,11 @@ impl ModelMenu {
                             .text_color(rgb(colors.base.text))
                             .into_any_element(),
                     })
-                    .on_click(
-                        cx.listener(move |menu, _, window, cx| {
-                            menu.switch_scope(scope, window, cx)
-                        }),
-                    )
+                    .on_click(cx.listener(move |menu, event: &ClickEvent, window, cx| {
+                        if matches!(event, ClickEvent::Mouse(_)) {
+                            menu.switch_scope(scope, window, cx);
+                        }
+                    }))
             }))
     }
 
@@ -757,11 +758,11 @@ impl ModelMenu {
                             .focus(move |style| {
                                 style.bg(rgb(selection)).border_1().border_color(rgb(ring))
                             })
-                            .on_click(
-                                cx.listener(move |menu, _, _, cx| {
-                                    menu.choose_key(&choice_click, cx)
-                                }),
-                            )
+                            .on_click(cx.listener(move |menu, event: &ClickEvent, _, cx| {
+                                if matches!(event, ClickEvent::Mouse(_)) {
+                                    menu.choose_key(&choice_click, cx);
+                                }
+                            }))
                     })
                     .child(provider_logo(key.0, 16., colors.base).opacity(0.72))
                     .child(
@@ -833,8 +834,10 @@ impl ModelMenu {
                     .focus(move |style| style.opacity(1.).border_1().border_color(rgb(ring)))
                     .tooltip(move |window, cx| Tooltip::new(star_label.clone()).build(window, cx))
                     .child(if favorite { "\u{2605}" } else { "\u{2606}" })
-                    .on_click(cx.listener(move |menu, _, _, cx| {
-                        menu.set_favorite(&favorite_click, !favorite, cx)
+                    .on_click(cx.listener(move |menu, event: &ClickEvent, _, cx| {
+                        if matches!(event, ClickEvent::Mouse(_)) {
+                            menu.set_favorite(&favorite_click, !favorite, cx);
+                        }
                     })),
             )
             .children(shortcut.map(|number| {
@@ -994,8 +997,10 @@ impl ModelMenu {
                             .cursor_pointer()
                             .hover(move |style| style.bg(rgb(selection)))
                             .focus(move |style| style.border_1().border_color(rgb(ring)))
-                            .on_click(cx.listener(move |menu, _, _, cx| {
-                                menu.choose_effort(provider, &value, cx)
+                            .on_click(cx.listener(move |menu, event: &ClickEvent, _, cx| {
+                                if matches!(event, ClickEvent::Mouse(_)) {
+                                    menu.choose_effort(provider, &value, cx);
+                                }
                             }))
                     })
                     .child(
@@ -1496,9 +1501,11 @@ impl Library {
                 .cursor_pointer()
                 .hover(move |style| style.bg(rgb(palette.hover)))
                 .focus(move |style| style.border_1().border_color(rgb(palette.accent)))
-                .on_click(
-                    cx.listener(|library, _, window, cx| library.toggle_model_menu(window, cx)),
-                )
+                .on_click(cx.listener(|library, event: &ClickEvent, window, cx| {
+                    if matches!(event, ClickEvent::Mouse(_)) {
+                        library.toggle_model_menu(window, cx);
+                    }
+                }))
                 .on_key_down(cx.listener(|library, event: &KeyDownEvent, window, cx| {
                     if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                         library.toggle_model_menu(window, cx);
@@ -1545,7 +1552,7 @@ mod tests {
     ) {
         use super::super::{AssistantConnection, AssistantPreferences, Model};
         use crate::{Root, initialize_app};
-        use gpui::{Modifiers, VisualTestContext};
+        use gpui::{KeyUpEvent, Keystroke, Modifiers, VisualTestContext};
 
         let profile = tempfile::tempdir().unwrap();
         let projects = profile.path().join("projects");
@@ -1627,6 +1634,35 @@ mod tests {
         click(cx, "model-picker-trigger");
         assert!(cx.debug_bounds("model/codex/research-codex").is_some());
         assert!(cx.debug_bounds("model/opencode/openai/research").is_none());
+
+        let press_return = |cx: &mut VisualTestContext| {
+            cx.simulate_keystrokes("enter");
+            cx.refresh().unwrap();
+            cx.simulate_event(KeyUpEvent {
+                keystroke: Keystroke::parse("enter").unwrap(),
+            });
+            cx.refresh().unwrap();
+        };
+        cx.simulate_keystrokes("down right");
+        // A provider scope keeps its row visible after favoriting. A second
+        // activation on release would immediately remove the same favorite.
+        for expected in [true, false] {
+            press_return(cx);
+            cx.update(|_, app| {
+                let pane = &library.read(app).selection.as_ref().unwrap().conversation;
+                let codex = pane.models[&Provider::Codex].read(app);
+                assert_eq!(
+                    codex
+                        .catalog()
+                        .unwrap()
+                        .preferences
+                        .favorites
+                        .iter()
+                        .any(|id| id == "research-codex"),
+                    expected
+                );
+            });
+        }
 
         click(cx, "filter-favorites");
         assert!(cx.debug_bounds("model/codex/retired-codex").is_some());
