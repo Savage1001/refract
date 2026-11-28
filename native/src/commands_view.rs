@@ -9,7 +9,8 @@ use gpui::{
     ScrollHandle, Window, actions, anchored, canvas, deferred, div, point, prelude::*, px, rgb,
 };
 use gpui_component::input::{
-    Enter, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp, OutdentInline, RopeExt,
+    Enter, Escape, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp, OutdentInline,
+    RopeExt,
 };
 use refract_native::latex_commands::{Suggestions, suggest};
 use std::{cell::Cell, rc::Rc};
@@ -117,12 +118,24 @@ mod tests {
             assert!(library.read(app).commands.open.is_none());
             assert_eq!(editor.read(app).cursor_position(), Position::new(0, 4));
         });
+        for tab_key in ["tab", "shift-tab"] {
+            cx.update(|window, app| {
+                editor.update(app, |state, cx| state.focus(window, cx));
+            });
+            cx.simulate_keystrokes(&format!("escape {tab_key}"));
+            cx.update(|window, app| {
+                let state = editor.read(app);
+                assert_eq!(state.value().as_ref(), "plain");
+                assert!(!state.focus_handle(app).is_focused(window));
+            });
+        }
     }
 }
 
 #[derive(Default)]
 pub(super) struct Commands {
     open: Option<CommandMenu>,
+    leave_on_tab: bool,
     pane: Rc<Cell<Bounds<Pixels>>>,
 }
 
@@ -136,6 +149,7 @@ struct CommandMenu {
 
 impl Commands {
     pub(super) fn close(&mut self) -> bool {
+        self.leave_on_tab = false;
         self.open.take().is_some()
     }
 }
@@ -209,13 +223,54 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.commands.open.is_none() || self.active_editor().as_ref() != Some(editor) {
+        if self.active_editor().as_ref() != Some(editor) {
             return;
         }
         match event {
-            InputEvent::Change => self.update_commands(editor, false, window, cx),
-            InputEvent::Blur => self.dismiss_commands(cx),
+            InputEvent::Change => {
+                self.commands.leave_on_tab = false;
+                if self.commands.open.is_some() {
+                    self.update_commands(editor, false, window, cx);
+                }
+            }
+            InputEvent::Blur => {
+                self.commands.leave_on_tab = false;
+                self.dismiss_commands(cx);
+            }
             _ => {}
+        }
+    }
+
+    fn escape_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_editor().is_some_and(|editor| {
+            editor.update(cx, |input, cx| {
+                input.marked_text_range(window, cx).is_some()
+            })
+        }) {
+            return;
+        }
+        if self.commands.close() {
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        self.commands.leave_on_tab = true;
+        if self.editor_find.visible {
+            self.close_find(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    fn tab_source(&mut self, backward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.commands.open.is_some() {
+            self.accept_selected_command(window, cx);
+        } else if std::mem::take(&mut self.commands.leave_on_tab) {
+            if backward {
+                window.focus_prev();
+            } else {
+                window.focus_next();
+            }
+            cx.stop_propagation();
         }
     }
 
@@ -234,7 +289,7 @@ impl Library {
     }
 
     fn dismiss_commands(&mut self, cx: &mut Context<Self>) {
-        if self.commands.close() {
+        if self.commands.open.take().is_some() {
             cx.notify();
         }
     }
@@ -426,14 +481,20 @@ impl Library {
             .capture_action(
                 cx.listener(|view, _: &Enter, window, cx| view.accept_selected_command(window, cx)),
             )
-            .capture_action(cx.listener(|view, _: &IndentInline, window, cx| {
-                view.accept_selected_command(window, cx)
-            }))
-            .capture_action(cx.listener(|view, _: &OutdentInline, window, cx| {
-                view.accept_selected_command(window, cx)
-            }))
+            .capture_action(
+                cx.listener(|view, _: &IndentInline, window, cx| {
+                    view.tab_source(false, window, cx)
+                }),
+            )
+            .capture_action(
+                cx.listener(|view, _: &OutdentInline, window, cx| {
+                    view.tab_source(true, window, cx)
+                }),
+            )
             .capture_action(Self::capture_editor_find(cx))
-            .capture_action(Self::capture_editor_find_escape(cx))
+            .capture_action(
+                cx.listener(|view, _: &Escape, window, cx| view.escape_source(window, cx)),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|view, _, _, cx| view.dismiss_commands(cx)),

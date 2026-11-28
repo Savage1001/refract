@@ -96,7 +96,7 @@ impl Library {
         });
     }
 
-    fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editor_find.visible {
             self.editor_find.visible = false;
             if let Some(editor) = self.active_editor() {
@@ -422,20 +422,6 @@ impl Library {
         cx.listener(|view, _, window, cx| {
             view.open_find(window, cx);
             cx.stop_propagation();
-        })
-    }
-
-    pub(super) fn capture_editor_find_escape(
-        cx: &Context<Self>,
-    ) -> impl Fn(&Escape, &mut Window, &mut App) + 'static {
-        cx.listener(|view, _, window, cx| {
-            if view.commands.close() {
-                cx.notify();
-                cx.stop_propagation();
-            } else if view.editor_find.visible {
-                view.close_find(window, cx);
-                cx.stop_propagation();
-            }
         })
     }
 }
