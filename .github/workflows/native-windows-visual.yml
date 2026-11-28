@@ -1,0 +1,69 @@
+name: Windows visual parity
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - .github/workflows/native-windows-visual.yml
+      - scripts/capture-native-windows.ps1
+      - scripts/capture-electron-parity.cts
+      - test/fixtures/headless-ui.cts
+      - test/fixtures/parity-document.*
+      - main.cts
+      - preload.cts
+      - renderer.ts
+      - index.html
+      - style.css
+      - src/**
+      - resources/**
+      - package*.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-visual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-captures:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the GPUI app
+        working-directory: native
+        run: cargo +stable build --locked --bin refract-native
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Build the Electron reference
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx --no-install install-electron
+      - name: Capture the window controls and library fonts from both apps
+        shell: pwsh
+        timeout-minutes: 5
+        run: ./scripts/capture-native-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP/refract-window-captures/desktop"
+      - name: Capture reference renderer typography
+        if: success() || failure()
+        run: |
+          node build/scripts/capture-electron-parity.cjs "$env:RUNNER_TEMP/refract-window-captures/renderer"
+      - name: Upload matching desktop and renderer captures
+        if: success() || failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-windows-visual-parity
+          path: ${{ runner.temp }}/refract-window-captures
+          if-no-files-found: error
