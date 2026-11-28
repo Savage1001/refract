@@ -2,7 +2,7 @@ use super::{
     ConversationPane, Library, Palette, chat_button,
     models::{CHECKING_MODELS, ModelSelection},
 };
-use gpui::{Context, Window, div, prelude::*, px, rgb, svg};
+use gpui::{Context, FocusHandle, Window, div, prelude::*, px, rgb, svg};
 use gpui_component::tooltip::Tooltip;
 use refract_native::{
     Project, ProjectEntry,
@@ -17,7 +17,7 @@ use refract_native::{
     assistant_tools::{AssistantToolServer, AssistantTools, claims_successful_build},
     codex_connection::CodexMode,
     conversation::{
-        Attachment, Conversation, ConversationId, Message, Provider, StartTurn,
+        Attachment, Conversation, ConversationDraft, ConversationId, Message, Provider, StartTurn,
         begin_conversation_turn,
     },
     project_tree,
@@ -142,6 +142,37 @@ pub(super) fn installed_providers(
 pub(super) struct RunningTurn {
     cancel: Arc<AtomicBool>,
     progress: &'static str,
+    stop_focus: FocusHandle,
+    pub(super) pending: Option<PendingPrompt>,
+}
+
+#[derive(Clone)]
+pub(super) struct PendingPrompt {
+    text: String,
+    attachments: Vec<Attachment>,
+}
+
+impl PendingPrompt {
+    pub(super) fn prepend_to(self, draft: &mut ConversationDraft) {
+        draft.text = if draft.text.is_empty() {
+            self.text
+        } else {
+            format!("{}\n\n{}", self.text, draft.text)
+        };
+        let mut attachments = self.attachments;
+        attachments.append(&mut draft.attachments);
+        draft.attachments = attachments;
+    }
+}
+
+fn check_turn_cancellation(cancel: &AtomicBool) -> io::Result<()> {
+    if cancel.load(Ordering::Acquire) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Message stopped before sending.",
+        ));
+    }
+    Ok(())
 }
 
 enum TurnNotice {
@@ -155,8 +186,7 @@ struct TurnWork {
     id: ConversationId,
     provider: InstalledProvider,
     model_selection: ModelSelection,
-    prompt: String,
-    attachments: Vec<Attachment>,
+    prompt: PendingPrompt,
 }
 
 struct CompletedTurn {
@@ -172,12 +202,15 @@ fn run_turn(
     cancel: &Arc<AtomicBool>,
     notices: async_channel::Sender<TurnNotice>,
 ) -> io::Result<CompletedTurn> {
+    check_turn_cancellation(cancel)?;
     let prepared = work.provider.prepare(cancel)?;
+    check_turn_cancellation(cancel)?;
     let account_key = match &prepared {
         PreparedProvider::Codex(codex) => codex.key(),
         PreparedProvider::OpenCode(_) => None,
     };
     snapshot_project(&work.projects, &work.project)?;
+    check_turn_cancellation(cancel)?;
     let tools = AssistantTools::new(
         work.projects.clone(),
         work.project.clone(),
@@ -188,14 +221,15 @@ fn run_turn(
     let instructions = tools.instructions();
     let successful_build = tools.build_status();
     let server = AssistantToolServer::start(tools)?;
+    check_turn_cancellation(cancel)?;
     let (mut turn, context) = begin_conversation_turn(
         &work.projects,
         &work.project,
         &work.id,
         StartTurn {
             provider: work.provider.kind(),
-            prompt: &work.prompt,
-            attachments: &work.attachments,
+            prompt: &work.prompt.text,
+            attachments: &work.prompt.attachments,
             codex_account: account_key,
             build_instructions: Some(&instructions),
         },
@@ -275,7 +309,10 @@ fn run_turn(
         !successful_build.load(Ordering::Acquire)
             && result.as_deref().is_ok_and(claims_successful_build)
     };
-    if work.provider.mode() == AssistantConnection::CodexCli && unverified_claim(&result) {
+    if work.provider.mode() == AssistantConnection::CodexCli
+        && !cancel.load(Ordering::Acquire)
+        && unverified_claim(&result)
+    {
         if let Some(reference) = session.as_deref() {
             let (corrected, updated_session) = execute(
                 "Refract recorded no successful build for this turn. If the user requested compilation, call the Refract build tool and report its actual result. Otherwise correct the claim without building.",
@@ -309,17 +346,19 @@ fn run_turn(
 }
 
 impl Library {
-    pub(crate) fn cancel_assistant_turn(&mut self) {
+    fn cancel_assistant_turn(&mut self, cx: &mut Context<Self>) {
         if let Some(assistant) = self
             .selection
             .as_ref()
             .and_then(|selection| selection.conversation.running.as_ref())
         {
-            assistant.cancel.store(true, Ordering::Release);
+            if !assistant.cancel.swap(true, Ordering::AcqRel) {
+                cx.notify();
+            }
         }
     }
 
-    pub(super) fn send_assistant_turn(&mut self, window: &Window, cx: &mut Context<Self>) {
+    pub(super) fn send_assistant_turn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.project_writes_idle() || self.navigation_after_save.is_some() {
             return;
         }
@@ -328,7 +367,7 @@ impl Library {
             return;
         };
         let pane = &mut selection.conversation;
-        let Some(composer) = pane.composer.as_ref() else {
+        let Some(composer) = pane.composer.as_mut() else {
             return;
         };
         let Some(provider) = pane.provider.and_then(|kind| {
@@ -358,30 +397,40 @@ impl Library {
             }
             return;
         }
+        let pending = PendingPrompt {
+            text: prompt,
+            attachments: std::mem::take(&mut composer.attachments),
+        };
         let work = TurnWork {
             projects: self.projects_dir.clone(),
             project: selection.project.clone(),
             id: pane.active.clone(),
             provider: provider.clone(),
             model_selection,
-            prompt,
-            attachments: composer.attachments.clone(),
+            prompt: pending.clone(),
         };
         let sequence = self.project_open_sequence;
         let cancel = Arc::new(AtomicBool::new(false));
         let (notify, events) = async_channel::bounded(8);
         let background_cancel = cancel.clone();
-        let run = cx
-            .background_executor()
-            .spawn(async move { run_turn(work, &background_cancel, notify) });
         pane.error = None;
         pane.running = Some(RunningTurn {
             cancel,
             progress: "Preparing…",
+            stop_focus: cx.focus_handle(),
+            pending: Some(pending),
         });
+        composer
+            .input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        composer.dirty = true;
+        self.flush_chat_draft(cx);
+        let run = cx
+            .background_executor()
+            .spawn(async move { run_turn(work, &background_cancel, notify) });
         self.entry_write_task = Some(cx.spawn_in(window, async move |library, cx| {
             while let Ok(notice) = events.recv().await {
-                let _ = library.update_in(cx, |library, window, cx| {
+                let _ = library.update_in(cx, |library, _, cx| {
                     if library.project_open_sequence != sequence {
                         return;
                     }
@@ -391,20 +440,20 @@ impl Library {
                     let pane = &mut selection.conversation;
                     match notice {
                         TurnNotice::Saved => {
-                            if let Some(composer) = &mut pane.composer {
+                            if let Some(sent) =
+                                pane.running.as_mut().and_then(|turn| turn.pending.take())
+                            {
                                 if let Some(history) = &mut pane.history {
                                     history.messages.push(Message::User {
-                                        text: composer.input.read(cx).value().to_string(),
-                                        attachments: Some(composer.attachments.clone()),
+                                        text: sent.text,
+                                        attachments: Some(sent.attachments),
                                     });
                                     pane.scroll
                                         .scroll_to_top_of_item(history.messages.len() - 1);
                                 }
-                                composer
-                                    .input
-                                    .update(cx, |input, cx| input.set_value("", window, cx));
-                                composer.attachments.clear();
-                                composer.dirty = true;
+                                if let Some(composer) = &mut pane.composer {
+                                    composer.dirty = true;
+                                }
                                 library.flush_chat_draft(cx);
                             }
                         }
@@ -444,11 +493,37 @@ impl Library {
             return;
         };
         let pane = &mut selection.conversation;
-        pane.running = None;
+        let mut running = pane.running.take();
+        if running
+            .as_ref()
+            .is_some_and(|turn| turn.stop_focus.is_focused(window))
+            && let Some(composer) = &pane.composer
+        {
+            composer.focus(window, cx);
+        }
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                pane.error = Some(format!("Couldn’t send message. {error}"));
+                let stopped = running.as_ref().is_some_and(|turn| {
+                    turn.pending.is_some() && turn.cancel.load(Ordering::Acquire)
+                });
+                if let Some(pending) = running.as_mut().and_then(|turn| turn.pending.take())
+                    && let Some(composer) = &mut pane.composer
+                {
+                    let mut draft = composer.draft(pane.provider, cx);
+                    pending.prepend_to(&mut draft);
+                    composer
+                        .input
+                        .update(cx, |input, cx| input.set_value(draft.text, window, cx));
+                    composer.attachments = draft.attachments;
+                    composer.dirty = true;
+                }
+                pane.error = Some(if stopped {
+                    "Message stopped before sending.".into()
+                } else {
+                    format!("Couldn’t send message. {error}")
+                });
+                self.flush_chat_draft(cx);
                 return;
             }
         };
@@ -485,7 +560,11 @@ impl Library {
             div()
                 .text_size(px(12.))
                 .text_color(rgb(palette.muted))
-                .child(running.progress)
+                .child(if running.cancel.load(Ordering::Acquire) {
+                    "Stopping…"
+                } else {
+                    running.progress
+                })
         })
     }
 
@@ -506,16 +585,26 @@ impl Library {
             .items_center()
             .gap(px(6.))
             .child(self.model_picker_button(pane, palette, cx));
-        if pane.running.is_some() {
+        if let Some(running) = &pane.running {
+            let stopping = running.cancel.load(Ordering::Acquire);
             actions.child(
-                chat_button("stop-chat", palette, cx, |library, _, _| {
-                    library.cancel_assistant_turn()
+                chat_button("stop-chat", palette, cx, |library, _, cx| {
+                    library.cancel_assistant_turn(cx)
                 })
+                .track_focus(&running.stop_focus)
                 .size(px(30.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .tooltip(|window, cx| Tooltip::new("Stop response").build(window, cx))
+                .when(stopping, |button| button.cursor_default().opacity(0.5))
+                .tooltip(move |window, cx| {
+                    Tooltip::new(if stopping {
+                        "Stopping…"
+                    } else {
+                        "Stop response"
+                    })
+                    .build(window, cx)
+                })
                 .child(div().size(px(10.)).rounded(px(2.)).bg(rgb(palette.muted))),
             )
         } else {
@@ -552,5 +641,93 @@ impl Library {
                 ),
             )
         }
+    }
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod tests {
+    use super::*;
+    use crate::{Root, initialize_app};
+    use gpui::{Focusable, TestAppContext};
+    use refract_native::{conversation::load_conversation_draft, create_project};
+
+    #[gpui::test]
+    fn keyboard_stop_keeps_the_unsent_draft_and_returns_focus(cx: &mut TestAppContext) {
+        let profile = tempfile::tempdir().unwrap();
+        let projects = profile.path().join("projects");
+        let project = create_project(&projects, "Paper").unwrap();
+        cx.update(initialize_app);
+        let mut library = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| Library::new(projects.clone(), window, cx));
+            library = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let library = library.unwrap();
+        cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                view.open_project(project.clone(), window, cx)
+            });
+        });
+        cx.run_until_parked();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                let pane = &mut view.selection.as_mut().unwrap().conversation;
+                let stop_focus = cx.focus_handle();
+                pane.running = Some(RunningTurn {
+                    cancel: cancel.clone(),
+                    progress: "Preparing…",
+                    stop_focus,
+                    pending: Some(PendingPrompt {
+                        text: "First prompt".into(),
+                        attachments: Vec::new(),
+                    }),
+                });
+                pane.composer.as_ref().unwrap().focus(window, cx);
+                cx.notify();
+            });
+        });
+        cx.simulate_input("Second draft");
+        cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                assert!(view.flush_chat_draft(cx));
+                let pane = &view.selection.as_ref().unwrap().conversation;
+                assert_eq!(
+                    pane.composer
+                        .as_ref()
+                        .unwrap()
+                        .input
+                        .read(cx)
+                        .value()
+                        .as_ref(),
+                    "Second draft"
+                );
+                window.focus(&pane.running.as_ref().unwrap().stop_focus);
+            });
+        });
+        let draft =
+            load_conversation_draft(&projects, &project, &ConversationId::default()).unwrap();
+        assert_eq!(draft.text, "First prompt\n\nSecond draft");
+        cx.simulate_keystrokes("enter");
+        assert!(cancel.load(Ordering::Acquire));
+        cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                view.complete_assistant_turn(
+                    Err(check_turn_cancellation(&cancel).unwrap_err()),
+                    window,
+                    cx,
+                );
+                let pane = &view.selection.as_ref().unwrap().conversation;
+                let input = pane.composer.as_ref().unwrap().input.read(cx);
+                assert_eq!(input.value().as_ref(), "First prompt\n\nSecond draft");
+                assert_eq!(
+                    pane.error.as_deref(),
+                    Some("Message stopped before sending.")
+                );
+                assert!(input.focus_handle(cx).is_focused(window));
+            });
+        });
     }
 }

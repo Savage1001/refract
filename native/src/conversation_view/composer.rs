@@ -1,7 +1,7 @@
-use super::{ConversationPane, Library, Palette, attachment_preview, chat_button};
+use super::{ConversationPane, Library, Palette, Provider, attachment_preview, chat_button};
 use gpui::{
-    App, ClipboardEntry, Context, Entity, ImageFormat, KeyBinding, PathPromptOptions, SharedString,
-    Subscription, Task, Window, div, prelude::*, px, rgb, svg,
+    App, ClipboardEntry, Context, Entity, EntityInputHandler, ImageFormat, KeyBinding,
+    PathPromptOptions, SharedString, Subscription, Task, Window, div, prelude::*, px, rgb, svg,
 };
 use gpui_component::{
     input::{Enter, Input, InputEvent, InputState, Paste},
@@ -64,6 +64,14 @@ impl Composer {
     pub(super) fn focus(&self, window: &mut Window, cx: &mut Context<Library>) {
         self.input.update(cx, |input, cx| input.focus(window, cx));
     }
+
+    pub(super) fn draft(&self, provider: Option<Provider>, cx: &App) -> ConversationDraft {
+        ConversationDraft {
+            text: self.input.read(cx).value().to_string(),
+            attachments: self.attachments.clone(),
+            provider: provider.map(|provider| provider.as_str().into()),
+        }
+    }
 }
 
 impl Library {
@@ -95,11 +103,10 @@ impl Library {
         if !composer.dirty {
             return true;
         }
-        let draft = ConversationDraft {
-            text: composer.input.read(cx).value().to_string(),
-            attachments: composer.attachments.clone(),
-            provider: pane.provider.map(|provider| provider.as_str().into()),
-        };
+        let mut draft = composer.draft(pane.provider, cx);
+        if let Some(pending) = pane.running.as_ref().and_then(|turn| turn.pending.clone()) {
+            pending.prepend_to(&mut draft);
+        }
         match save_conversation_draft(&self.projects_dir, &selection.project, &pane.active, &draft)
         {
             Ok(()) => {
@@ -274,12 +281,21 @@ impl Library {
                     .id("chat-input")
                     .debug_selector(|| "chat-input".into())
                     .key_context("RefractChat")
-                    .capture_action(cx.listener(|library, action: &Enter, window, cx| {
-                        if !action.secondary {
-                            cx.stop_propagation();
-                            library.send_assistant_turn(window, cx);
-                        }
-                    }))
+                    .capture_action({
+                        let input = composer.input.clone();
+                        cx.listener(move |library, action: &Enter, window, cx| {
+                            if input.update(cx, |input, cx| {
+                                input.marked_text_range(window, cx).is_some()
+                            }) {
+                                cx.stop_propagation();
+                                return;
+                            }
+                            if !action.secondary {
+                                cx.stop_propagation();
+                                library.send_assistant_turn(window, cx);
+                            }
+                        })
+                    })
                     .capture_action(cx.listener(|library, _: &Paste, window, cx| {
                         if let Some(item) = cx.read_from_clipboard()
                             && let Some(ClipboardEntry::Image(image)) = item.entries().iter().find(
@@ -299,8 +315,7 @@ impl Library {
                             .px(px(4.))
                             .py(px(4.))
                             .text_size(px(13.))
-                            .line_height(gpui::relative(1.5))
-                            .disabled(pane.running.is_some()),
+                            .line_height(gpui::relative(1.5)),
                     ),
             )
             .child(
