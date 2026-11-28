@@ -26,6 +26,8 @@ const DISABLED: &str = "Automatic updates are available in the installed Windows
 const TRACK_DESCRIPTION: &str = "Stable receives stable releases. Pre-release receives the newest pre-release or stable version. Updates are checked every 10 minutes and download automatically. Install them when you choose Restart to update.";
 const DIALOG_PADDING: Pixels = px(28.);
 const TITLE_GAP: Pixels = px(24.);
+// GPUI Component's dialog animation settles 30 pixels below its margin.
+const DIALOG_SLIDE_OFFSET: Pixels = px(30.);
 
 #[derive(Clone)]
 struct TrackChoice(UpdateTrack);
@@ -185,6 +187,7 @@ impl SettingsDialog {
         let check = library.clone();
         let restart = library.clone();
         div()
+            .w_full()
             .flex()
             .flex_col()
             .gap(px(8.))
@@ -389,7 +392,7 @@ impl Library {
                 .title(crate::dialog_title("Settings"))
                 .w(width)
                 .max_h(max_height)
-                .margin_top((viewport.height - height) / 2.)
+                .margin_top((viewport.height - height) / 2. - DIALOG_SLIDE_OFFSET)
                 .p(DIALOG_PADDING)
                 .gap(TITLE_GAP)
                 .rounded(px(12.))

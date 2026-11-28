@@ -1,6 +1,6 @@
-use super::{ModelMenu, Provider};
+use super::{FILTERS, ModelMenu, Provider};
 use gpui::{
-    AnyElement, App, Context, EntityInputHandler, FocusHandle, Focusable, KeyDownEvent, Window,
+    AnyElement, App, Context, EntityInputHandler, FocusHandle, Focusable, Keystroke, Window,
 };
 use std::collections::HashMap;
 
@@ -28,6 +28,7 @@ pub(super) struct ResultFocus {
     pub choice: FocusHandle,
     pub star: FocusHandle,
     pub available: bool,
+    pub favorite: bool,
     pub list_index: usize,
 }
 
@@ -90,6 +91,7 @@ impl Keyboard {
                 choice,
                 star,
                 available: row.available,
+                favorite: row.favorite,
                 list_index: index,
             });
         }
@@ -139,7 +141,7 @@ fn adjacent(key: &str, index: Option<usize>, length: usize) -> Option<usize> {
 impl ModelMenu {
     pub(super) fn handle_menu_key(
         &mut self,
-        event: &KeyDownEvent,
+        keystroke: &Keystroke,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -152,7 +154,7 @@ impl ModelMenu {
         {
             return;
         }
-        if self.dispatch_menu_key(event, &search, search_focused, window, cx) {
+        if self.dispatch_menu_key(keystroke, &search, search_focused, window, cx) {
             window.prevent_default();
             cx.stop_propagation();
         }
@@ -160,20 +162,20 @@ impl ModelMenu {
 
     fn dispatch_menu_key(
         &mut self,
-        event: &KeyDownEvent,
+        keystroke: &Keystroke,
         search: &FocusHandle,
         search_focused: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let key = event.keystroke.key.as_str();
+        let key = keystroke.key.as_str();
         if key == "escape" {
             let _ = self
                 .owner
                 .update(cx, |library, cx| library.close_model_menu(true, window, cx));
             return true;
         }
-        let modifiers = event.keystroke.modifiers;
+        let modifiers = keystroke.modifiers;
         if modifiers.control
             && !(modifiers.alt || modifiers.shift || modifiers.platform)
             && key.len() == 1
@@ -190,12 +192,17 @@ impl ModelMenu {
             self.choose_key(&row.key, cx);
             return true;
         }
+        let activate = matches!(key, "enter" | "space");
         if let Some(index) = self
             .keyboard
             .filters
             .iter()
             .position(|focus| focus.is_focused(window))
         {
+            if activate {
+                self.switch_scope(FILTERS[index], window, cx);
+                return true;
+            }
             if key == "right" {
                 window.focus(search);
                 return true;
@@ -213,11 +220,32 @@ impl ModelMenu {
             .efforts
             .iter()
             .position(|effort| effort.focus.is_focused(window))
-            && let Some(next) = adjacent(key, Some(index), self.keyboard.efforts.len())
+            && let Some(next) = if activate {
+                Some(index)
+            } else {
+                adjacent(key, Some(index), self.keyboard.efforts.len())
+            }
         {
             let target = self.keyboard.efforts[next].clone();
             window.focus(&target.focus);
             self.choose_effort(target.provider, &target.value, cx);
+            return true;
+        }
+        if activate
+            && let Some(row) = self
+                .keyboard
+                .rows
+                .iter()
+                .find(|row| {
+                    row.star.is_focused(window) || (row.available && row.choice.is_focused(window))
+                })
+                .cloned()
+        {
+            if row.star.is_focused(window) {
+                self.set_favorite(&row.key, !row.favorite, cx);
+            } else {
+                self.choose_key(&row.key, cx);
+            }
             return true;
         }
         self.handle_result_key(key, search_focused, window, cx)

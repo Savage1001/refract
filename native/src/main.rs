@@ -1,10 +1,9 @@
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
 use gpui::{
-    AnyElement, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight, Image,
-    ImageFormat, KeyBinding, PromptLevel, SharedString, Subscription, Task, Window,
-    WindowAppearance, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, rgb, size,
-    svg,
+    AnyElement, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight, KeyBinding,
+    PromptLevel, RenderImage, SharedString, Subscription, Task, Window, WindowAppearance,
+    WindowBounds, WindowOptions, actions, div, img, prelude::*, px, rgb, size, svg,
 };
 use gpui_component::{
     Root,
@@ -26,7 +25,7 @@ use std::{
     env, io,
     path::PathBuf,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 
@@ -143,7 +142,6 @@ struct Library {
     focus_handle: FocusHandle,
     project_focus: HashMap<String, ProjectFocus>,
     home_focus: FocusHandle,
-    logo: Arc<Image>,
     catalog: ProjectCatalogView,
     settings: SettingsView,
     thumbnails: ProjectThumbnails,
@@ -335,10 +333,6 @@ impl Library {
             focus_handle,
             project_focus: HashMap::new(),
             home_focus: cx.focus_handle().tab_stop(true).tab_index(0),
-            logo: Arc::new(Image::from_bytes(
-                ImageFormat::Png,
-                include_bytes!("../../resources/logo.png").to_vec(),
-            )),
             catalog,
             settings,
             thumbnails: ProjectThumbnails::default(),
@@ -1224,6 +1218,14 @@ impl Library {
     }
 }
 
+static REFRACT_LOGO: LazyLock<Arc<RenderImage>> = LazyLock::new(|| {
+    asset_image::decode(
+        include_bytes!("../../resources/logo.png").to_vec(),
+        refract_native::file_preview::ImageKind::Png,
+    )
+    .expect("the bundled Refract logo is a valid PNG")
+});
+
 #[derive(Clone, Copy)]
 struct Palette {
     canvas: u32,
@@ -1238,6 +1240,7 @@ struct Palette {
     hover: u32,
     selection: u32,
     accent: u32,
+    accent_hover: u32,
     focus: u32,
     shadow: u32,
     warning: u32,
@@ -1261,6 +1264,7 @@ impl Palette {
                 hover: 0x141414,
                 selection: 0x1a1b1b,
                 accent: 0x346bf1,
+                accent_hover: 0x3061d9,
                 focus: 0x79a8ff,
                 shadow: 0x00000066,
                 warning: 0xffb900,
@@ -1279,6 +1283,7 @@ impl Palette {
                 hover: 0xf4f4f5,
                 selection: 0xf4f4f5,
                 accent: 0x1b4ed8,
+                accent_hover: 0x3160db,
                 focus: 0x1b4ed8,
                 shadow: 0x00000014,
                 warning: 0xbb4d00,
@@ -1396,7 +1401,7 @@ impl Library {
                     .items_center()
                     .gap(px(24.))
                     .mb(px(20.))
-                    .child(img(self.logo.clone()).size(px(50.)).rounded(px(14.)))
+                    .child(img(REFRACT_LOGO.clone()).size(px(50.)).rounded(px(14.)))
                     .child(
                         div()
                             .text_size(px(32.))
@@ -1801,7 +1806,7 @@ impl Library {
             .font_weight(FontWeight(650.))
             .focus(move |style| style.bg(rgb(palette.selection)))
             .hover(move |style| style.bg(rgb(palette.selection)))
-            .child(img(self.logo.clone()).size(px(28.)).rounded(px(7.)))
+            .child(img(REFRACT_LOGO.clone()).size(px(28.)).rounded(px(7.)))
             .child(tracked_label::tracked_label("Refract", -0.02))
             .on_click(cx.listener(|library, _, window, cx| {
                 library.request_navigation(Navigation::Projects, window, cx)
@@ -2286,7 +2291,12 @@ impl Library {
                                 };
                                 style.bg(background).text_color(rgb(palette.text))
                             })
-                            .child(svg().path("refract/close.svg").size(px(18.)))
+                            .child(
+                                svg()
+                                    .path("refract/close.svg")
+                                    .size(px(18.))
+                                    .text_color(rgb(palette.sidebar_muted)),
+                            )
                             .on_click(cx.listener(move |library, _, window, cx| {
                                 library.request_navigation(
                                     Navigation::CloseFile(close.clone()),
@@ -2663,18 +2673,18 @@ mod tests {
             cx.refresh().unwrap();
         };
         let read_view = |cx: &mut VisualTestContext| {
-            let upper_left = cx.debug_bounds("document-editor").unwrap().origin;
+            let bounds = cx.debug_bounds("document-editor").unwrap();
             cx.update(|window, app| {
                 let editor = library.read(app).active_editor().unwrap();
                 editor.update(app, |input, cx| {
                     let selection = input.selected_text_range(false, window, cx).unwrap();
-                    let top = [8., 12., 17., 22., 27., 32.].into_iter().find_map(|y| {
-                        input.character_index_for_point(
-                            upper_left + point(px(48.), px(y)),
-                            window,
-                            cx,
-                        )
-                    });
+                    // An early range clamps to the first line in GPUI's laid-out
+                    // slice. Its document-space Y position identifies the viewport.
+                    let top = input
+                        .bounds_for_range(0..1, bounds, window, cx)
+                        .unwrap()
+                        .origin
+                        .y;
                     // GPUI's platform selection reports a normalized range. The caret
                     // identifies the moving end of the selection in this ASCII fixture.
                     (selection.range, input.cursor(), top)
@@ -2711,7 +2721,7 @@ mod tests {
         assert_eq!(first_view.0, 6..8);
         assert_eq!(first_view.1, first_view.0.start);
         assert!(
-            matches!((initial_view.2, first_view.2), (Some(before), Some(after)) if after > before + 250),
+            first_view.2 > initial_view.2 + px(250.),
             "Expected the wheel to move the viewport, before {initial_view:?}, after {first_view:?}"
         );
 

@@ -138,6 +138,15 @@ function Measure-Library([Drawing.Bitmap] $Bitmap, [double] $Scale, [bool] $Dark
 
     # Take the complete glyph bounds in the 900x650 CSS-pixel library fixture.
     $contentLeft = 28 * $Scale
+    $logoPixels = 0
+    for ($y = [int] (72 * $Scale); $y -lt [int] (119 * $Scale); $y++) {
+        for ($x = [int] $contentLeft; $x -lt [int] ($contentLeft + 50 * $Scale); $x++) {
+            $color = $Bitmap.GetPixel($x, $y)
+            if (([int] $color.B - [int] $color.R) -ge 40) { $logoPixels++ }
+        }
+    }
+    if ($logoPixels -lt 20 * $Scale * $Scale) { return }
+    $result.logoPixels = $logoPixels
     foreach ($text in @(@{ name = 'brand'; x = 70; y = 76; width = 200; height = 45 },
         @{ name = 'heading'; x = 0; y = 141; width = 220; height = 43 },
         @{ name = 'firstProject'; x = 64; y = 411; width = 285; height = 39 })) {
@@ -196,7 +205,7 @@ function Save-LibraryCapture([string] $Runtime, [string] $Executable, [string] $
                 return
             }
             if ($unobstructed) { $bitmap.Save("$name-unverified.png", [Drawing.Imaging.ImageFormat]::Png) }
-            throw "No unobstructed $Theme $Runtime frame contained the Refract title bar symbols and library text."
+            throw "No unobstructed $Theme $Runtime frame contained the Refract logo, title bar symbols, and library text."
         } finally {
             $graphics.Dispose()
             $bitmap.Dispose()

@@ -46,6 +46,7 @@ pub(in crate::conversation_view) struct ModelMenu {
     keyboard: Keyboard,
     _query_changes: Subscription,
     _focus_out: Subscription,
+    _keys: Subscription,
 }
 
 struct MenuColors {
@@ -203,7 +204,7 @@ impl ModelMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search models..."));
         let focus = cx.focus_handle();
         let exit = owner.clone();
         let focus_out = window.on_focus_out(&focus, cx, move |_, window, app| {
@@ -226,6 +227,16 @@ impl ModelMenu {
             }
             cx.notify();
         });
+        // GPUI dispatches the input's bound actions before element key listeners.
+        let menu = cx.weak_entity();
+        let menu_focus = focus.clone();
+        let keys = cx.intercept_keystrokes(move |event, window, app| {
+            if menu_focus.contains_focused(window, app) {
+                let _ = menu.update(app, |menu, cx| {
+                    menu.handle_menu_key(&event.keystroke, window, cx);
+                });
+            }
+        });
         Self {
             owner,
             focus,
@@ -238,6 +249,7 @@ impl ModelMenu {
             keyboard: Keyboard::new(cx),
             _query_changes: query_changes,
             _focus_out: focus_out,
+            _keys: keys,
         }
     }
 
@@ -316,13 +328,6 @@ impl ModelMenu {
                             menu.switch_scope(scope, window, cx)
                         }),
                     )
-                    .on_key_down(cx.listener(move |menu, event: &KeyDownEvent, window, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            menu.switch_scope(scope, window, cx);
-                            window.prevent_default();
-                            cx.stop_propagation();
-                        }
-                    }))
             }))
     }
 
@@ -711,7 +716,6 @@ impl ModelMenu {
             format!("Add {name} to favorites")
         };
         let choice_click = key.clone();
-        let choice_key = key.clone();
         let favorite_click = key.clone();
         let muted = colors.muted;
         let selection = colors.selected;
@@ -758,15 +762,6 @@ impl ModelMenu {
                                     menu.choose_key(&choice_click, cx)
                                 }),
                             )
-                            .on_key_down(cx.listener(
-                                move |menu, event: &KeyDownEvent, window, cx| {
-                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                        menu.choose_key(&choice_key, cx);
-                                        window.prevent_default();
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
                     })
                     .child(provider_logo(key.0, 16., colors.base).opacity(0.72))
                     .child(
@@ -840,13 +835,6 @@ impl ModelMenu {
                     .child(if favorite { "\u{2605}" } else { "\u{2606}" })
                     .on_click(cx.listener(move |menu, _, _, cx| {
                         menu.set_favorite(&favorite_click, !favorite, cx)
-                    }))
-                    .on_key_down(cx.listener(move |menu, event: &KeyDownEvent, window, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            menu.set_favorite(&key, !favorite, cx);
-                            window.prevent_default();
-                            cx.stop_propagation();
-                        }
                     })),
             )
             .children(shortcut.map(|number| {
@@ -917,30 +905,62 @@ impl ModelMenu {
                 item.focus.is_focused(window)
                     && (item.provider != provider || !model.efforts.contains(&item.value))
             });
-        pane = pane
-            .child(
-                div()
-                    .min_h(px(39.))
-                    .flex()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(rgb(colors.divider))
-                    .text_size(px(13.))
-                    .font_weight(FontWeight(520.))
-                    .child(if codex { "Reasoning" } else { "Variant" }),
-            )
-            .child(
+        let identity = model.disambiguator.as_ref().or(model.source.as_ref());
+        pane = pane.child(
+            div()
+                .min_h(px(40.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .border_b_1()
+                .border_color(rgb(colors.divider))
+                .text_color(rgb(colors.muted))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight(520.))
+                        .child(if codex { "Reasoning" } else { "Variant" }),
+                )
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(model.name.clone()),
+                ),
+        );
+        if let Some(identity) =
+            identity.filter(|identity| identity.as_str() != provider_label(provider))
+        {
+            pane = pane.child(
                 div()
                     .py(px(6.))
                     .text_size(px(11.))
-                    .font_weight(FontWeight::MEDIUM)
                     .text_color(rgb(colors.muted))
-                    .child(model.name.clone()),
+                    .child(identity.clone()),
             );
+        }
+        if model.efforts.is_empty() {
+            return pane.child(
+                div()
+                    .mt(px(6.))
+                    .text_size(px(12.))
+                    .text_color(rgb(colors.muted))
+                    .child(if codex {
+                        "Reasoning is configured by this model."
+                    } else {
+                        "This model offers no variants."
+                    }),
+            );
+        }
+        pane = pane.child(div().h(px(7.)).flex_none());
         for effort in &model.efforts {
             let value = effort.clone();
-            let key_value = value.clone();
             let selected = catalog.preferences.reasoning_effort.as_ref() == Some(effort);
+            let default = model.default_effort.as_ref() == Some(effort);
             let focus = previous
                 .iter()
                 .find(|previous| previous.provider == provider && previous.value == *effort)
@@ -960,10 +980,11 @@ impl ModelMenu {
                     .id(SharedString::from(format!("effort/{effort}")))
                     .w_full()
                     .h(px(33.))
+                    .mb(px(1.))
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .px(px(7.))
+                    .px(px(5.))
                     .rounded(px(5.))
                     .when(enabled, |button| {
                         button
@@ -976,26 +997,17 @@ impl ModelMenu {
                             .on_click(cx.listener(move |menu, _, _, cx| {
                                 menu.choose_effort(provider, &value, cx)
                             }))
-                            .on_key_down(cx.listener(
-                                move |menu, event: &KeyDownEvent, window, cx| {
-                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                        menu.choose_effort(provider, &key_value, cx);
-                                        window.prevent_default();
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
                     })
-                    .when(selected, |button| button.bg(rgb(colors.selected)))
                     .child(
                         div()
                             .text_size(px(13.))
                             .font_weight(FontWeight(520.))
                             .child(title_case(effort)),
                     )
-                    .when(model.default_effort.as_ref() == Some(effort), |button| {
+                    .when(default, |button| {
                         button.child(
                             div()
+                                .ml_auto()
                                 .text_size(px(11.))
                                 .text_color(rgb(colors.muted))
                                 .child("Default"),
@@ -1004,9 +1016,9 @@ impl ModelMenu {
                     .when(selected, |button| {
                         button.child(
                             div()
-                                .ml_auto()
+                                .when(!default, |mark| mark.ml_auto())
                                 .text_size(px(11.))
-                                .text_color(rgb(colors.muted))
+                                .text_color(rgb(colors.base.text))
                                 .child("✓"),
                         )
                     }),
@@ -1245,7 +1257,6 @@ impl Render for ModelMenu {
                     spread_radius: px(0.),
                 },
             ])
-            .capture_key_down(cx.listener(Self::handle_menu_key))
             .on_mouse_down_out(move |event, window, cx| {
                 if !anchor.contains(&event.position) {
                     let _ = click_out.update(cx, |library, cx| {
@@ -1620,13 +1631,35 @@ mod tests {
         click(cx, "filter-favorites");
         assert!(cx.debug_bounds("model/codex/retired-codex").is_some());
         assert!(cx.debug_bounds("model/opencode/openai/research").is_some());
-        cx.simulate_keystrokes("down right enter");
+        cx.simulate_keystrokes("down");
+        cx.update(|window, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().conversation;
+            let menu = pane.model_menu.as_ref().unwrap().read(app);
+            assert!(menu.keyboard.rows[1].choice.is_focused(window));
+        });
+        cx.simulate_keystrokes("right");
+        cx.update(|window, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().conversation;
+            let menu = pane.model_menu.as_ref().unwrap().read(app);
+            assert!(menu.keyboard.rows[1].star.is_focused(window));
+        });
+        cx.simulate_keystrokes("enter");
         cx.refresh().unwrap();
-        assert!(cx.debug_bounds("model/opencode/openai/research").is_none());
         cx.update(|window, app| {
             let pane = &library.read(app).selection.as_ref().unwrap().conversation;
             let menu = pane.model_menu.as_ref().unwrap().read(app);
             assert_eq!(pane.provider, Some(Provider::Codex));
+            // GPUI's debug bounds can retain selectors from previous frames.
+            assert_eq!(menu.keyboard.rows.len(), 1);
+            assert!(
+                pane.models[&Provider::OpenCode]
+                    .read(app)
+                    .catalog()
+                    .unwrap()
+                    .preferences
+                    .favorites
+                    .is_empty()
+            );
             assert!(menu.keyboard.rows[0].star.is_focused(window));
             let input = menu.query.clone();
             input.update(app, |input, cx| input.focus(window, cx));
@@ -1634,20 +1667,18 @@ mod tests {
         cx.simulate_input("Research");
         cx.run_until_parked();
         cx.refresh().unwrap();
-        assert!(cx.debug_bounds("filter-favorites").is_none());
-        assert!(cx.debug_bounds("model/codex/research-codex").is_some());
-        assert!(cx.debug_bounds("model/opencode/openai/research").is_some());
         cx.update(|_, app| {
+            let pane = &library.read(app).selection.as_ref().unwrap().conversation;
+            let menu = pane.model_menu.as_ref().unwrap().read(app);
+            assert_eq!(pane.provider, Some(Provider::Codex));
             assert_eq!(
-                library
-                    .read(app)
-                    .selection
-                    .as_ref()
-                    .unwrap()
-                    .conversation
-                    .provider,
-                Some(Provider::Codex)
-            )
+                menu.keyboard
+                    .rows
+                    .iter()
+                    .map(|row| row.key.0)
+                    .collect::<Vec<_>>(),
+                vec![Provider::Codex, Provider::OpenCode]
+            );
         });
 
         cx.simulate_keystrokes("enter");

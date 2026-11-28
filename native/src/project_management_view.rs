@@ -357,7 +357,7 @@ impl Library {
             .gap_2()
             .text_size(px(13.))
             .font_weight(FontWeight::SEMIBOLD)
-            .bg(rgb(palette.focus))
+            .bg(rgb(palette.accent))
             .text_color(rgb(0xffffff))
             .when(id == "new-project", |button| {
                 button.w(px(136.)).child(
@@ -373,7 +373,7 @@ impl Library {
                 button
                     .tab_index(1)
                     .cursor_pointer()
-                    .hover(|style| style.opacity(0.9))
+                    .hover(move |style| style.bg(rgb(palette.accent_hover)))
                     .focus(move |style| style.border_1().border_color(rgb(palette.input_border)))
                     .on_click(
                         cx.listener(|library, _, window, cx| {
