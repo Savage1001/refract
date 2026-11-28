@@ -10,9 +10,9 @@ default = ["desktop"]
 desktop = ["dep:async-channel", "dep:base64", "dep:gpui", "dep:gpui-component", "dep:icu_collator", "dep:icu_locale_core", "dep:image", "dep:katex-native", "dep:markdown", "dep:notify", "dep:raw-window-handle", "dep:resvg", "dep:sys-locale", "dep:url", "dep:windows", "dep:zed-reqwest", "latex-syntax", "portable-pdf", "pdf-links", "pdf-text", "windows-updater", "codex-account", "legacy-profile"]
 latex-syntax = ["dep:cc", "dep:tree-sitter", "dep:tree-sitter-language"]
 legacy-profile = ["dep:rusty-leveldb"]
-portable-pdf = ["dep:hayro", "dep:memmap2"]
-pdf-links = ["dep:hayro-syntax", "dep:url"]
-pdf-text = ["dep:hayro-interpret"]
+portable-pdf = ["dep:hayro", "dep:hayro-syntax", "dep:memmap2"]
+pdf-links = ["dep:hayro-syntax", "dep:memmap2", "dep:url"]
+pdf-text = ["dep:hayro-interpret", "dep:hayro-syntax", "dep:memmap2"]
 ui-tests = ["desktop", "gpui/test-support"]
 installer = ["dep:zed-reqwest", "zed-reqwest/rustls-tls-native-roots"]
 windows-updater = ["dep:zed-reqwest", "zed-reqwest/rustls-tls-native-roots"]
@@ -44,6 +44,7 @@ icu_locale_core = { version = "=2.4.0", optional = true }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"], optional = true }
 katex-native = { version = "=0.1.1", features = ["raster"], optional = true }
 markdown = { version = "=1.0.0", optional = true }
+memmap2 = { version = "=0.9.12", optional = true }
 notify = { version = "=7.0.0", optional = true }
 regex = "1"
 resvg = { version = "=0.45.1", optional = true }
@@ -75,5 +76,4 @@ zeroize = { version = "=1.9.2", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 hayro = { version = "=0.9.0", optional = true }
-memmap2 = { version = "=0.9.12", optional = true }
 rustix = { version = "=1.1.6", features = ["fs", "process"] }

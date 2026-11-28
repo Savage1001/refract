@@ -35,7 +35,7 @@ pub fn read_page_sizes_from_bytes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<PageSiz
 }
 
 pub fn read_retained_page_sizes(document: &RetainedPdf) -> io::Result<Vec<PageSize>> {
-    read_page_sizes_from_data(retained_data(document)?)
+    read_page_sizes_from_data(document.pdf_data()?)
 }
 
 fn read_page_sizes_from_data(data: PdfData) -> io::Result<Vec<PageSize>> {
@@ -68,14 +68,7 @@ pub fn render_bytes(bytes: Arc<Vec<u8>>, request: PageRequest) -> io::Result<Pag
 }
 
 pub fn render_retained(document: &RetainedPdf, request: PageRequest) -> io::Result<Page> {
-    render_data(retained_data(document)?, request)
-}
-
-fn retained_data(document: &RetainedPdf) -> io::Result<PdfData> {
-    match document {
-        RetainedPdf::Bytes(bytes) => Ok(bytes.clone().into()),
-        RetainedPdf::File(file) => Ok(Arc::new(file.map()?).into()),
-    }
+    render_data(document.pdf_data()?, request)
 }
 
 fn render_data(data: PdfData, request: PageRequest) -> io::Result<Page> {

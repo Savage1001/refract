@@ -1,9 +1,10 @@
+use crate::tex::RetainedPdf;
 use hayro_interpret::{
     BlendMode, ClipPath, Context, Device, DrawMode, DrawProps, Image, ImageDrawProps,
     InterpreterCache, InterpreterSettings, RenderContent, SoftMask, TransformExt,
     font::{Glyph, GlyphRun},
     hayro_cmap::BfString,
-    hayro_syntax::Pdf,
+    hayro_syntax::{Pdf, PdfData},
     interpret_page,
     kurbo::{BezPath, Point, Rect, Vec2},
 };
@@ -11,6 +12,7 @@ use std::{
     fs::File,
     io::{self, Read},
     ops::Range,
+    panic::AssertUnwindSafe,
     path::Path,
     sync::Arc,
 };
@@ -114,11 +116,21 @@ pub fn page_text_from_bytes(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<TextP
     if bytes.len() as u64 > FILE_LIMIT {
         return Err(invalid_pdf());
     }
-    std::panic::catch_unwind(move || extract(bytes, index)).unwrap_or_else(|_| Err(invalid_pdf()))
+    page_text_from_data(bytes.into(), index)
 }
 
-fn extract(bytes: Arc<Vec<u8>>, index: u32) -> io::Result<TextPage> {
-    let pdf = Pdf::new(bytes).map_err(|_| invalid_pdf())?;
+pub fn retained_page_text(document: &RetainedPdf, index: u32) -> io::Result<TextPage> {
+    page_text_from_data(document.pdf_data()?, index)
+}
+
+fn page_text_from_data(data: PdfData, index: u32) -> io::Result<TextPage> {
+    // The backing data is immutable and each call owns its parser state.
+    std::panic::catch_unwind(AssertUnwindSafe(move || extract(data, index)))
+        .unwrap_or_else(|_| Err(invalid_pdf()))
+}
+
+fn extract(data: PdfData, index: u32) -> io::Result<TextPage> {
+    let pdf = Pdf::new(data).map_err(|_| invalid_pdf())?;
     let page = pdf.pages().get(index as usize).ok_or_else(invalid_pdf)?;
     let (width, height) = page.render_dimensions();
     if width <= 0. || height <= 0. || !width.is_finite() || !height.is_finite() {
@@ -260,6 +272,7 @@ fn normalized(value: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tex::disk_pdf_fixture;
     use std::io::Write;
 
     #[test]
@@ -292,13 +305,17 @@ mod tests {
         )
         .unwrap();
 
-        let page = page_text_from_bytes(Arc::new(bytes), 0).unwrap();
-        assert_eq!(page.text(0..page.len()), "Text selection\nSecond line");
-        let first = page.bounds(0..1).next().unwrap();
-        assert!(first.left >= 0.09 && first.left <= 0.11);
-        assert!(first.top >= 0.15 && first.bottom <= 0.30);
-        let y = (first.top + first.bottom) / 2.;
-        assert_eq!(page.caret(first.left + 0.0001, y, false), Some(0));
-        assert_eq!(page.caret(0.99, 0.99, false), None);
+        let snapshot = disk_pdf_fixture(&bytes).unwrap();
+        let memory_page = page_text_from_bytes(Arc::new(bytes), 0).unwrap();
+        let disk_page = retained_page_text(&snapshot, 0).unwrap();
+        for page in [memory_page, disk_page] {
+            assert_eq!(page.text(0..page.len()), "Text selection\nSecond line");
+            let first = page.bounds(0..1).next().unwrap();
+            assert!(first.left >= 0.09 && first.left <= 0.11);
+            assert!(first.top >= 0.15 && first.bottom <= 0.30);
+            let y = (first.top + first.bottom) / 2.;
+            assert_eq!(page.caret(first.left + 0.0001, y, false), Some(0));
+            assert_eq!(page.caret(0.99, 0.99, false), None);
+        }
     }
 }

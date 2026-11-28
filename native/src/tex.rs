@@ -135,16 +135,26 @@ pub fn save_compiled_pdf(source: &Path, destination: &Path) -> io::Result<()> {
 #[derive(Debug)]
 pub enum RetainedPdf {
     Bytes(Arc<Vec<u8>>),
-    File(PreviewFile),
+    File(Arc<PreviewFile>),
+}
+
+#[cfg(any(feature = "portable-pdf", feature = "pdf-links", feature = "pdf-text"))]
+impl RetainedPdf {
+    pub(crate) fn pdf_data(&self) -> io::Result<hayro_syntax::PdfData> {
+        match self {
+            Self::Bytes(bytes) => Ok(bytes.clone().into()),
+            Self::File(file) => Ok(Arc::new(file.map()?).into()),
+        }
+    }
 }
 
 /// An app-owned snapshot of a PDF that is too large to keep in the heap.
 #[derive(Debug)]
 pub struct PreviewFile {
+    // Drop the handle before TempPath attempts to remove the Windows snapshot.
+    file: File,
     #[cfg(windows)]
     path: tempfile::TempPath,
-    #[cfg(not(windows))]
-    file: File,
 }
 
 impl PreviewFile {
@@ -153,14 +163,29 @@ impl PreviewFile {
         &self.path
     }
 
-    #[cfg(all(
-        feature = "portable-pdf",
-        any(target_os = "linux", target_os = "macos")
-    ))]
-    pub(crate) fn map(&self) -> io::Result<memmap2::Mmap> {
-        // The backing file is anonymous and this type gives out no writable handles.
-        // Only snapshot_pdf writes to it, before any rendering worker can map it.
-        unsafe { memmap2::Mmap::map(&self.file) }
+    #[cfg(any(feature = "portable-pdf", feature = "pdf-links", feature = "pdf-text"))]
+    fn map(self: &Arc<Self>) -> io::Result<MappedPreview> {
+        // Unix keeps an anonymous file with no public writable handles. Windows holds
+        // a read-only file handle that denies concurrent writes and deletion.
+        let bytes = unsafe { memmap2::Mmap::map(&self.file) }?;
+        Ok(MappedPreview {
+            bytes,
+            _file: self.clone(),
+        })
+    }
+}
+
+#[cfg(any(feature = "portable-pdf", feature = "pdf-links", feature = "pdf-text"))]
+struct MappedPreview {
+    // Unmap before releasing the backing file and its immutability guarantee.
+    bytes: memmap2::Mmap,
+    _file: Arc<PreviewFile>,
+}
+
+#[cfg(any(feature = "portable-pdf", feature = "pdf-links", feature = "pdf-text"))]
+impl AsRef<[u8]> for MappedPreview {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
     }
 }
 
@@ -218,8 +243,10 @@ fn snapshot_pdf(mut file: File, memory_limit: u64, cancel: &AtomicBool) -> io::R
             .suffix(".pdf")
             .tempfile()?;
         copy(&mut snapshot)?;
+        let path = snapshot.into_temp_path();
         PreviewFile {
-            path: snapshot.into_temp_path(),
+            file: open_preview_read_only(&path)?,
+            path,
         }
     };
     #[cfg(not(windows))]
@@ -228,7 +255,36 @@ fn snapshot_pdf(mut file: File, memory_limit: u64, cancel: &AtomicBool) -> io::R
         copy(&mut file)?;
         PreviewFile { file }
     };
-    Ok(RetainedPdf::File(snapshot))
+    Ok(RetainedPdf::File(Arc::new(snapshot)))
+}
+
+#[cfg(windows)]
+fn open_preview_read_only(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ};
+
+    let file = File::options()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || is_link(&metadata) || !has_one_link(&file)? {
+        return Err(invalid("Invalid preview snapshot"));
+    }
+    Ok(file)
+}
+
+/// Create an actual file-backed preview from a small test fixture.
+#[cfg(any(test, feature = "ui-tests"))]
+#[doc(hidden)]
+pub fn disk_pdf_fixture(bytes: &[u8]) -> io::Result<RetainedPdf> {
+    use std::io::Seek;
+
+    let mut file = tempfile::tempfile()?;
+    file.write_all(bytes)?;
+    file.rewind()?;
+    snapshot_pdf(file, 0, &AtomicBool::new(false))
 }
 
 fn copy_pdf_bytes(

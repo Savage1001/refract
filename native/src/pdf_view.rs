@@ -7,9 +7,9 @@ use gpui_component::tooltip::Tooltip;
 use refract_native::{
     pdf_raster::{
         MAX_RASTER_PIXELS, PageRequest, PageSize,
-        links::{LinkTarget, PdfLink, document_links_from_bytes},
+        links::{LinkTarget, PdfLink, retained_document_links},
         stack::{INSET, PageSlot, PageStack, per_page_budget},
-        text::{TextPage, page_text_from_bytes},
+        text::{TextPage, retained_page_text},
     },
     tex::{RetainedPdf, synctex::PdfPosition},
 };
@@ -159,22 +159,17 @@ impl Library {
             match work {
                 PdfWork::ReadDocument(document) => {
                     let sizes = read_page_sizes(&document);
-                    let links = match document.as_ref() {
-                        RetainedPdf::Bytes(bytes) if sizes.is_ok() => {
-                            document_links_from_bytes(bytes.clone()).unwrap_or_default()
-                        }
-                        _ => Vec::new(),
+                    let links = if sizes.is_ok() {
+                        retained_document_links(&document).unwrap_or_default()
+                    } else {
+                        Vec::new()
                     };
                     PdfUpdate::Document(document, sizes, links)
                 }
                 PdfWork::RenderPage(document, request, needs_text) => {
                     let image = raster_retained_pdf(&document, request);
-                    let text = match document.as_ref() {
-                        RetainedPdf::Bytes(bytes) if needs_text && image.is_ok() => Some(
-                            page_text_from_bytes(bytes.clone(), request.index).unwrap_or_default(),
-                        ),
-                        _ => None,
-                    };
+                    let text = (needs_text && image.is_ok())
+                        .then(|| retained_page_text(&document, request.index).unwrap_or_default());
                     PdfUpdate::Page(request, image, text)
                 }
             }
@@ -819,7 +814,10 @@ mod tests {
     use crate::{asset_image, initialize_app};
     use gpui::{Modifiers, TestAppContext, VisualTestContext};
     use gpui_component::Root;
-    use refract_native::{Project, create_project, tex::BuildResult};
+    use refract_native::{
+        Project, create_project,
+        tex::{BuildResult, disk_pdf_fixture},
+    };
     use std::{fs, io::Write, path::Path, sync::atomic::AtomicBool};
 
     fn two_page_pdf() -> Vec<u8> {
@@ -903,8 +901,25 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                assert!(view.selection.as_ref().unwrap().build.pdf().is_some());
+                // Exercise the disk-backed path with a fixture small enough for UI tests.
+                view.load_built_pdf(disk_pdf_fixture(&two_page_pdf()), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, app| {
             let view = library.read(app);
-            assert!(view.selection.as_ref().unwrap().build.pdf().is_some());
+            assert!(matches!(
+                view.selection
+                    .as_ref()
+                    .unwrap()
+                    .build
+                    .preview
+                    .document
+                    .as_deref(),
+                Some(RetainedPdf::File(_))
+            ));
             view.active_editor()
                 .unwrap()
                 .update(app, |input, cx| input.focus(window, cx));

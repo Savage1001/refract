@@ -1,11 +1,13 @@
+use crate::tex::RetainedPdf;
 use hayro_syntax::{
-    Pdf,
+    Pdf, PdfData,
     object::{Array, Dict, Name, Object, Rect, String as PdfString},
     page::Page,
 };
 use std::{
     fs::File,
     io::{self, Read},
+    panic::AssertUnwindSafe,
     path::Path,
     sync::Arc,
 };
@@ -49,7 +51,16 @@ pub fn document_links_from_bytes(bytes: Arc<Vec<u8>>) -> io::Result<Vec<Vec<PdfL
     if bytes.len() as u64 > MAX_PDF_BYTES {
         return Err(invalid_pdf());
     }
-    std::panic::catch_unwind(move || parse_document_links(bytes))
+    document_links_from_data(bytes.into())
+}
+
+pub fn retained_document_links(document: &RetainedPdf) -> io::Result<Vec<Vec<PdfLink>>> {
+    document_links_from_data(document.pdf_data()?)
+}
+
+fn document_links_from_data(data: PdfData) -> io::Result<Vec<Vec<PdfLink>>> {
+    // The backing data is immutable and each call owns its parser state.
+    std::panic::catch_unwind(AssertUnwindSafe(move || parse_document_links(data)))
         .unwrap_or_else(|_| Err(invalid_pdf()))
 }
 
@@ -60,8 +71,8 @@ fn invalid_pdf() -> io::Error {
     )
 }
 
-fn parse_document_links(bytes: Arc<Vec<u8>>) -> io::Result<Vec<Vec<PdfLink>>> {
-    let pdf = Pdf::new(bytes).map_err(|_| invalid_pdf())?;
+fn parse_document_links(data: PdfData) -> io::Result<Vec<Vec<PdfLink>>> {
+    let pdf = Pdf::new(data).map_err(|_| invalid_pdf())?;
     let catalog = pdf.xref().get::<Dict<'_>>(pdf.xref().root_id());
     let base = catalog.as_ref().and_then(|dict| {
         let uri: Dict<'_> = dict.get("URI")?;
@@ -265,6 +276,7 @@ fn search_destinations<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tex::disk_pdf_fixture;
     use std::io::Write;
 
     #[test]
@@ -294,7 +306,9 @@ mod tests {
             "trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
         )
         .unwrap();
+        let snapshot = disk_pdf_fixture(&bytes).unwrap();
         let links = document_links_from_bytes(Arc::new(bytes)).unwrap();
+        assert_eq!(retained_document_links(&snapshot).unwrap(), links);
         assert_eq!(links.iter().map(Vec::len).collect::<Vec<_>>(), [2, 0]);
         assert_eq!(
             links[0][0],

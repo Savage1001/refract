@@ -71,6 +71,8 @@ fn keeps_disk_and_memory_previews_when_the_build_replaces_its_pdf() {
                 {
                     let path = file.path().to_owned();
                     assert_eq!(fs::read(&path).unwrap(), original);
+                    assert!(fs::write(&path, b"overwrite").is_err());
+                    assert!(fs::remove_file(&path).is_err());
                     drop(file);
                     assert!(!path.exists());
                 }
@@ -78,7 +80,7 @@ fn keeps_disk_and_memory_previews_when_the_build_replaces_its_pdf() {
                     feature = "portable-pdf",
                     any(target_os = "linux", target_os = "macos")
                 ))]
-                assert_eq!(&file.map().unwrap()[..], original);
+                assert_eq!(file.map().unwrap().as_ref(), original);
                 #[cfg(not(any(
                     windows,
                     all(
@@ -88,7 +90,7 @@ fn keeps_disk_and_memory_previews_when_the_build_replaces_its_pdf() {
                 )))]
                 {
                     use std::io::{Seek, SeekFrom};
-                    let mut file = file.file;
+                    let mut file = &file.file;
                     file.seek(SeekFrom::Start(0)).unwrap();
                     let mut bytes = Vec::new();
                     file.read_to_end(&mut bytes).unwrap();
