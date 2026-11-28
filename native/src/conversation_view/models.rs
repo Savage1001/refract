@@ -8,11 +8,17 @@ use gpui::{
     prelude::*, px, rgb, svg,
 };
 use gpui_component::{
-    Disableable, Selectable, Sizable,
+    Disableable, Selectable, Sizable, Size,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
     popover::Popover,
 };
+use icu_collator::{
+    Collator, CollatorBorrowed, CollatorPreferences,
+    options::{CollatorOptions, Strength},
+    preferences::CollationNumericOrdering,
+};
+use icu_locale_core::Locale;
 use refract_native::{
     assistant_preferences::{
         AssistantConnection, AssistantPreferences, load_assistant_preferences,
@@ -20,15 +26,16 @@ use refract_native::{
     },
     assistant_runtime::{
         codex_catalog::{CodexCatalogModel, discover_codex_models},
-        opencode::catalog::discover_opencode_models,
+        opencode::catalog::{OpenCodeCatalogModel, discover_opencode_models},
     },
     conversation::Provider,
 };
+use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -38,11 +45,35 @@ pub(super) const CHECKING_MODELS: &str = "Checking model availability…";
 struct Model {
     id: String,
     name: String,
+    source: Option<String>,
+    disambiguator: Option<String>,
     legacy_ids: Vec<String>,
     description: String,
     efforts: Vec<String>,
     default_effort: Option<String>,
     is_default: bool,
+}
+
+impl Model {
+    fn matches_search(&self, provider: &str, terms: &[&str]) -> bool {
+        if terms.is_empty() {
+            return true;
+        }
+        let name = self.name.to_lowercase();
+        let text = format!(
+            "{name} {} {} {} {provider}",
+            self.id,
+            self.source.as_deref().unwrap_or_default(),
+            self.description,
+        )
+        .to_lowercase();
+        terms.iter().all(|&term| {
+            text.contains(term) || {
+                let normalized = format_model_name(term);
+                !normalized.is_empty() && name.contains(&normalized)
+            }
+        })
+    }
 }
 
 struct Catalog {
@@ -387,7 +418,7 @@ impl ModelPicker {
                 if let Some(model) = catalog.selected() {
                     model.name.clone()
                 } else if let Some(model) = &catalog.preferences.model {
-                    let name = model.rsplit('/').next().unwrap_or(model).replace('-', " ");
+                    let name = format_model_name(model.rsplit('/').next().unwrap_or(model));
                     format!("{name} (unavailable)")
                 } else if catalog.options.is_err() {
                     "Models unavailable".into()
@@ -446,24 +477,15 @@ fn load_models(
                 .map_err(|error| DiscoveryError::Connection(error.to_string()))?;
             discover_codex_models(command, codex.key().is_some(), cancel)
                 .map_err(DiscoveryError::Catalog)
-                .map(codex_models)
+                .map(|models| {
+                    let mut models = codex_models(models);
+                    distinguish_names(&mut models);
+                    models
+                })
         }
         PreparedProvider::OpenCode(cli) => discover_opencode_models(cli, project, cancel)
             .map_err(DiscoveryError::Catalog)
-            .map(|models| {
-                models
-                    .into_iter()
-                    .map(|model| Model {
-                        legacy_ids: Vec::new(),
-                        id: model.id,
-                        name: model.name,
-                        description: String::new(),
-                        default_effort: preferred_effort(&model.variants, None),
-                        efforts: model.variants,
-                        is_default: false,
-                    })
-                    .collect()
-            }),
+            .map(open_code_models),
     }
 }
 
@@ -488,7 +510,9 @@ fn codex_models(catalog: Vec<CodexCatalogModel>) -> Vec<Model> {
         let default_effort = preferred_effort(&efforts, model.default_reasoning_effort.as_deref());
         models.push(Model {
             id: model.model,
-            name: model.display_name,
+            name: format_model_name(&model.display_name),
+            source: None,
+            disambiguator: None,
             legacy_ids: legacy_id.into_iter().collect(),
             description: model.description,
             default_effort,
@@ -497,6 +521,105 @@ fn codex_models(catalog: Vec<CodexCatalogModel>) -> Vec<Model> {
         });
     }
     models
+}
+
+fn format_model_name(name: &str) -> String {
+    static DASHES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-+").unwrap());
+    DASHES.replace_all(name, " ").trim().to_owned()
+}
+
+fn open_code_source(id: &str) -> String {
+    let prefix = id.split('/').next().unwrap_or(id);
+    match prefix.to_ascii_lowercase().as_str() {
+        "opencode" => "OpenCode",
+        "lmstudio" => "LM Studio",
+        "anthropic" => "Anthropic",
+        "openai" => "OpenAI",
+        "openrouter" => "OpenRouter",
+        "google" => "Google",
+        _ => prefix,
+    }
+    .to_owned()
+}
+
+fn open_code_models(catalog: Vec<OpenCodeCatalogModel>) -> Vec<Model> {
+    let mut models: Vec<_> = catalog
+        .into_iter()
+        .map(|model| Model {
+            name: format_model_name(&model.name),
+            source: Some(open_code_source(&model.id)),
+            disambiguator: None,
+            legacy_ids: Vec::new(),
+            id: model.id,
+            description: String::new(),
+            default_effort: preferred_effort(&model.variants, None),
+            efforts: model.variants,
+            is_default: false,
+        })
+        .collect();
+    let locale = sys_locale::get_locale()
+        .and_then(|locale| locale.parse::<Locale>().ok())
+        .unwrap_or(Locale::UNKNOWN);
+    let collator = model_collator(&locale);
+    let compare = |left: &str, right: &str| {
+        collator
+            .as_ref()
+            .map_or_else(|| left.cmp(right), |collator| collator.compare(left, right))
+    };
+    // Electron ranks the initial selection by descending version, then by label.
+    if let Some(model) = models.iter_mut().min_by(|left, right| {
+        compare(model_version(right), model_version(left))
+            .then_with(|| compare(&left.name, &right.name))
+    }) {
+        model.is_default = true;
+    }
+    models.sort_by(|left, right| {
+        compare(&left.name, &right.name).then_with(|| compare(&left.id, &right.id))
+    });
+    distinguish_names(&mut models);
+    models
+}
+
+fn model_collator(locale: &Locale) -> Option<CollatorBorrowed<'static>> {
+    let mut options = CollatorOptions::default();
+    options.strength = Some(Strength::Primary);
+    let numeric = |mut preferences: CollatorPreferences| {
+        preferences.numeric_ordering = Some(CollationNumericOrdering::True);
+        Collator::try_new(preferences, options)
+    };
+    numeric(locale.into())
+        .or_else(|_| numeric(CollatorPreferences::default()))
+        .ok()
+}
+
+fn model_version(model: &Model) -> &str {
+    static VERSION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9]+(?:\.[0-9]+)*").unwrap());
+    VERSION
+        .find(&model.name)
+        .or_else(|| VERSION.find(&model.id))
+        .map_or("0", |version| version.as_str())
+}
+
+fn distinguish_names(models: &mut [Model]) {
+    let mut names = HashMap::new();
+    let mut sources = HashMap::new();
+    for model in models.iter() {
+        *names.entry(model.name.clone()).or_insert(0usize) += 1;
+        if let Some(source) = &model.source {
+            *sources
+                .entry((model.name.clone(), source.clone()))
+                .or_insert(0usize) += 1;
+        }
+    }
+    for model in models {
+        if names[&model.name] > 1 {
+            let source = model
+                .source
+                .as_ref()
+                .filter(|source| sources[&(model.name.clone(), (*source).clone())] == 1);
+            model.disambiguator = Some(source.unwrap_or(&model.id).clone());
+        }
+    }
 }
 
 fn preferred_effort(efforts: &[String], default: Option<&str>) -> Option<String> {
@@ -634,16 +757,7 @@ impl Render for ModelPicker {
                         if self.favorites && !favorite {
                             return false;
                         }
-                        let name = model.name.to_lowercase();
-                        let id = model.id.to_lowercase();
-                        terms.iter().all(|term| {
-                            name.contains(*term)
-                                || id.contains(*term)
-                                || model
-                                    .legacy_ids
-                                    .iter()
-                                    .any(|legacy_id| legacy_id.to_lowercase().contains(*term))
-                        })
+                        model.matches_search(self.provider.label(), &terms)
                     })
                     .collect();
                 if filtered.is_empty() {
@@ -660,6 +774,20 @@ impl Render for ModelPicker {
                     let favorite = catalog.preferences.favorites.contains(&model.id);
                     let choose = model.id.clone();
                     let star = choose.clone();
+                    let tooltip = [
+                        Some(model.name.as_str()),
+                        model
+                            .source
+                            .as_deref()
+                            .filter(|source| *source != self.provider.label()),
+                        Some(model.id.as_str()).filter(|id| *id != model.name.as_str()),
+                        Some(model.description.as_str())
+                            .filter(|description| !description.is_empty()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("\n");
                     list = list.child(
                         div()
                             .id(gpui::SharedString::from(model.id.clone()))
@@ -671,18 +799,32 @@ impl Render for ModelPicker {
                             .child(
                                 Button::new("select-model")
                                     .ghost()
-                                    .small()
-                                    .w_full()
+                                    .with_size(Size::Size(px(33.)))
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .min_h(px(33.))
+                                    .justify_start()
                                     .child(
                                         div()
-                                            .text_size(px(14.))
-                                            .font_weight(FontWeight(580.))
-                                            .truncate()
-                                            .child(model.name.clone()),
+                                            .min_w(px(0.))
+                                            .child(
+                                                div()
+                                                    .text_size(px(14.))
+                                                    .line_height(px(21.))
+                                                    .font_weight(FontWeight(580.))
+                                                    .truncate()
+                                                    .child(model.name.clone()),
+                                            )
+                                            .children(model.disambiguator.clone().map(|source| {
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .line_height(px(16.5))
+                                                    .text_color(rgb(palette.muted))
+                                                    .truncate()
+                                                    .child(source)
+                                            })),
                                     )
-                                    .when(!model.description.is_empty(), |button| {
-                                        button.tooltip(model.description.clone())
-                                    })
+                                    .tooltip(tooltip)
                                     .on_click(cx.listener(move |picker, _, _, cx| {
                                         picker.choose(&choose, cx)
                                     })),
@@ -864,19 +1006,33 @@ impl Library {
             .get(&kind)
             .map(|picker| picker.read(cx).label())
             .unwrap_or_else(|| provider.label().into());
-        let effort = pane
+        let catalog = pane
             .models
             .get(&kind)
-            .and_then(|picker| picker.read(cx).catalog())
+            .and_then(|picker| picker.read(cx).catalog());
+        let (identity, options) = catalog
             .and_then(|catalog| {
                 let selected = catalog.selected()?;
-                catalog
+                let effort = catalog
                     .preferences
                     .reasoning_effort
                     .as_ref()
                     .filter(|effort| selected.efforts.contains(*effort))
-                    .map(|effort| title_case(effort))
-            });
+                    .map(|effort| title_case(effort));
+                let fast = (kind == Provider::Codex
+                    && catalog.preferences.fast_mode.unwrap_or_default())
+                .then(|| "Fast".to_owned());
+                let options = [effort, fast]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                Some((
+                    selected.disambiguator.clone(),
+                    (!options.is_empty()).then_some(options),
+                ))
+            })
+            .unwrap_or_default();
         let library = cx.weak_entity();
         let content = library.clone();
         Some(
@@ -902,12 +1058,12 @@ impl Library {
                                 .truncate()
                                 .child(name),
                         )
-                        .children(effort.map(|effort| {
+                        .children([identity, options].into_iter().flatten().map(|label| {
                             div()
                                 .text_size(px(12.))
                                 .text_color(rgb(palette.muted))
                                 .truncate()
-                                .child(effort)
+                                .child(label)
                         }))
                         .disabled(pane.running.is_some()),
                 )
@@ -957,6 +1113,8 @@ mod tests {
             options: Ok(vec![Model {
                 id: "gpt-example".into(),
                 name: "GPT Example".into(),
+                source: None,
+                disambiguator: None,
                 legacy_ids: Vec::new(),
                 description: String::new(),
                 efforts: vec!["low".into(), "high".into()],
@@ -985,6 +1143,36 @@ mod tests {
         assert_eq!(preferred_effort(&[], None), None);
         assert_eq!(title_case("xhigh"), "Extra high");
         assert_eq!(title_case("extra_deep"), "Extra deep");
+    }
+
+    #[test]
+    fn open_code_catalog_orders_labels_and_prefers_the_highest_advertised_version() {
+        let record = |id: &str, name: &str| OpenCodeCatalogModel {
+            id: id.into(),
+            name: name.into(),
+            variants: vec!["high".into(), "low".into()],
+        };
+        let models = open_code_models(vec![
+            record("openrouter/example-4.9", "Example-4.9"),
+            record("lmstudio/example-4.10", "Example--4.10"),
+            record("openai/example-4.10", "Example-4.10"),
+            record("openai/other-4.10", "Example-4.10"),
+        ]);
+        assert_eq!(models[0].name, "Example 4.9");
+        assert_eq!(models[1].name, "Example 4.10");
+        let local = models
+            .iter()
+            .find(|model| model.id.starts_with("lmstudio/"))
+            .unwrap();
+        assert!(local.is_default);
+        assert_eq!(local.disambiguator.as_deref(), Some("LM Studio"));
+        assert!(local.matches_search("OpenCode", &["opencode", "example--4.10", "studio"]));
+        assert!(!local.matches_search("OpenCode", &["example", "openai"]));
+        let hosted = models
+            .iter()
+            .find(|model| model.id == "openai/example-4.10")
+            .unwrap();
+        assert_eq!(hosted.disambiguator.as_deref(), Some("openai/example-4.10"));
     }
 
     #[test]

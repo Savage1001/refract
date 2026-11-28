@@ -73,7 +73,8 @@ async function verifyInstaller(output: string, mode?: string, electronOutput?: s
 
   const manifest = JSON.parse(await fs.readFile(path.resolve(__dirname, '../../package.json'), 'utf8')) as {
     version: string;
-    build: { appId: string; productName: string; nsis: { guid?: string } };
+    main: string;
+    build: { appId: string; asar?: boolean; productName: string; nsis: { guid?: string } };
   };
   const { version, build: { appId, productName, nsis } } = manifest;
   const guid = nsis.guid ?? UUID.v5(appId, UUID.parse('50e065bc-3134-11e6-9bab-38c9862bdaf3'));
@@ -169,18 +170,20 @@ async function verifyInstaller(output: string, mode?: string, electronOutput?: s
     console.log('Upgrading the existing Electron installer to the native release asset');
     const electronInstaller = path.resolve(electronOutput, `${productName} Setup ${version}.exe`);
     const previousInstall = path.join(root, 'Installed Electron');
-    const archive = path.join(previousInstall, 'resources', 'app.asar');
+    const electronApp = manifest.build.asar === false
+      ? path.join(previousInstall, 'resources', 'app', manifest.main)
+      : path.join(previousInstall, 'resources', 'app.asar');
     const updateTrack = path.join(appData, productName, 'update-settings.json');
     await fs.writeFile(updateTrack, '{"track":"beta"}\n');
     assert.equal(await run(electronInstaller, ['/S', `/D=${previousInstall}`], env), 0);
     verifyRegistration(true);
-    await fs.access(archive);
+    await fs.access(electronApp);
 
     assert.equal(await run(installer, ['/S', '--updated'], env), 0);
     verifyRegistration(true);
     await fs.access(path.join(previousInstall, `${productName}.exe`));
     assert.equal((await fs.readFile(path.join(previousInstall, 'refract-native-installed'), 'utf8')).trim(), version);
-    await assert.rejects(fs.access(archive), { code: 'ENOENT' });
+    await assert.rejects(fs.access(electronApp), { code: 'ENOENT' });
     assert.equal(await fs.readFile(project, 'utf8'), 'Fixture project');
     assert.equal(await fs.readFile(updateTrack, 'utf8'), '{"track":"beta"}\n');
     assert.equal(await fs.readFile(texMarker, 'utf8'), 'Existing toolchain');

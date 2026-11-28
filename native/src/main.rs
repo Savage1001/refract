@@ -1365,10 +1365,12 @@ impl Library {
     ) -> impl IntoElement {
         let width = f32::from(window.viewport_size().width);
         let narrow = width <= 800.;
-        let padding = if narrow {
-            18.
+        let (padding, vertical_padding) = if narrow {
+            (18., 24.)
+        } else if WorkspaceLayout::compact(width) {
+            (28., 28.)
         } else {
-            (width * 0.05).clamp(24., 80.)
+            ((width * 0.05).clamp(24., 80.), 44.)
         };
         let columns = (((width - padding * 2.).min(1120.) + 16.) / 256.)
             .floor()
@@ -1379,8 +1381,8 @@ impl Library {
             .id("projects")
             .overflow_y_scroll()
             .px(px(padding))
-            .pt(px(if narrow { 66. } else { 86. }))
-            .pb(px(if narrow { 24. } else { 44. }))
+            .pt(px(WORKSPACE_HEADER_HEIGHT + vertical_padding))
+            .pb(px(vertical_padding))
             .text_size(px(13.))
             .on_click(cx.listener(|library, _, _, cx| library.dismiss_project_menu(cx)));
         let content = div()
@@ -2670,7 +2672,9 @@ mod tests {
                         window,
                         cx,
                     );
-                    (selection.range, selection.reversed, top)
+                    // GPUI's platform selection reports a normalized range. The caret
+                    // identifies the moving end of the selection in this ASCII fixture.
+                    (selection.range, input.cursor(), top)
                 })
             })
         };
@@ -2695,7 +2699,7 @@ mod tests {
         cx.refresh().unwrap();
         let first_view = read_view(cx);
         assert_eq!(first_view.0, 6..8);
-        assert!(first_view.1);
+        assert_eq!(first_view.1, first_view.0.start);
         assert!(first_view.2.is_some_and(|index| index > 250));
 
         cx.update(|window, app| {

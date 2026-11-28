@@ -60,7 +60,6 @@ pub(super) fn overlay(window: &Window, library: bool) -> Option<impl IntoElement
     } else {
         CaptionButton::Maximize
     };
-    let top = if window.is_maximized() { 0. } else { 1. };
     Some(
         div()
             .absolute()
@@ -80,7 +79,6 @@ pub(super) fn overlay(window: &Window, library: bool) -> Option<impl IntoElement
                 div()
                     .flex_none()
                     .h_full()
-                    .pt(px(top))
                     .flex()
                     .child(CaptionButton::Minimize.control(symbol, highlight))
                     .child(toggle.control(symbol, highlight))

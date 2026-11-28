@@ -136,11 +136,11 @@ function Measure-Library([Drawing.Bitmap] $Bitmap, [double] $Scale, [bool] $Dark
         $result[$symbol.name] = $ink
     }
 
-    # Match the shared library fixture's layout at desktop and compact capture widths.
-    $contentLeft = [Math]::Max($Bitmap.Width * 0.05, ($Bitmap.Width - 1120 * $Scale) / 2)
-    foreach ($text in @(@{ name = 'brand'; x = 74; y = 82; width = 158; height = 58 },
-        @{ name = 'heading'; x = 0; y = 153; width = 225; height = 55 },
-        @{ name = 'firstProject'; x = 70; y = 420; width = 300; height = 44 })) {
+    # Take the complete glyph bounds in the 900x650 CSS-pixel library fixture.
+    $contentLeft = 28 * $Scale
+    foreach ($text in @(@{ name = 'brand'; x = 70; y = 76; width = 200; height = 45 },
+        @{ name = 'heading'; x = 0; y = 141; width = 220; height = 43 },
+        @{ name = 'firstProject'; x = 64; y = 411; width = 285; height = 39 })) {
         $region = [Drawing.Rectangle]::new(($contentLeft + $text.x * $Scale), ($text.y * $Scale), ($text.width * $Scale), ($text.height * $Scale))
         $ink = Measure-Ink $Bitmap $region $Dark
         if ($ink.pixels -lt 35) { return }
