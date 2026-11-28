@@ -1,7 +1,8 @@
 use super::{Library, Palette, Selection, asset_image};
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, ObjectFit, ScrollHandle,
-    SharedString, Subscription, Task, Window, div, img, prelude::*, px, rgb, svg,
+    BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, ObjectFit,
+    ScrollHandle, SharedString, Subscription, Task, Window, div, img, point, prelude::*, px, rgb,
+    rgba, svg,
 };
 use gpui_component::{
     WindowExt,
@@ -611,6 +612,7 @@ impl Library {
                 div()
                     .flex_1()
                     .text_size(px(12.))
+                    .line_height(px(18.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Conversation"),
             )
@@ -657,6 +659,7 @@ impl Library {
                         .child(
                             div()
                                 .text_size(px(13.))
+                                .line_height(px(19.5))
                                 .font_weight(FontWeight::BOLD)
                                 .child("Welcome to Refract!"),
                         )
@@ -682,12 +685,15 @@ impl Library {
                             .absolute()
                             .top_0()
                             .right_0()
-                            .p_1()
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .tooltip(|window, cx| Tooltip::new("Dismiss welcome").build(window, cx))
                             .child(
                                 svg()
                                     .path("refract/close.svg")
-                                    .size(px(16.))
+                                    .size(px(18.))
                                     .text_color(rgb(palette.muted)),
                             ),
                         )
@@ -714,6 +720,12 @@ impl Library {
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
+            .shadow(vec![BoxShadow {
+                color: rgba(palette.shadow).into(),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(16.),
+                spread_radius: px(0.),
+            }])
             .when(editor_shown, |panel| panel.h(px(height)).flex_none())
             .when(!editor_shown, |pane| {
                 pane.flex_1().min_h(px(0.)).mt(px(margin))

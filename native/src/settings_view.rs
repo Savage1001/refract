@@ -384,13 +384,7 @@ impl Library {
             let width = (viewport.width - px(48.)).max(px(0.)).min(px(440.));
             let measurement = measured_height.clone();
             let measure_owner = owner.clone();
-            let mut palette = Palette::for_window(window);
-            if matches!(
-                window.appearance(),
-                gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
-            ) {
-                palette.muted = 0x818181;
-            }
+            let palette = Palette::for_window(window);
             dialog
                 .title(crate::dialog_title("Settings"))
                 .w(width)

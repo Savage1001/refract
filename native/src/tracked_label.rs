@@ -1,6 +1,6 @@
 use gpui::{
-    App, FontFeatures, IntoElement, LineLayout, Pixels, RenderOnce, ShapedLine, SharedString,
-    Styled, Window, canvas, px,
+    App, FontFeatures, IntoElement, LineLayout, Pixels, RenderOnce, SharedString, Styled, Window,
+    canvas, px,
 };
 use std::sync::{Arc, LazyLock};
 

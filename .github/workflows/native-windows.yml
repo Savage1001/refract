@@ -250,6 +250,13 @@ jobs:
           sleep 0.4
           capture settings 1440 900
           require_redraw library-grid settings
+          if [[ $theme == dark ]]; then
+            bright=$(convert "$output/$theme-settings.png" -crop '380x360+530+240' -colorspace Gray -threshold 75% -format '%[fx:mean]' info:)
+            if ! awk -v bright="$bright" 'BEGIN { exit !(bright < 0.06) }'; then
+              echo 'The dark settings panel contains light control backgrounds' >&2
+              exit 1
+            fi
+          fi
           xdotool key Escape
           sleep 0.4
           click 1174 284
@@ -264,6 +271,13 @@ jobs:
             sleep 0.25
           done
           capture workspace 1440 900
+          if [[ $theme == dark ]]; then
+            luminance=$(convert "$output/$theme-workspace.png" -crop '80x40+445+440' -colorspace Gray -format '%[fx:mean]' info:)
+            if ! awk -v luminance="$luminance" 'BEGIN { exit !(luminance < 0.12) }'; then
+              echo 'The source editor did not use the dark theme' >&2
+              exit 1
+            fi
+          fi
           if ! cmp -s "$REFRACT_CAPTURE_PDF" "$rendered_pdf"; then
             echo 'The native workspace did not load the shared screenshot PDF' >&2
             exit 1

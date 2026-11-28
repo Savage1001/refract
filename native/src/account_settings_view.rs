@@ -14,9 +14,11 @@ use refract_native::codex_account::CodexAccount;
 #[cfg(not(windows))]
 use refract_native::managed_codex::UNSUPPORTED_PLATFORM;
 use refract_native::{codex_connection::CodexMode, managed_codex::RuntimeProgress};
+#[cfg(not(windows))]
+use std::path::PathBuf;
 use std::{
     io,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},

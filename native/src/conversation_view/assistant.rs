@@ -368,7 +368,7 @@ fn run_turn(
         !successful_build.load(Ordering::Acquire)
             && result.as_deref().is_ok_and(claims_successful_build)
     };
-    if mode == AssistantConnection::CodexCli && unverified_claim(&result) {
+    if work.provider.mode() == AssistantConnection::CodexCli && unverified_claim(&result) {
         if let Some(reference) = session.as_deref() {
             let (corrected, updated_session) = execute(
                 "Refract recorded no successful build for this turn. If the user requested compilation, call the Refract build tool and report its actual result. Otherwise correct the claim without building.",

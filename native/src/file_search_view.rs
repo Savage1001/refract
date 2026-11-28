@@ -239,7 +239,10 @@ impl Library {
         let input = Input::new(&query)
             .appearance(false)
             .font_weight(FontWeight::MEDIUM)
+            .text_size(px(13.))
+            .line_height(px(19.5))
             .h(px(36.))
+            .rounded(px(8.))
             .tab_index(1)
             .prefix(
                 svg()
@@ -345,6 +348,7 @@ impl Library {
             .id("file-search")
             .debug_selector(|| "file-search".into())
             .flex_none()
+            .py(px(6.))
             .child(input)
             .child(results)
     }

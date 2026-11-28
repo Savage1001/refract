@@ -19,11 +19,13 @@ use refract_native::{
         save_assistant_preferences, valid_codex_effort,
     },
     assistant_runtime::{
-        codex_catalog::discover_codex_models, opencode::catalog::discover_opencode_models,
+        codex_catalog::{CodexCatalogModel, discover_codex_models},
+        opencode::catalog::discover_opencode_models,
     },
     conversation::Provider,
 };
 use std::{
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -36,7 +38,7 @@ pub(super) const CHECKING_MODELS: &str = "Checking model availability…";
 struct Model {
     id: String,
     name: String,
-    identity: String,
+    legacy_ids: Vec<String>,
     description: String,
     efforts: Vec<String>,
     default_effort: Option<String>,
@@ -71,25 +73,58 @@ impl Catalog {
         self.models().iter().find(|model| model.id == id)
     }
 
-    fn normalize_selection(&self) -> Option<AssistantPreferences> {
-        let model = if self.preferences.model.is_some() {
-            self.selected()?
-        } else {
-            self.models()
+    fn resolve_id(&self, id: &str) -> Option<&Model> {
+        if let Some(exact) = self.models().iter().find(|model| model.id == id) {
+            return Some(exact);
+        }
+        let mut aliases = self
+            .models()
+            .iter()
+            .filter(|model| model.legacy_ids.iter().any(|legacy_id| legacy_id == id));
+        let model = aliases.next()?;
+        aliases.next().is_none().then_some(model)
+    }
+
+    fn normalize_preferences(&self) -> Option<(AssistantPreferences, bool)> {
+        if self.models().is_empty() {
+            return None;
+        }
+        let model = match self.preferences.model.as_deref() {
+            Some(id) => self.resolve_id(id),
+            None => self
+                .models()
                 .iter()
                 .find(|model| model.is_default)
-                .or_else(|| self.models().first())?
+                .or_else(|| self.models().first()),
         };
         let mut preferences = self.preferences.clone();
-        preferences.model = Some(model.id.clone());
-        if preferences
-            .reasoning_effort
-            .as_ref()
-            .is_none_or(|effort| !model.efforts.contains(effort))
-        {
-            preferences.reasoning_effort = model.default_effort.clone();
+        if let Some(model) = model {
+            preferences.model = Some(model.id.clone());
+            if preferences
+                .reasoning_effort
+                .as_ref()
+                .is_none_or(|effort| !model.efforts.contains(effort))
+            {
+                preferences.reasoning_effort = model.default_effort.clone();
+            }
         }
-        (preferences != self.preferences).then_some(preferences)
+        let affects_selection = preferences.model != self.preferences.model
+            || preferences.reasoning_effort != self.preferences.reasoning_effort;
+        if self
+            .models()
+            .iter()
+            .any(|model| !model.legacy_ids.is_empty())
+        {
+            let mut seen = HashSet::new();
+            preferences.favorites.clear();
+            for id in &self.preferences.favorites {
+                let canonical = self.resolve_id(id).map_or(id, |model| &model.id);
+                if seen.insert(canonical) {
+                    preferences.favorites.push(canonical.clone());
+                }
+            }
+        }
+        (preferences != self.preferences).then_some((preferences, affects_selection))
     }
 
     fn send_issue(&self, provider: Provider, settings_unsaved: bool) -> Option<&'static str> {
@@ -223,8 +258,10 @@ impl ModelPicker {
             let _ = picker.update(cx, |picker, cx| {
                 picker.loading = None;
                 picker.catalog = Some(result);
-                if let Some(preferences) = picker.catalog().and_then(Catalog::normalize_selection) {
-                    picker.save(preferences, true, cx);
+                if let Some((preferences, affects_selection)) =
+                    picker.catalog().and_then(Catalog::normalize_preferences)
+                {
+                    picker.save(preferences, affects_selection, cx);
                 }
                 picker.update_parent(cx);
             });
@@ -409,32 +446,7 @@ fn load_models(
                 .map_err(|error| DiscoveryError::Connection(error.to_string()))?;
             discover_codex_models(command, codex.key().is_some(), cancel)
                 .map_err(DiscoveryError::Catalog)
-                .map(|models| {
-                    models
-                        .into_iter()
-                        .map(|model| {
-                            let efforts: Vec<_> = model
-                                .supported_reasoning_efforts
-                                .into_iter()
-                                .map(|effort| effort.effort)
-                                .filter(|effort| valid_codex_effort(effort))
-                                .collect();
-                            let default_effort = preferred_effort(
-                                &efforts,
-                                model.default_reasoning_effort.as_deref(),
-                            );
-                            Model {
-                                id: model.id,
-                                name: model.display_name,
-                                identity: model.model,
-                                description: model.description,
-                                default_effort,
-                                efforts,
-                                is_default: model.is_default,
-                            }
-                        })
-                        .collect()
-                })
+                .map(codex_models)
         }
         PreparedProvider::OpenCode(cli) => discover_opencode_models(cli, project, cancel)
             .map_err(DiscoveryError::Catalog)
@@ -442,7 +454,7 @@ fn load_models(
                 models
                     .into_iter()
                     .map(|model| Model {
-                        identity: model.id.clone(),
+                        legacy_ids: Vec::new(),
                         id: model.id,
                         name: model.name,
                         description: String::new(),
@@ -453,6 +465,38 @@ fn load_models(
                     .collect()
             }),
     }
+}
+
+fn codex_models(catalog: Vec<CodexCatalogModel>) -> Vec<Model> {
+    let mut positions = HashMap::new();
+    let mut models: Vec<Model> = Vec::new();
+    for model in catalog {
+        let legacy_id = (model.id != model.model).then_some(model.id);
+        if let Some(&position) = positions.get(&model.model) {
+            let existing: &mut Model = &mut models[position];
+            existing.legacy_ids.extend(legacy_id);
+            existing.is_default |= model.is_default;
+            continue;
+        }
+        positions.insert(model.model.clone(), models.len());
+        let efforts: Vec<_> = model
+            .supported_reasoning_efforts
+            .into_iter()
+            .map(|effort| effort.effort)
+            .filter(|effort| valid_codex_effort(effort))
+            .collect();
+        let default_effort = preferred_effort(&efforts, model.default_reasoning_effort.as_deref());
+        models.push(Model {
+            id: model.model,
+            name: model.display_name,
+            legacy_ids: legacy_id.into_iter().collect(),
+            description: model.description,
+            default_effort,
+            efforts,
+            is_default: model.is_default,
+        });
+    }
+    models
 }
 
 fn preferred_effort(efforts: &[String], default: Option<&str>) -> Option<String> {
@@ -591,10 +635,15 @@ impl Render for ModelPicker {
                             return false;
                         }
                         let name = model.name.to_lowercase();
-                        let identity = model.identity.to_lowercase();
-                        terms
-                            .iter()
-                            .all(|term| name.contains(*term) || identity.contains(*term))
+                        let id = model.id.to_lowercase();
+                        terms.iter().all(|term| {
+                            name.contains(*term)
+                                || id.contains(*term)
+                                || model
+                                    .legacy_ids
+                                    .iter()
+                                    .any(|legacy_id| legacy_id.to_lowercase().contains(*term))
+                        })
                     })
                     .collect();
                 if filtered.is_empty() {
@@ -908,7 +957,7 @@ mod tests {
             options: Ok(vec![Model {
                 id: "gpt-example".into(),
                 name: "GPT Example".into(),
-                identity: "gpt-example".into(),
+                legacy_ids: Vec::new(),
                 description: String::new(),
                 efforts: vec!["low".into(), "high".into()],
                 default_effort: Some("low".into()),
@@ -941,8 +990,10 @@ mod tests {
     #[test]
     fn normalizes_an_unset_selection_and_uses_the_same_effort_for_turns() {
         let mut catalog = catalog(None, Some("medium"));
-        catalog.preferences = catalog.normalize_selection().unwrap();
-        assert!(catalog.normalize_selection().is_none());
+        let (normalized, selection_changed) = catalog.normalize_preferences().unwrap();
+        assert!(selection_changed);
+        catalog.preferences = normalized;
+        assert!(catalog.normalize_preferences().is_none());
         assert_eq!(catalog.send_issue(Provider::Codex, false), None);
         let selection = catalog.selection(Provider::Codex).unwrap();
         assert_eq!(catalog.selected().unwrap().id, selection.model);
@@ -951,7 +1002,7 @@ mod tests {
 
         catalog.preferences.fast_mode = Some(true);
         catalog.preferences.reasoning_effort = Some("high".into());
-        assert!(catalog.normalize_selection().is_none());
+        assert!(catalog.normalize_preferences().is_none());
         let selection = catalog.selection(Provider::Codex).unwrap();
         assert_eq!(selection.effort.as_deref(), Some("high"));
         assert_eq!(selection.fast_mode, Some(true));
@@ -960,7 +1011,7 @@ mod tests {
     #[test]
     fn blocks_unavailable_models_efforts_and_unsaved_settings() {
         let mut catalog = catalog(Some("removed"), Some("medium"));
-        assert!(catalog.normalize_selection().is_none());
+        assert!(catalog.normalize_preferences().is_none());
         assert_eq!(
             catalog.send_issue(Provider::Codex, false),
             Some("Choose an available Codex model")
@@ -975,7 +1026,7 @@ mod tests {
             Some("Choose an available model variant")
         );
 
-        catalog.preferences = catalog.normalize_selection().unwrap();
+        catalog.preferences = catalog.normalize_preferences().unwrap().0;
         assert_eq!(
             catalog.send_issue(Provider::Codex, true),
             Some("Retry saving model settings")
@@ -1012,5 +1063,58 @@ mod tests {
             catalog.send_issue(Provider::Codex, false),
             Some("Retry loading Codex models")
         );
+    }
+
+    #[test]
+    fn uses_the_same_canonical_codex_ids_as_electron_preferences() {
+        use refract_native::assistant_runtime::codex_catalog::CodexCatalogEffort;
+
+        let record = |id: &str, canonical_id: &str| CodexCatalogModel {
+            id: id.into(),
+            model: canonical_id.into(),
+            display_name: canonical_id.into(),
+            description: String::new(),
+            supported_reasoning_efforts: vec![CodexCatalogEffort {
+                effort: "high".into(),
+                description: String::new(),
+            }],
+            default_reasoning_effort: Some("high".into()),
+            is_default: false,
+        };
+        let models = codex_models(vec![
+            record("listing-1", "gpt-example"),
+            record("listing-2", "gpt-example"),
+            record("gpt-example", "other-model"),
+        ]);
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].legacy_ids, ["listing-1", "listing-2"]);
+        let mut catalog = Catalog {
+            options: Ok(models),
+            preferences: serde_json::from_str(
+                r#"{"model":"gpt-example","reasoningEffort":"high","favorites":["gpt-example"]}"#,
+            )
+            .unwrap(),
+        };
+        assert!(catalog.normalize_preferences().is_none());
+        assert_eq!(catalog.send_issue(Provider::Codex, false), None);
+        assert_eq!(
+            catalog.selection(Provider::Codex).unwrap().model,
+            "gpt-example"
+        );
+
+        catalog.preferences.model = Some("listing-2".into());
+        catalog.preferences.favorites = ["retired", "listing-1", "gpt-example", "listing-2"]
+            .map(str::to_owned)
+            .to_vec();
+        let (normalized, selection_changed) = catalog.normalize_preferences().unwrap();
+        assert!(selection_changed);
+        assert_eq!(normalized.model.as_deref(), Some("gpt-example"));
+        assert_eq!(normalized.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(normalized.favorites, ["retired", "gpt-example"]);
+
+        catalog.preferences.model = normalized.model;
+        let (favorites_only, selection_changed) = catalog.normalize_preferences().unwrap();
+        assert!(!selection_changed);
+        assert_eq!(favorites_only.favorites, ["retired", "gpt-example"]);
     }
 }

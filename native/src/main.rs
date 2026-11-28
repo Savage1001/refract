@@ -1232,10 +1232,14 @@ struct Palette {
     surface: u32,
     text: u32,
     muted: u32,
+    sidebar_muted: u32,
     border: u32,
     input_border: u32,
+    hover: u32,
     selection: u32,
+    accent: u32,
     focus: u32,
+    shadow: u32,
     warning: u32,
     warning_surface: u32,
 }
@@ -1250,11 +1254,15 @@ impl Palette {
                 sidebar: 0x000000,
                 surface: 0x111111,
                 text: 0xf5f5f5,
-                muted: 0xa3a3a3,
+                muted: 0x818181,
+                sidebar_muted: 0xa3a3a3,
                 border: 0x191919,
                 input_border: 0x1e1e1e,
+                hover: 0x141414,
                 selection: 0x1a1b1b,
+                accent: 0x346bf1,
                 focus: 0x79a8ff,
+                shadow: 0x00000066,
                 warning: 0xffb900,
                 warning_surface: 0x312108,
             },
@@ -1265,10 +1273,14 @@ impl Palette {
                 surface: 0xffffff,
                 text: 0x27272a,
                 muted: 0x71717b,
+                sidebar_muted: 0x71717b,
                 border: 0xe4e4e7,
                 input_border: 0xd4d4d8,
-                selection: 0xf0f0f2,
+                hover: 0xf4f4f5,
+                selection: 0xf4f4f5,
+                accent: 0x1b4ed8,
                 focus: 0x1b4ed8,
+                shadow: 0x00000014,
                 warning: 0xbb4d00,
                 warning_surface: 0xfcf4e8,
             },
@@ -1906,6 +1918,10 @@ impl Library {
                             .border_r_1()
                             .border_color(rgb(palette.border))
                             .when(!collapsed, |panel| {
+                                let palette = Palette {
+                                    muted: palette.sidebar_muted,
+                                    ..palette
+                                };
                                 panel
                                     .px_3()
                                     .pb_3()
@@ -2072,10 +2088,10 @@ impl Library {
             .rounded(px(5.))
             .pl(px(inset))
             .pr(px(32.))
-            .py(px(6.))
-            .min_h(px(33.))
+            .h(px(if is_folder { 31.5 } else { 34.5 }))
             .text_size(px(13.))
-            .hover(move |style| style.bg(rgb(palette.selection)))
+            .line_height(px(19.5))
+            .hover(move |style| style.bg(rgb(palette.hover)))
             .focus(move |style| style.text_color(rgb(palette.focus)))
             .when(active, |row| {
                 row.bg(rgb(palette.selection))
@@ -2087,7 +2103,7 @@ impl Library {
                             .top_0()
                             .bottom_0()
                             .w(px(2.))
-                            .bg(rgb(palette.focus)),
+                            .bg(rgb(palette.accent)),
                     )
             })
             .when(is_folder, |row| {
@@ -2199,26 +2215,39 @@ impl Library {
                 let close_by_key = open.clone();
                 div()
                     .id(SharedString::from(format!("tab/{}", tab.path)))
+                    .relative()
                     .flex()
                     .flex_none()
                     .items_center()
-                    .border_b_2()
+                    .pb(px(2.))
+                    .border_l_1()
+                    .border_r_1()
                     .border_color(gpui::transparent_black())
                     .text_color(rgb(text))
                     .when(is_active, |tab| {
-                        tab.bg(rgb(palette.selection))
-                            .border_color(rgb(palette.focus))
+                        tab.bg(rgb(palette.hover))
+                            .border_color(rgb(palette.border))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .bottom_0()
+                                    .left(px(-1.))
+                                    .right(px(-1.))
+                                    .h(px(2.))
+                                    .bg(rgb(palette.accent)),
+                            )
                     })
                     .child(
                         div()
                             .id("open")
                             .track_focus(&tab.open_focus)
                             .cursor_pointer()
-                            .py(px(9.))
-                            .px(px(8.))
+                            .py(px(10.))
+                            .px(px(9.))
                             .text_size(px(12.))
+                            .line_height(px(18.))
                             .focus(move |style| style.text_color(rgb(palette.focus)))
-                            .hover(move |style| style.bg(rgb(palette.selection)))
+                            .hover(move |style| style.bg(rgb(palette.hover)))
                             .child(name)
                             .on_click(cx.listener(move |library, _, window, cx| {
                                 library.open_file(open.clone(), window, cx)
@@ -2238,11 +2267,23 @@ impl Library {
                             .id("close")
                             .track_focus(&tab.close_focus)
                             .cursor_pointer()
-                            .px(px(6.))
-                            .text_size(px(16.))
+                            .w(px(32.))
+                            .h(px(28.))
+                            .rounded(px(6.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(palette.sidebar_muted))
                             .focus(move |style| style.text_color(rgb(palette.focus)))
-                            .hover(move |style| style.bg(rgb(palette.selection)))
-                            .child("×")
+                            .hover(move |style| {
+                                let background = if is_active {
+                                    gpui::Hsla::from(rgb(palette.text)).opacity(0.08)
+                                } else {
+                                    rgb(palette.hover).into()
+                                };
+                                style.bg(background).text_color(rgb(palette.text))
+                            })
+                            .child(svg().path("refract/close.svg").size(px(18.)))
                             .on_click(cx.listener(move |library, _, window, cx| {
                                 library.request_navigation(
                                     Navigation::CloseFile(close.clone()),

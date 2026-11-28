@@ -46,6 +46,7 @@ jobs:
           node-version: "22"
           cache: npm
       - name: Build the Electron reference
+        id: electron
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -57,11 +58,11 @@ jobs:
         timeout-minutes: 5
         run: ./scripts/capture-native-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP/refract-window-captures/desktop"
       - name: Capture reference renderer typography
-        if: success() || failure()
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' }}
         run: |
           node build/scripts/capture-electron-parity.cjs "$env:RUNNER_TEMP/refract-window-captures/renderer"
       - name: Upload matching desktop and renderer captures
-        if: success() || failure()
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: refract-windows-visual-parity
