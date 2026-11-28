@@ -366,11 +366,21 @@ jobs:
             sleep 0.3
             import -window "$client" "$output/$theme-model-picker-after-${key,,}.png"
           done
+          keyboard_starred=true
+          if ! grep -Fq '"favorites":["model-a"]' "$REFRACT_DATA_DIR/codex-preferences.json"; then
+            keyboard_starred=false
+            # Collect the remaining visual comparisons even if the Return key fails.
+            click 508 493
+          fi
           wait_for_preference codex-preferences.json '"favorites":["model-a"]'
           click 230 452
           capture_picker model-picker-favorites "$output/$theme-model-picker.png" 200
           xdotool type --clearmodifiers --delay 25 'research model'
           capture_picker model-picker-search "$output/$theme-model-picker-favorites.png" 2000
+          if [[ "$keyboard_starred" != true ]]; then
+            echo "The $theme native model picker did not add the favorite with Return" >&2
+            exit 1
+          fi
           CAPTURE
           }
           capture_theme light prefer-light 2 '#FCFCFC' '#E4E4E7'

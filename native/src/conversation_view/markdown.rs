@@ -1,15 +1,19 @@
 use crate::{Palette, monospace_font};
 use ::markdown::{ParseOptions, mdast::Node};
 use gpui::{
-    App, IntoElement, RenderOnce, SharedString, Styled, Window, WindowAppearance, div, px, rems,
-    rgb,
+    App, IntoElement, RenderOnce, SharedString, Styled, Window, WindowAppearance, div, prelude::*,
+    px, rems, rgb,
 };
 use gpui_component::{
     ActiveTheme,
     text::{TextView, TextViewStyle},
 };
-use std::{borrow::Cow, collections::HashMap, ops::Range};
+use std::{borrow::Cow, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 use url::Url;
+
+#[path = "reply_text.rs"]
+mod text;
+use text::{ReplyControls, ReplyText};
 
 pub(super) fn assistant_reply(index: usize, source: &str, palette: Palette) -> impl IntoElement {
     AssistantReply {
@@ -29,31 +33,53 @@ struct AssistantReply {
 struct ReplyState {
     source: SharedString,
     markup: SharedString,
+    inline: Option<(Rc<ReplyText>, Rc<ReplyControls>)>,
 }
 
 impl ReplyState {
-    fn new(source: SharedString) -> Self {
+    fn new(source: SharedString, app: &App) -> Self {
         let markup = match safe_markdown(&source) {
             Some(Cow::Borrowed(_)) => source.clone(),
             Some(Cow::Owned(safe)) => safe.into(),
             None => literal_markdown(&source).into(),
         };
-        Self { source, markup }
+        let inline = markup
+            .bytes()
+            .any(|byte| matches!(byte, b'`' | b'*' | b'_' | b'['))
+            .then(|| ReplyText::from_markdown(&markup))
+            .flatten()
+            .map(|reply| (Rc::new(reply), Rc::new(ReplyControls::new(app))));
+        let markup = if inline.is_none() {
+            strip_code_language(&markup).map_or(markup.clone(), Into::into)
+        } else {
+            markup
+        };
+        Self {
+            source,
+            markup,
+            inline,
+        }
     }
 }
 
 impl RenderOnce for AssistantReply {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(("assistant-format", self.index), cx, |_, _| {
-            ReplyState::new(self.source.clone())
+        let state = window.use_keyed_state(("assistant-format", self.index), cx, |_, cx| {
+            ReplyState::new(self.source.clone(), cx)
         });
         if state.read(cx).source != self.source {
-            state.update(cx, |state, _| *state = ReplyState::new(self.source));
+            state.update(cx, |state, cx| *state = ReplyState::new(self.source, cx));
+        }
+        if let Some((reply, controls)) = state.read(cx).inline.as_ref() {
+            return reply.clone().render(controls.clone(), self.palette, window);
         }
         let markup = state.read(cx).markup.clone();
         let view = TextView::markdown(("assistant-markdown", self.index), markup, window, cx);
         let palette = self.palette;
         let mut code = div()
+            .id("reply-code")
+            .overflow_x_scroll()
+            .whitespace_nowrap()
             .p(px(12.))
             .rounded(px(6.))
             .border_1()
@@ -64,6 +90,14 @@ impl RenderOnce for AssistantReply {
         let style = TextViewStyle {
             paragraph_gap: rems(px(9.75) / window.rem_size()),
             heading_base_font_size: px(13.),
+            heading_font_size: Some(Arc::new(|level, base| match level {
+                1 => px(28.),
+                2 => px(18.),
+                3 => base * 1.17,
+                4 => base,
+                5 => base * 0.83,
+                _ => base * 0.67,
+            })),
             highlight_theme: cx.theme().highlight_theme.clone(),
             code_block: Styled::style(&mut code).clone(),
             is_dark: matches!(
@@ -76,7 +110,43 @@ impl RenderOnce for AssistantReply {
             .selectable(true)
             .text_size(px(13.))
             .line_height(px(21.45))
+            .into_any_element()
     }
+}
+
+fn strip_code_language(markup: &str) -> Option<String> {
+    if !(markup.contains("```") || markup.contains("~~~")) {
+        return None;
+    }
+    let root = ::markdown::to_mdast(markup, &ParseOptions::gfm()).ok()?;
+    let mut ranges = Vec::new();
+    for node in nodes(&root) {
+        let Node::Code(code) = node else {
+            continue;
+        };
+        if code.lang.is_none() {
+            continue;
+        }
+        let start = span(node)?.start;
+        let tail = markup.get(start..)?;
+        let opening = tail.split(['\n', '\r']).next()?;
+        let marker = opening.as_bytes().first().copied()?;
+        if !matches!(marker, b'`' | b'~') {
+            continue;
+        }
+        let fence = opening.bytes().take_while(|&byte| byte == marker).count();
+        if fence >= 3 {
+            ranges.push(start + fence..start + opening.len());
+        }
+    }
+    if ranges.is_empty() {
+        return None;
+    }
+    let mut plain = markup.to_owned();
+    for range in ranges.into_iter().rev() {
+        plain.replace_range(range, "");
+    }
+    Some(plain)
 }
 
 fn safe_markdown(source: &str) -> Option<Cow<'_, str>> {
@@ -156,6 +226,7 @@ fn safe_link(source: &str) -> bool {
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     let is_web = scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http");
     is_web
+        && source.encode_utf16().take(8193).count() <= 8192
         && !authority.is_empty()
         && !authority.contains('@')
         && !source.contains('\\')
@@ -277,5 +348,15 @@ mod tests {
         ] {
             assert!(!safe_link(target), "{target}");
         }
+    }
+
+    #[test]
+    fn formats_fenced_code_as_plain_monospace_without_changing_its_contents() {
+        let source = "```latex options\n\\textbf{Keep this}\n```\n\n> ~~~~rust\n> let name = 1;\n> ~~~~\n\nInline `x`";
+        let plain = strip_code_language(source).unwrap();
+        assert_eq!(
+            plain,
+            "```\n\\textbf{Keep this}\n```\n\n> ~~~~\n> let name = 1;\n> ~~~~\n\nInline `x`"
+        );
     }
 }

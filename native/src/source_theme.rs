@@ -145,6 +145,10 @@ fn configure(
     config.colors.popover = Some(surface.into());
     config.colors.popover_foreground = Some(text.into());
     config.colors.ring = Some(ring.into());
+    config.colors.link = Some(match config.mode {
+        gpui_component::ThemeMode::Dark => "#79a8ff".into(),
+        _ => "#1b4ed8".into(),
+    });
     let style = config
         .highlight
         .get_or_insert_with(|| defaults.style.clone());

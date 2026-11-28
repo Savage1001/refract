@@ -257,8 +257,9 @@ impl Library {
             .border_color(rgb(palette.border))
             .mt_1()
             .pt_2()
-            .text_color(rgb(palette.muted))
+            .text_color(rgb(palette.sidebar_muted))
             .text_size(px(12.))
+            .line_height(px(18.))
             .child(
                 div()
                     .id("outline-toggle")
@@ -267,9 +268,10 @@ impl Library {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap_2()
-                    .p_1()
-                    .rounded_sm()
+                    .gap(px(8.))
+                    .h(px(32.))
+                    .px(px(11.))
+                    .rounded(px(6.))
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
                     .hover(move |style| style.bg(rgb(palette.selection)))
@@ -282,7 +284,7 @@ impl Library {
                                 "refract/chevron-right.svg"
                             })
                             .size(px(14.))
-                            .text_color(rgb(palette.muted)),
+                            .text_color(rgb(palette.sidebar_muted)),
                     )
                     .child(crate::tracked_label::tracked_label("OUTLINE", 0.05))
                     .on_click(cx.listener(|view, _, _, cx| {
@@ -396,8 +398,10 @@ fn outline_row(
         .debug_selector(|| format!("outline-row-{index}"))
         .tab_index(1)
         .w_full()
-        .rounded_sm()
-        .px_5()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .px(px(20.))
         .py(px(6.))
         .cursor_pointer()
         .flex()
