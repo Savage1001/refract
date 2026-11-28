@@ -2,12 +2,8 @@ use super::{
     ConversationPane, Library, Palette, chat_button,
     models::{CHECKING_MODELS, ModelSelection},
 };
-use gpui::{Context, Entity, SharedString, Subscription, Window, div, prelude::*, px, rgb, svg};
-use gpui_component::{
-    Sizable,
-    select::{Select, SelectEvent, SelectItem, SelectState},
-    tooltip::Tooltip,
-};
+use gpui::{Context, Window, div, prelude::*, px, rgb, svg};
+use gpui_component::tooltip::Tooltip;
 use refract_native::{
     Project, ProjectEntry,
     assistant_launch::{CodexCli, OpenCodeCli, discover_codex_cli, discover_opencode_cli},
@@ -88,13 +84,6 @@ impl InstalledProvider {
         }
     }
 
-    pub(super) fn label(&self) -> &'static str {
-        match self.kind() {
-            Provider::Codex => "Codex",
-            Provider::OpenCode => "OpenCode",
-        }
-    }
-
     pub(super) fn mode(&self) -> AssistantConnection {
         match self {
             Self::Codex(_) => AssistantConnection::CodexCli,
@@ -153,88 +142,6 @@ pub(super) fn installed_providers(
 pub(super) struct RunningTurn {
     cancel: Arc<AtomicBool>,
     progress: &'static str,
-}
-
-#[derive(Clone)]
-struct ProviderOption {
-    kind: Provider,
-    name: &'static str,
-}
-
-impl SelectItem for ProviderOption {
-    type Value = Provider;
-
-    fn title(&self) -> SharedString {
-        self.name.into()
-    }
-
-    fn value(&self) -> &Provider {
-        &self.kind
-    }
-}
-
-pub(super) struct ProviderPicker {
-    state: Entity<SelectState<Vec<ProviderOption>>>,
-    _selected: Subscription,
-}
-
-impl ProviderPicker {
-    pub(super) fn new(
-        providers: &[InstalledProvider],
-        selected: Option<Provider>,
-        window: &mut Window,
-        cx: &mut Context<Library>,
-    ) -> Option<Self> {
-        if providers.len() < 2 {
-            return None;
-        }
-        let choices: Vec<_> = providers
-            .iter()
-            .map(|provider| ProviderOption {
-                kind: provider.kind(),
-                name: provider.label(),
-            })
-            .collect();
-        let state = cx.new(|cx| {
-            let mut state = SelectState::new(choices, None, window, cx);
-            if let Some(selected) = selected {
-                state.set_selected_value(&selected, window, cx);
-            }
-            state
-        });
-        let selected = cx.subscribe_in(
-            &state,
-            window,
-            |library, source, event: &SelectEvent<Vec<ProviderOption>>, window, cx| {
-                let SelectEvent::Confirm(Some(provider)) = event else {
-                    return;
-                };
-                let Some(pane) = library
-                    .selection
-                    .as_mut()
-                    .map(|selection| &mut selection.conversation)
-                else {
-                    return;
-                };
-                if pane
-                    .picker
-                    .as_ref()
-                    .is_some_and(|picker| picker.state == *source)
-                {
-                    pane.provider = Some(*provider);
-                    library.schedule_chat_draft_save(cx);
-                    if cfg!(not(all(test, feature = "ui-tests"))) {
-                        library.prepare_model_picker(window, cx);
-                    }
-                }
-                cx.notify();
-            },
-        );
-        Some(Self {
-            state,
-            _selected: selected,
-        })
-    }
 }
 
 enum TurnNotice {
@@ -594,15 +501,11 @@ impl Library {
                 .iter()
                 .find(|provider| provider.kind() == kind)
         });
-        let mut actions = div().flex().items_center().gap(px(6.));
-        if let Some(picker) = &pane.picker {
-            actions = actions.child(
-                Select::new(&picker.state)
-                    .small()
-                    .disabled(pane.running.is_some()),
-            );
-        }
-        actions = actions.children(self.model_picker_button(pane, palette, cx));
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(self.model_picker_button(pane, palette, cx));
         if pane.running.is_some() {
             actions.child(
                 chat_button("stop-chat", palette, cx, |library, _, _| {

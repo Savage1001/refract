@@ -21,7 +21,7 @@ mod assistant;
 mod composer;
 mod markdown;
 mod models;
-use assistant::{InstalledProvider, ProviderPicker, RunningTurn, installed_providers};
+use assistant::{InstalledProvider, RunningTurn, installed_providers};
 use composer::Composer;
 pub(super) use composer::init;
 
@@ -41,7 +41,9 @@ pub(super) struct ConversationPane {
     providers: Vec<InstalledProvider>,
     providers_loaded: bool,
     provider: Option<Provider>,
-    picker: Option<ProviderPicker>,
+    model_menu: Option<Entity<models::ModelMenu>>,
+    model_anchor: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    model_trigger: Option<FocusHandle>,
     models: HashMap<Provider, Entity<models::ModelPicker>>,
     running: Option<RunningTurn>,
     error: Option<String>,
@@ -95,7 +97,8 @@ impl ConversationPane {
                     .any(|provider| provider.kind() == *kind)
             })
             .or_else(|| self.providers.first().map(InstalledProvider::kind));
-        self.picker = ProviderPicker::new(&self.providers, self.provider, window, cx);
+        self.model_menu = None;
+        self.model_trigger = Some(cx.focus_handle().tab_stop(true));
         self.show_history(history);
         self.composer = Some(Composer::new(draft, window, cx));
     }

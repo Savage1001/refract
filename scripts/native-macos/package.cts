@@ -58,7 +58,20 @@ function packageReleaseImage(stage: string, pkg: string, stem: string): void {
   fs.copyFileSync(pkg, path.join(source, `${stem}.pkg`));
   const image = path.join(stage, `${stem}.dmg`);
   run('/usr/bin/hdiutil', 'create', '-volname', 'Refract Installer', '-srcfolder', source, '-format', 'UDZO', image);
-  run('/usr/bin/hdiutil', 'verify', image);
+  for (let attempt = 1; ; attempt += 1) {
+    const check = childProcess.spawnSync('/usr/bin/hdiutil', ['verify', image], { encoding: 'utf8' });
+    if (check.error) throw check.error;
+    if (check.status === 0) {
+      process.stdout.write(check.stdout);
+      break;
+    }
+    const detail = check.stderr.trim();
+    if (attempt === 3 || !detail.includes('Resource temporarily unavailable')) {
+      throw new Error(`Could not verify the macOS installer image (${check.status ?? check.signal}). ${detail}`);
+    }
+    console.warn(`Retrying macOS installer image verification. ${detail}`);
+    run('/bin/sleep', String(attempt));
+  }
   fs.renameSync(image, path.join(distributions, `${stem}.dmg`));
 }
 

@@ -147,29 +147,52 @@ impl ProjectCatalogView {
     }
 
     pub(super) fn sort_control(&self, palette: Palette) -> impl IntoElement {
+        let border = if palette.library == 0x000000 {
+            0x646464
+        } else {
+            palette.input_border
+        };
         div()
             .flex()
             .flex_none()
             .items_center()
             .gap(px(6.))
             .text_size(px(12.))
+            .line_height(px(18.))
             .child(div().text_color(rgb(palette.muted)).child("Sort"))
             .child(
                 div()
-                    .w(px(if self.preferences.sort == ProjectSort::Edited {
-                        132.
-                    } else {
-                        108.
-                    }))
+                    .id("project-sort")
+                    .relative()
+                    .h(px(36.))
+                    .rounded(px(6.))
+                    .bg(rgb(palette.surface))
+                    .hover(move |style| style.bg(rgb(palette.hover)))
                     .child(
-                        Select::new(&self.sort)
-                            .with_size(Size::Small)
-                            .icon(Icon::empty().path("refract/chevron-down.svg"))
-                            .h(px(36.))
-                            .text_size(px(12.))
-                            .text_color(rgb(palette.text))
-                            .bg(rgb(palette.surface))
-                            .border_color(rgb(palette.input_border)),
+                        // Size the control from the selected label plus its two borders,
+                        // horizontal padding, and space for the dropdown indicator.
+                        div()
+                            .invisible()
+                            .whitespace_nowrap()
+                            .pl(px(11.))
+                            .pr(px(27.))
+                            .child(SortChoice(self.preferences.sort).title()),
+                    )
+                    .child(
+                        div().absolute().inset_0().child(
+                            Select::new(&self.sort)
+                                .appearance(false)
+                                .with_size(Size::Small)
+                                .icon(Icon::empty().path("refract/chevron-down.svg"))
+                                .h(px(36.))
+                                .px(px(10.))
+                                .rounded(px(6.))
+                                .cursor_pointer()
+                                .text_size(px(12.))
+                                .line_height(px(18.))
+                                .text_color(rgb(palette.text))
+                                .border_color(rgb(border)),
+                        ),
                     ),
             )
     }

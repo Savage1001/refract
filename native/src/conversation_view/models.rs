@@ -1,18 +1,8 @@
 use super::{
-    ConversationPane, Library, Palette,
+    Library,
     assistant::{InstalledProvider, PreparedProvider},
 };
-use crate::account_settings_view::AccountAction;
-use gpui::{
-    Context, Corner, Entity, FontWeight, Render, Subscription, Task, WeakEntity, Window, div,
-    prelude::*, px, rgb, svg,
-};
-use gpui_component::{
-    Disableable, Selectable, Sizable, Size,
-    button::{Button, ButtonVariants},
-    input::{Input, InputEvent, InputState},
-    popover::Popover,
-};
+use gpui::{Context, Task, WeakEntity, Window};
 use icu_collator::{
     Collator, CollatorBorrowed, CollatorPreferences,
     options::{CollatorOptions, Strength},
@@ -28,6 +18,7 @@ use refract_native::{
         codex_catalog::{CodexCatalogModel, discover_codex_models},
         opencode::catalog::{OpenCodeCatalogModel, discover_opencode_models},
     },
+    codex_connection::CodexMode,
     conversation::Provider,
 };
 use regex::Regex;
@@ -39,6 +30,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+
+#[path = "model_menu.rs"]
+mod menu;
+pub(super) use menu::ModelMenu;
 
 pub(super) const CHECKING_MODELS: &str = "Checking model availability…";
 
@@ -227,13 +222,12 @@ impl Drop for ModelLoad {
 }
 
 pub(super) struct ModelPicker {
-    provider: InstalledProvider,
+    provider: Option<InstalledProvider>,
+    kind: Provider,
+    mode: AssistantConnection,
     project: PathBuf,
     profile: PathBuf,
     parent: WeakEntity<Library>,
-    query: Entity<InputState>,
-    _query_events: Subscription,
-    favorites: bool,
     catalog: Option<Result<Catalog, String>>,
     loading: Option<ModelLoad>,
     save_error: Option<SaveFailure>,
@@ -241,23 +235,20 @@ pub(super) struct ModelPicker {
 
 impl ModelPicker {
     fn new(
-        provider: InstalledProvider,
+        provider: Option<InstalledProvider>,
+        kind: Provider,
+        mode: AssistantConnection,
         project: PathBuf,
         profile: PathBuf,
         parent: WeakEntity<Library>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
     ) -> Self {
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
-        let events = cx.subscribe(&query, |_, _, _: &InputEvent, cx| cx.notify());
         Self {
             provider,
+            kind,
+            mode,
             project,
             profile,
             parent,
-            query,
-            _query_events: events,
-            favorites: false,
             catalog: None,
             loading: None,
             save_error: None,
@@ -269,6 +260,7 @@ impl ModelPicker {
             return;
         }
         let provider = self.provider.clone();
+        let mode = self.mode;
         let project = self.project.clone();
         let profile = self.profile.clone();
         let preferences = self.catalog().map(|catalog| catalog.preferences.clone());
@@ -276,9 +268,16 @@ impl ModelPicker {
         let job_cancel = cancel.clone();
         let checkout = cx.background_executor().spawn(async move {
             let preferences = preferences
-                .map_or_else(|| load_assistant_preferences(&profile, provider.mode()), Ok)
+                .map_or_else(|| load_assistant_preferences(&profile, mode), Ok)
                 .map_err(|error| format!("Couldn’t load model preferences. {error}"))?;
-            let options = load_models(&provider, &project, &job_cancel);
+            let options = provider.as_ref().map_or_else(
+                || {
+                    Err(DiscoveryError::Connection(
+                        "Install and authenticate this provider to use it.".into(),
+                    ))
+                },
+                |provider| load_models(provider, &project, &job_cancel),
+            );
             Ok(Catalog {
                 options,
                 preferences,
@@ -310,7 +309,16 @@ impl ModelPicker {
 
     fn update_parent(&self, cx: &mut Context<Self>) {
         cx.notify();
-        let _ = self.parent.update(cx, |_, cx| cx.notify());
+        let _ = self.parent.update(cx, |library, cx| {
+            if let Some(menu) = library
+                .selection
+                .as_ref()
+                .and_then(|selection| selection.conversation.model_menu.as_ref())
+            {
+                gpui::App::notify(cx, menu.entity_id());
+            }
+            cx.notify();
+        });
     }
 
     fn choose(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -358,12 +366,15 @@ impl ModelPicker {
         self.save(next, true, cx);
     }
 
-    fn toggle_fast_mode(&mut self, cx: &mut Context<Self>) {
+    fn set_fast_mode(&mut self, enabled: bool, cx: &mut Context<Self>) {
         let Some(catalog) = self.catalog() else {
             return;
         };
+        if catalog.preferences.fast_mode.unwrap_or_default() == enabled {
+            return;
+        }
         let mut next = catalog.preferences.clone();
-        next.fast_mode = Some(!next.fast_mode.unwrap_or(false));
+        next.fast_mode = Some(enabled);
         self.save(next, true, cx);
     }
 
@@ -396,7 +407,7 @@ impl ModelPicker {
                 .as_ref()
                 .is_some_and(|error| error.affects_selection);
         self.save_error =
-            save_assistant_preferences(&self.profile, self.provider.mode(), &catalog.preferences)
+            save_assistant_preferences(&self.profile, self.mode, &catalog.preferences)
                 .err()
                 .map(|error| SaveFailure {
                     message: format!("Couldn’t save model preferences. {error}"),
@@ -407,7 +418,7 @@ impl ModelPicker {
 
     fn label(&self) -> String {
         match self.catalog.as_ref() {
-            None => self.provider.label().into(),
+            None => menu::provider_label(self.kind).into(),
             Some(Err(_)) => "Preferences unavailable".into(),
             Some(Ok(catalog)) => {
                 if let Err(error) = &catalog.options
@@ -430,7 +441,7 @@ impl ModelPicker {
     }
 
     fn needs_account_setup(&self, error: &str) -> bool {
-        self.provider.mode() == AssistantConnection::CodexAccount
+        self.mode == AssistantConnection::CodexAccount
             && (error.starts_with("Download the Codex runtime")
                 || error.starts_with("Sign in with ChatGPT")
                 || error.starts_with("Your ChatGPT session ended.")
@@ -446,7 +457,7 @@ impl ModelPicker {
             None => Some(CHECKING_MODELS),
             Some(Err(_)) => Some("Retry loading model preferences"),
             Some(Ok(catalog)) => catalog.send_issue(
-                self.provider.kind(),
+                self.kind,
                 self.save_error
                     .as_ref()
                     .is_some_and(|error| error.affects_selection),
@@ -458,7 +469,7 @@ impl ModelPicker {
         if self.send_issue().is_some() {
             return None;
         }
-        self.catalog()?.selection(self.provider.kind())
+        self.catalog()?.selection(self.kind)
     }
 }
 
@@ -635,318 +646,6 @@ fn preferred_effort(efforts: &[String], default: Option<&str>) -> Option<String>
         .cloned()
 }
 
-impl Render for ModelPicker {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = Palette::for_window(window);
-        let width = (f32::from(window.viewport_size().width) - 32.).clamp(260., 520.);
-        let query = self.query.read(cx).value().to_lowercase();
-        let controls = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(
-                Button::new("all-models")
-                    .ghost()
-                    .small()
-                    .selected(!self.favorites)
-                    .label("All models")
-                    .on_click(cx.listener(|picker, _, _, cx| {
-                        picker.favorites = false;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("favorite-models")
-                    .ghost()
-                    .small()
-                    .selected(self.favorites)
-                    .label("Favorites")
-                    .on_click(cx.listener(|picker, _, _, cx| {
-                        picker.favorites = true;
-                        cx.notify();
-                    })),
-            );
-        let mut list = div()
-            .id("model-results")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll()
-            .px_1();
-        let mut options = div()
-            .id("model-options")
-            .w(px(176.))
-            .flex_none()
-            .border_l_1()
-            .border_color(rgb(palette.border))
-            .pl_2()
-            .flex()
-            .flex_col()
-            .overflow_y_scroll()
-            .gap_1()
-            .text_size(px(12.));
-        match self.catalog.as_ref() {
-            None if self.loading.is_none() => {
-                list = list.child(CHECKING_MODELS);
-            }
-            _ if self.loading.is_some() => {
-                list = list.child("Loading models…");
-            }
-            Some(Ok(Catalog {
-                options: Err(error),
-                ..
-            })) if self.needs_account_setup(error.message()) => {
-                let owner = self.parent.clone();
-                let busy = owner
-                    .read_with(cx, |library, _| library.settings.account.busy())
-                    .unwrap_or(false);
-                list = list
-                    .child("Codex requires sign-in")
-                    .child(error.message().to_owned())
-                    .child(
-                        Button::new("model-picker-sign-in")
-                            .small()
-                            .label(if busy {
-                                "Connecting…"
-                            } else {
-                                "Sign in with ChatGPT"
-                            })
-                            .disabled(busy)
-                            .on_click(move |_, window, app| {
-                                let _ = owner.update(app, |library, cx| {
-                                    library.account_action(
-                                        AccountAction::SignIn {
-                                            new_registration: false,
-                                            install_first: true,
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            }),
-                    );
-            }
-            Some(Err(error)) => {
-                list = list.child(error.clone()).child(
-                    Button::new("retry-preferences")
-                        .ghost()
-                        .small()
-                        .label("Retry preferences")
-                        .on_click(cx.listener(|picker, _, _, cx| picker.load(cx))),
-                );
-            }
-            Some(Ok(Catalog {
-                options: Err(error),
-                ..
-            })) => {
-                list = list.child(error.message().to_owned()).child(
-                    Button::new("retry-models")
-                        .ghost()
-                        .small()
-                        .label("Retry model discovery")
-                        .on_click(cx.listener(|picker, _, _, cx| picker.load(cx))),
-                );
-            }
-            Some(Ok(catalog)) => {
-                let selected = catalog.selected();
-                let terms: Vec<_> = query.split_whitespace().collect();
-                let filtered: Vec<_> = catalog
-                    .models()
-                    .iter()
-                    .filter(|model| {
-                        let favorite = catalog.preferences.favorites.contains(&model.id);
-                        if self.favorites && !favorite {
-                            return false;
-                        }
-                        model.matches_search(self.provider.label(), &terms)
-                    })
-                    .collect();
-                if filtered.is_empty() {
-                    list = list.child(if catalog.models().is_empty() {
-                        "No models available"
-                    } else if query.is_empty() && self.favorites {
-                        "No favorites yet"
-                    } else {
-                        "No matching models"
-                    });
-                }
-                for model in filtered {
-                    let active = selected.is_some_and(|selected| selected.id == model.id);
-                    let favorite = catalog.preferences.favorites.contains(&model.id);
-                    let choose = model.id.clone();
-                    let star = choose.clone();
-                    let tooltip = [
-                        Some(model.name.as_str()),
-                        model
-                            .source
-                            .as_deref()
-                            .filter(|source| *source != self.provider.label()),
-                        Some(model.id.as_str()).filter(|id| *id != model.name.as_str()),
-                        Some(model.description.as_str())
-                            .filter(|description| !description.is_empty()),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                    list = list.child(
-                        div()
-                            .id(gpui::SharedString::from(model.id.clone()))
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .rounded(px(5.))
-                            .when(active, |row| row.bg(rgb(palette.selection)))
-                            .child(
-                                Button::new("select-model")
-                                    .ghost()
-                                    .with_size(Size::Size(px(33.)))
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .min_h(px(33.))
-                                    .justify_start()
-                                    .child(
-                                        div()
-                                            .min_w(px(0.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(14.))
-                                                    .line_height(px(21.))
-                                                    .font_weight(FontWeight(580.))
-                                                    .truncate()
-                                                    .child(model.name.clone()),
-                                            )
-                                            .children(model.disambiguator.clone().map(|source| {
-                                                div()
-                                                    .text_size(px(11.))
-                                                    .line_height(px(16.5))
-                                                    .text_color(rgb(palette.muted))
-                                                    .truncate()
-                                                    .child(source)
-                                            })),
-                                    )
-                                    .tooltip(tooltip)
-                                    .on_click(cx.listener(move |picker, _, _, cx| {
-                                        picker.choose(&choose, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("favorite-model")
-                                    .ghost()
-                                    .small()
-                                    .label(if favorite { "★" } else { "☆" })
-                                    .tooltip(if favorite {
-                                        "Remove from favorites"
-                                    } else {
-                                        "Add to favorites"
-                                    })
-                                    .on_click(cx.listener(move |picker, _, _, cx| {
-                                        picker.favorite(&star, cx)
-                                    })),
-                            ),
-                    );
-                }
-                if let Some(model) = selected {
-                    let codex = self.provider.kind() == Provider::Codex;
-                    options = options
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .font_weight(FontWeight(520.))
-                                .child(if codex { "Reasoning" } else { "Variant" }),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .truncate()
-                                .child(model.name.clone()),
-                        );
-                    for effort in &model.efforts {
-                        let value = effort.clone();
-                        let current = catalog.preferences.reasoning_effort.as_ref();
-                        options = options.child(
-                            Button::new(gpui::SharedString::from(format!("effort/{effort}")))
-                                .ghost()
-                                .small()
-                                .selected(current == Some(effort))
-                                .child(
-                                    div()
-                                        .text_size(px(13.))
-                                        .font_weight(FontWeight(520.))
-                                        .child(title_case(effort)),
-                                )
-                                .on_click(cx.listener(move |picker, _, _, cx| {
-                                    picker.choose_effort(&value, cx)
-                                })),
-                        );
-                    }
-                    if codex {
-                        let fast = catalog.preferences.fast_mode.unwrap_or(false);
-                        options = options.child(
-                            Button::new("fast-mode")
-                                .ghost()
-                                .small()
-                                .selected(fast)
-                                .label(if fast {
-                                    "Fast mode on"
-                                } else {
-                                    "Fast mode off"
-                                })
-                                .on_click(
-                                    cx.listener(|picker, _, _, cx| picker.toggle_fast_mode(cx)),
-                                ),
-                        );
-                    }
-                }
-            }
-            None => {}
-        }
-        div()
-            .w(px(width))
-            .h(px(370.))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .text_size(px(13.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().flex_1().min_w(px(0.)).child(Input::new(&self.query)))
-                    .child(controls),
-            )
-            .children(self.save_error.as_ref().map(|error| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_color(rgb(palette.warning))
-                    .child(error.message.clone())
-                    .child(
-                        Button::new("retry-model-save")
-                            .ghost()
-                            .small()
-                            .label("Retry saving")
-                            .disabled(self.loading.is_some())
-                            .on_click(cx.listener(|picker, _, _, cx| {
-                                if let Some(catalog) = picker.catalog() {
-                                    picker.save(catalog.preferences.clone(), false, cx);
-                                }
-                            })),
-                    )
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .child(list)
-                    .child(options),
-            )
-    }
-}
-
 impl Library {
     pub(crate) fn refresh_account_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selection) = &mut self.selection {
@@ -955,140 +654,52 @@ impl Library {
         }
     }
 
-    pub(super) fn prepare_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn prepare_model_picker(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(kind) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.conversation.provider)
+        {
+            self.prepare_model_catalog(kind, cx);
+        }
+    }
+
+    fn prepare_model_catalog(&mut self, kind: Provider, cx: &mut Context<Self>) {
         let Some(selection) = &mut self.selection else {
             return;
         };
         let pane = &mut selection.conversation;
-        let Some(kind) = pane.provider else {
-            return;
-        };
         if let Some(picker) = pane.models.get(&kind) {
             if picker.read(cx).catalog.is_none() {
                 picker.update(cx, |picker, cx| picker.load(cx));
             }
             return;
         }
-        let Some(provider) = pane
+        let provider = pane
             .providers
             .iter()
             .find(|provider| provider.kind() == kind)
-            .cloned()
-        else {
-            return;
-        };
+            .cloned();
         let Some(profile) = self.projects_dir.parent() else {
             return;
         };
         let workspace = self.projects_dir.join(&selection.project.id);
         let parent = cx.weak_entity();
-        let picker = cx.new(|cx| {
-            ModelPicker::new(provider, workspace, profile.to_owned(), parent, window, cx)
-        });
+        let mode = provider.as_ref().map_or_else(
+            || match kind {
+                Provider::OpenCode => AssistantConnection::OpenCode,
+                Provider::Codex if CodexMode::load(profile) == CodexMode::Account => {
+                    AssistantConnection::CodexAccount
+                }
+                Provider::Codex => AssistantConnection::CodexCli,
+            },
+            InstalledProvider::mode,
+        );
+        let picker = cx
+            .new(|_| ModelPicker::new(provider, kind, mode, workspace, profile.to_owned(), parent));
         pane.models.insert(kind, picker.clone());
         picker.update(cx, |picker, cx| picker.load(cx));
         cx.notify();
-    }
-
-    pub(super) fn model_picker_button(
-        &self,
-        pane: &ConversationPane,
-        palette: Palette,
-        cx: &Context<Self>,
-    ) -> Option<Popover> {
-        let kind = pane.provider?;
-        let provider = pane
-            .providers
-            .iter()
-            .find(|provider| provider.kind() == kind)?;
-        let name = pane
-            .models
-            .get(&kind)
-            .map(|picker| picker.read(cx).label())
-            .unwrap_or_else(|| provider.label().into());
-        let catalog = pane
-            .models
-            .get(&kind)
-            .and_then(|picker| picker.read(cx).catalog());
-        let (identity, options) = catalog
-            .and_then(|catalog| {
-                let selected = catalog.selected()?;
-                let effort = catalog
-                    .preferences
-                    .reasoning_effort
-                    .as_ref()
-                    .filter(|effort| selected.efforts.contains(*effort))
-                    .map(|effort| title_case(effort));
-                let fast = (kind == Provider::Codex
-                    && catalog.preferences.fast_mode.unwrap_or_default())
-                .then(|| "Fast".to_owned());
-                let options = [effort, fast]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                Some((
-                    selected.disambiguator.clone(),
-                    (!options.is_empty()).then_some(options),
-                ))
-            })
-            .unwrap_or_default();
-        let library = cx.weak_entity();
-        let content = library.clone();
-        Some(
-            Popover::new("conversation-models")
-                .anchor(Corner::BottomRight)
-                .trigger(
-                    Button::new("model-picker-trigger")
-                        .ghost()
-                        .small()
-                        .child(
-                            svg()
-                                .path(match kind {
-                                    Provider::Codex => "refract/openai.svg",
-                                    Provider::OpenCode => "refract/opencode.svg",
-                                })
-                                .size(px(16.))
-                                .text_color(rgb(palette.text)),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .truncate()
-                                .child(name),
-                        )
-                        .children([identity, options].into_iter().flatten().map(|label| {
-                            div()
-                                .text_size(px(12.))
-                                .text_color(rgb(palette.muted))
-                                .truncate()
-                                .child(label)
-                        }))
-                        .disabled(pane.running.is_some()),
-                )
-                .on_open_change(move |open, window, app| {
-                    if *open {
-                        let _ = library
-                            .update(app, |library, cx| library.prepare_model_picker(window, cx));
-                    }
-                })
-                .content(move |_, _, cx| {
-                    let picker = content
-                        .read_with(cx, |library, _| {
-                            library
-                                .selection
-                                .as_ref()?
-                                .conversation
-                                .models
-                                .get(&kind)
-                                .cloned()
-                        })
-                        .ok()
-                        .flatten();
-                    div().children(picker)
-                }),
-        )
     }
 }
 

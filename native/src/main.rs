@@ -1344,6 +1344,7 @@ impl Render for Library {
             .line_height(gpui::DefiniteLength::Fraction(1.5))
             .child(view)
             .children(self.entry_menu_layer(palette, cx))
+            .children(self.model_menu_layer())
             .when(self.settings.dialog_open(), |root| {
                 root.child(div().absolute().inset_0().bg(gpui::rgba(0x00000066)))
             })
@@ -2632,7 +2633,7 @@ mod tests {
     fn reopening_source_restores_selection_and_viewport_without_reusing_old_text(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{EntityInputHandler, ScrollDelta, ScrollWheelEvent, point};
+        use gpui::{EntityInputHandler, MouseMoveEvent, ScrollDelta, ScrollWheelEvent, point};
         use gpui_component::input::RopeExt;
 
         let profile = tempfile::tempdir().unwrap();
@@ -2667,11 +2668,13 @@ mod tests {
                 let editor = library.read(app).active_editor().unwrap();
                 editor.update(app, |input, cx| {
                     let selection = input.selected_text_range(false, window, cx).unwrap();
-                    let top = input.character_index_for_point(
-                        upper_left + point(px(90.), px(8.)),
-                        window,
-                        cx,
-                    );
+                    let top = [8., 12., 17., 22., 27., 32.].into_iter().find_map(|y| {
+                        input.character_index_for_point(
+                            upper_left + point(px(48.), px(y)),
+                            window,
+                            cx,
+                        )
+                    });
                     // GPUI's platform selection reports a normalized range. The caret
                     // identifies the moving end of the selection in this ASCII fixture.
                     (selection.range, input.cursor(), top)
@@ -2690,9 +2693,16 @@ mod tests {
                 });
         });
         cx.simulate_keystrokes("shift-left shift-left");
+        cx.refresh().unwrap();
+        let initial_view = read_view(cx);
         let editor_bounds = cx.debug_bounds("document-editor").unwrap();
+        let pointer = editor_bounds.center();
+        cx.simulate_event(MouseMoveEvent {
+            position: pointer,
+            ..MouseMoveEvent::default()
+        });
         cx.simulate_event(ScrollWheelEvent {
-            position: editor_bounds.center(),
+            position: pointer,
             delta: ScrollDelta::Pixels(point(px(0.), px(-460.))),
             ..ScrollWheelEvent::default()
         });
@@ -2700,7 +2710,10 @@ mod tests {
         let first_view = read_view(cx);
         assert_eq!(first_view.0, 6..8);
         assert_eq!(first_view.1, first_view.0.start);
-        assert!(first_view.2.is_some_and(|index| index > 250));
+        assert!(
+            matches!((initial_view.2, first_view.2), (Some(before), Some(after)) if after > before + 250),
+            "Expected the wheel to move the viewport, before {initial_view:?}, after {first_view:?}"
+        );
 
         cx.update(|window, app| {
             library.update(app, |view, cx| {

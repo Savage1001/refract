@@ -9,6 +9,10 @@ const compact = { width: 900, height: 650 };
 const workspaceText = ['.brand-home span', '#project-name', '.sidebar-label', '#file-search-input',
   '.file-tabs button', '#numbers', '#source', '.outline-label', '.chat-title', '#chat-messages > strong',
   '#chat-input', '.model-trigger-label', '.model-trigger-options', '#compile'];
+const pickerText = ['.model-trigger-label', '.model-trigger-options', '.model-panel', '.model-search input',
+  '.model-group-title', '.model-row-name', '.model-row-source', '.model-shortcut', '.model-settings-heading h3',
+  '.model-settings-model', '.model-effort', '.model-effort-default', '.model-speed button[aria-pressed=false]',
+  '.model-speed button[aria-pressed=true]', '.model-done'];
 const typography = {
   'library-list': ['.homepage-brand', '.project-header h1', '#import', '#new', '#search', '.table-head', '.project-label', '.project-date'],
   'library-grid': ['.homepage-brand', '.project-header h1', '#import', '#new', '.project-label', '.project-date'],
@@ -16,6 +20,9 @@ const typography = {
   workspace: workspaceText,
   'workspace-comments': ['#tool-comments', '#tool-body', '#tool-body input', '#tool-body textarea'],
   'workspace-compact': workspaceText,
+  'model-picker': pickerText,
+  'model-picker-favorites': pickerText,
+  'model-picker-search': pickerText,
 } satisfies Record<string, string[]>;
 
 interface CaptureDocument {
@@ -61,6 +68,7 @@ async function captureTheme(output: string, theme: 'light' | 'dark', document: C
 
     await page.setViewportSize(compact);
     await capture(page, output, theme, 'workspace-compact');
+    await captureModelPicker(page, output, theme);
     assert.deepEqual(errors, []);
   } catch (error) {
     const diagnostics = errors.length ? ` Renderer errors: ${errors.join(' | ')}` : '';
@@ -68,6 +76,48 @@ async function captureTheme(output: string, theme: 'light' | 'dark', document: C
   } finally {
     await browser.close();
   }
+}
+
+async function captureModelPicker(page: Page, output: string, theme: 'light' | 'dark'): Promise<void> {
+  await page.setViewportSize(desktop);
+  await page.evaluate(() => {
+    // The original captures show the signed-out state. Enable only the existing fake catalogs here.
+    const { store } = window as unknown as {
+      store: { discoverProviders: () => Promise<{ codex: boolean; opencode: boolean; codexMode: 'cli' }> };
+    };
+    store.discoverProviders = async () => ({ codex: true, opencode: true, codexMode: 'cli' });
+    document.querySelector('#chat-provider')!.dispatchEvent(new Event('picker-retry-providers'));
+  });
+  const trigger = page.locator('.model-trigger').filter({ hasText: 'Research model' });
+  const panel = page.getByRole('dialog', { name: 'Choose a model', exact: true });
+  const search = panel.getByRole('searchbox', { name: 'Search models', exact: true });
+  const codexScope = panel.getByRole('button', { name: 'Codex models', exact: true });
+  const openCodeScope = panel.getByRole('button', { name: 'OpenCode models', exact: true });
+  const favoritesScope = panel.getByRole('button', { name: 'Favorite models', exact: true });
+  const addFavorite = panel.getByRole('button', { name: 'Add Research model to favorites', exact: true });
+  const model = panel.getByRole('button', { name: 'Research model', exact: true });
+
+  await trigger.click();
+  await panel.getByRole('radio', { name: 'Low', exact: true, checked: true }).waitFor();
+  await model.waitFor();
+  assert.equal(await codexScope.getAttribute('aria-pressed'), 'true');
+  assert.equal(await search.inputValue(), '');
+  await page.mouse.move(0, 0);
+  await capture(page, output, theme, 'model-picker');
+
+  await addFavorite.click();
+  await openCodeScope.click();
+  await addFavorite.click();
+  await favoritesScope.click();
+  assert.equal(await favoritesScope.getAttribute('aria-pressed'), 'true');
+  assert.equal(await model.count(), 2);
+  await page.mouse.move(0, 0);
+  await capture(page, output, theme, 'model-picker-favorites');
+
+  await search.fill('research model');
+  await favoritesScope.waitFor({ state: 'hidden' });
+  assert.equal(await model.count(), 2);
+  await capture(page, output, theme, 'model-picker-search');
 }
 
 async function capture(page: Page, output: string, theme: string, screen: keyof typeof typography): Promise<void> {
