@@ -73,6 +73,7 @@ impl Library {
         path: String,
         is_folder: bool,
         active: bool,
+        actions_focus: Option<&FocusHandle>,
         palette: Palette,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -104,6 +105,7 @@ impl Library {
                     .id("file-tree-actions")
                     .debug_selector(move || format!("file-actions/{button_key_path}"))
                     .tab_index(1)
+                    .when_some(actions_focus, |button, focus| button.track_focus(focus))
                     .absolute()
                     .top(px(2.))
                     .right(px(2.))
@@ -505,6 +507,7 @@ impl Library {
         draft.busy.set(true);
         draft.error.borrow_mut().take();
         let project = selection.project.clone();
+        let submitted_focus = window.focused(cx);
         let dir = self.projects_dir.clone();
         let move_entry = entry.clone();
         let operation = cx.background_executor().spawn(async move {
@@ -520,7 +523,14 @@ impl Library {
             let _ = library.update_in(cx, |library, window, cx| {
                 library.entry_write_task = None;
                 match moved {
-                    Ok(moved) => library.finish_entry_move(moved, &entry, remapped, window, cx),
+                    Ok(moved) => library.finish_entry_move(
+                        moved,
+                        &entry,
+                        remapped,
+                        submitted_focus,
+                        window,
+                        cx,
+                    ),
                     Err(error) => {
                         if let Some(draft) = &library.move_draft {
                             draft.busy.set(false);
@@ -546,11 +556,16 @@ impl Library {
         moved: MovedEntry,
         entry: &ProjectEntryMove,
         remapped: HashSet<String>,
+        submitted_focus: Option<FocusHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.move_draft = None;
+        let newer_focus = window
+            .focused(cx)
+            .filter(|focus| submitted_focus.as_ref() != Some(focus));
         window.close_dialog(cx);
+        let restored_focus = window.focused(cx);
         if let Some(Ok(projects)) = &mut self.projects
             && let Some(stored) = projects
                 .iter_mut()
@@ -587,6 +602,24 @@ impl Library {
                 .match_indices('/')
                 .map(|(index, _)| target[..index].to_owned()),
         );
+        let destination_focus = cx.focus_handle();
+        selection.entry_action_focus =
+            Some((entry.destination().to_owned(), destination_focus.clone()));
+        let workspace_focus = self.focus_handle.clone();
+        window.defer(cx, move |window, app| {
+            if window.focused(app) != restored_focus {
+                return;
+            }
+            if let Some(newer) = newer_focus {
+                // The previous dialog frame may still contain the focused element.
+                window.draw(app).clear();
+                if workspace_focus.contains(&newer, window) {
+                    window.focus(&newer);
+                    return;
+                }
+            }
+            window.focus(&destination_focus);
+        });
         let comments = selection.tool == Some(crate::WorkspaceTool::Comments);
         if let Some(path) = source {
             self.open_file(path, window, cx);
@@ -630,7 +663,7 @@ fn remap_open_tabs(
 mod tests {
     use super::*;
     use crate::initialize_app;
-    use gpui::{Modifiers, TestAppContext};
+    use gpui::{Focusable, Modifiers, TestAppContext};
     use gpui_component::{Root, input::Position};
     use refract_native::{create_project, list_projects};
     use std::fs;
@@ -641,6 +674,7 @@ mod tests {
         let projects = profile.path().join("projects");
         let project = create_project(&projects, "Paper").unwrap();
         fs::create_dir(projects.join(&project.id).join("sections")).unwrap();
+        fs::create_dir(projects.join(&project.id).join("archive")).unwrap();
         cx.update(initialize_app);
         let mut library = None;
         let (_, cx) = cx.add_window_view(|window, cx| {
@@ -712,6 +746,62 @@ mod tests {
             let menu = library.read(app).entry_menu.as_ref().unwrap();
             assert_eq!(menu.path, "main.tex");
             assert!(menu.actions[0].1.is_focused(window));
+        });
+        cx.simulate_keystrokes("escape");
+        cx.refresh().unwrap();
+        let archive = cx.debug_bounds("tree/archive").unwrap();
+        cx.simulate_click(archive.center(), Modifiers::none());
+        cx.update(|_, app| {
+            assert!(
+                !library
+                    .read(app)
+                    .selection
+                    .as_ref()
+                    .unwrap()
+                    .expanded_folders
+                    .contains("archive")
+            );
+        });
+        let sections = cx.debug_bounds("file-actions/sections").unwrap();
+        cx.simulate_click(sections.center(), Modifiers::none());
+        cx.simulate_keystrokes("down enter");
+        cx.simulate_input("archive/sections");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+        cx.update(|window, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert!(selection.expanded_folders.contains("archive"));
+            let (path, focus) = selection.entry_action_focus.as_ref().unwrap();
+            assert_eq!(path, "archive/sections");
+            assert!(focus.is_focused(window));
+        });
+        cx.simulate_keystrokes("shift-f10");
+        cx.update(|_, app| {
+            assert_eq!(
+                library.read(app).entry_menu.as_ref().unwrap().path,
+                "archive/sections"
+            );
+        });
+        cx.simulate_keystrokes("down enter");
+        cx.simulate_input("archive/appendix");
+        let editor = cx.update(|window, app| {
+            library.update(app, |view, cx| {
+                assert!(!view.submit_entry_move(window, cx));
+                let editor = view.active_editor().unwrap();
+                editor.update(cx, |input, cx| input.focus(window, cx));
+                editor
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            let selection = library.read(app).selection.as_ref().unwrap();
+            assert_eq!(
+                selection.entry_action_focus.as_ref().unwrap().0,
+                "archive/appendix"
+            );
+            assert!(editor.read(app).focus_handle(app).is_focused(window));
+            assert_eq!(selection.file.as_deref(), Some("main.tex"));
         });
     }
 
@@ -823,7 +913,8 @@ mod tests {
                 intro_editor.entity_id()
             );
             intro_editor.update(app, |editor, cx| {
-                editor.set_cursor_position(Position::new(0, 0), window, cx)
+                editor.set_cursor_position(Position::new(0, 0), window, cx);
+                editor.focus(window, cx);
             });
         });
         cx.simulate_input("Updated ");

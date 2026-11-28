@@ -157,6 +157,7 @@ struct Selection {
     tree: Option<io::Result<Vec<ProjectEntry>>>,
     file_action_error: Option<String>,
     expanded_folders: HashSet<String>,
+    entry_action_focus: Option<(String, FocusHandle)>,
     file_search: FileSearch,
     conversation: ConversationPane,
     file: Option<String>,
@@ -362,6 +363,7 @@ impl Library {
             tree: None,
             file_action_error: None,
             expanded_folders: HashSet::new(),
+            entry_action_focus: None,
             file_search: FileSearch::new(window, cx),
             conversation: ConversationPane::default(),
             file: None,
@@ -2181,7 +2183,20 @@ impl Library {
                     }
                 }),
             );
-        let row = Self::entry_menu(row, entry.path.clone(), is_folder, active, palette, cx);
+        let actions_focus = selection
+            .entry_action_focus
+            .as_ref()
+            .filter(|(path, _)| *path == entry.path)
+            .map(|(_, focus)| focus);
+        let row = Self::entry_menu(
+            row,
+            entry.path.clone(),
+            is_folder,
+            active,
+            actions_focus,
+            palette,
+            cx,
+        );
         let mut node = div()
             .id(SharedString::from(format!("entry/{}", entry.path)))
             .child(row);
