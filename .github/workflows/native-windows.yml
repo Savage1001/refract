@@ -1,0 +1,414 @@
+name: Native preview
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - .github/workflows/native-windows.yml
+      - scripts/account-storage-fixture.cts
+      - scripts/capture-electron-parity.cts
+      - scripts/legacy-profile-fixture.cts
+      - test/fixtures/headless-ui.cts
+      - test/fixtures/native-picker-providers.cts
+      - test/fixtures/parity-document.*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: native
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
+      - name: Test project library
+        run: cargo +stable test --locked --no-default-features --features latex-syntax,legacy-profile
+      - name: Test the assistant tool server over loopback
+        run: cargo +stable test --locked --no-default-features --lib assistant_tools::server::tests::serves_an_authenticated_turn_and_releases_its_listener -- --ignored
+      - name: Install managed TeX and verify automatic discovery
+        run: |
+          cargo +stable test --locked --no-default-features --features installer,windows-updater,codex-account,pdf-links,pdf-text --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +stable build --locked --no-default-features --features installer --bin refract-install-dependencies
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tools = Join-Path $env:LOCALAPPDATA 'Refract/dependencies/TinyTeX/bin/windows'
+          if (Test-Path -LiteralPath $tools) { throw 'Expected a fresh dependency directory' }
+          & ./target/debug/refract-install-dependencies.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $marker = Join-Path $tools 'refract-ci-reuse-marker.txt'
+          Set-Content -LiteralPath $marker -Value 'Existing TeX setup' -ErrorAction Stop
+          & ./target/debug/refract-install-dependencies.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path -LiteralPath $marker)) { throw 'Expected to reuse the complete TeX setup' }
+          cargo +stable test --locked --no-default-features --lib tex::tests::compiles_with_the_configured_toolchain -- --ignored
+      - name: Build GPUI preview
+        run: cargo +stable build --locked
+      - name: Test GPUI keyboard interaction
+        run: cargo +stable test --locked --bin refract-native --features ui-tests
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build disposable Electron profile fixtures
+        working-directory: .
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx --no-install install-electron
+      - name: Verify profile compatibility with Electron
+        run: |
+          cargo +stable test --locked --no-default-features --features codex-account,legacy-profile --lib codex_account::storage::tests::exchanges_a_synthetic_connection_with_electron_safe_storage -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +stable test --locked --no-default-features --features codex-account,legacy-profile --lib legacy_profile::tests::imports_local_storage_written_by_the_packaged_electron_version -- --ignored
+
+  unix:
+    name: native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: native
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test project library and PDF rendering
+        run: cargo +stable test --locked --no-default-features --features latex-syntax,legacy-profile,portable-pdf,pdf-links,pdf-text
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-liberation libfontconfig1-dev libwayland-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev
+      - name: Set up Node.js for matching Linux captures
+        if: runner.os == 'Linux'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Capture the Electron renderer with the same system fonts as GPUI
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npx --no-install playwright install --with-deps chromium
+          node build/scripts/capture-electron-parity.cjs "$RUNNER_TEMP/refract-electron-reference-linux" --chromium
+      - name: Upload the Linux renderer reference
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-electron-reference-linux
+          path: ${{ runner.temp }}/refract-electron-reference-linux
+          if-no-files-found: error
+      - name: Check the native application
+        run: cargo +stable check --locked --bin refract-native
+      - name: Check the macOS dependency installer
+        if: runner.os == 'macOS'
+        run: |
+          cargo +stable build --locked --no-default-features --features installer --bin refract-install-dependencies
+          cargo +stable test --locked --no-default-features --features installer --lib managed_tex
+      - name: Build for visual verification
+        if: runner.os == 'Linux'
+        run: cargo +stable build --locked --bin refract-native
+      - name: Capture the native library and workspace offscreen
+        if: runner.os == 'Linux'
+        run: |
+          [[ "$GITHUB_ACTIONS" == true && "$RUNNER_ENVIRONMENT" == github-hosted ]]
+          sudo apt-get install -y --no-install-recommends dbus-x11 dconf-gsettings-backend gsettings-desktop-schemas imagemagick mesa-vulkan-drivers xauth xdg-desktop-portal xdg-desktop-portal-gtk xdotool xvfb
+          output="$RUNNER_TEMP/refract-native-reference"
+          fixture="$(mktemp -d "$RUNNER_TEMP/refract-native-fixture.XXXXXX")"
+          fixture_tools="$fixture/tex"
+          export REFRACT_CAPTURE_PROVIDER_BIN="$fixture/providers"
+          export REFRACT_CAPTURE_PROVIDER_FIXTURE="$(cd .. && pwd)/build/test/fixtures/native-picker-providers.cjs"
+          test -f "$REFRACT_CAPTURE_PROVIDER_FIXTURE"
+          mkdir -p "$output" "$fixture_tools" "$REFRACT_CAPTURE_PROVIDER_BIN"
+          for provider in codex opencode; do
+            cat > "$REFRACT_CAPTURE_PROVIDER_BIN/$provider" <<'PROVIDER'
+          #!/bin/sh
+          exec node "$REFRACT_CAPTURE_PROVIDER_FIXTURE" "$(basename "$0")" "$@"
+          PROVIDER
+            chmod +x "$REFRACT_CAPTURE_PROVIDER_BIN/$provider"
+          done
+          export REFRACT_CAPTURE_PDF="$fixture/document.pdf"
+          base64 --decode ../test/fixtures/parity-document.pdf.b64 > "$REFRACT_CAPTURE_PDF"
+          # The screenshot must render the same PDF as the Electron reference.
+          # The Windows TinyTeX check above exercises the real compiler separately.
+          cat > "$fixture_tools/pdflatex" <<'PDFLATEX'
+          #!/bin/sh
+          set -eu
+          for argument do
+            case "$argument" in
+              -output-directory=*) output_directory=${argument#*=} ;;
+            esac
+          done
+          : "${output_directory:?Missing fixture output directory}"
+          cp "$REFRACT_CAPTURE_PDF" "$output_directory/main.pdf"
+          PDFLATEX
+          chmod +x "$fixture_tools/pdflatex"
+          export REFRACT_TEX_BIN="$fixture_tools"
+          export WAYLAND_DISPLAY= ZED_ALLOW_EMULATED_GPU=1 XDG_CURRENT_DESKTOP=GNOME
+          capture_theme() {
+          local theme=$1 scheme=$2 scheme_id=$3 background=$4 border=$5
+          export REFRACT_DATA_DIR="$fixture/$theme"
+          export XDG_CONFIG_HOME="$fixture/$theme/config" XDG_RUNTIME_DIR="$fixture/$theme/runtime"
+          install -d -m 700 "$XDG_CONFIG_HOME/xdg-desktop-portal" "$XDG_RUNTIME_DIR"
+          printf '[preferred]\ndefault=gtk\n' > "$XDG_CONFIG_HOME/xdg-desktop-portal/portals.conf"
+          local names=('Spectral methods for fluid dynamics' 'Conference paper - autumn notes' 'A short introduction to graph theory')
+          local i id folder
+          for i in "${!names[@]}"; do
+            id=$(printf '2b98e215-1a9f-4f24-972b-%012d' "$i")
+            folder="$REFRACT_DATA_DIR/projects/$id"
+            mkdir -p "$folder/sections"
+            printf '{"id":"%s","name":"%s","created":"2026-01-01T12:00:00.000Z","rootFile":"main.tex"}\n' "$id" "${names[$i]}" > "$folder/.refract.json"
+            cp ../test/fixtures/parity-document.tex "$folder/main.tex"
+            printf '%% Research notes\nA stable spectral approximation.\n' > "$folder/sections/abstract.tex"
+          done
+          xvfb-run -a -s '-screen 0 1600x1000x24' dbus-run-session -- bash -e -u -o pipefail -s -- "$output" "$theme" "$scheme" "$scheme_id" "$background" "$border" <<'CAPTURE'
+          output=$1 theme=$2 scheme=$3 scheme_id=$4 background=$5 border=$6
+          gsettings set org.gnome.desktop.interface color-scheme "$scheme"
+          actual_scheme=$(gdbus call --session --timeout 20 --dest org.freedesktop.portal.Desktop \
+            --object-path /org/freedesktop/portal/desktop \
+            --method org.freedesktop.portal.Settings.Read org.freedesktop.appearance color-scheme)
+          if [[ $actual_scheme != *"uint32 $scheme_id"* ]]; then
+            echo "Portal reported $actual_scheme for $theme" >&2
+            exit 1
+          fi
+          app=
+          stop_app() {
+            if [[ -n "$app" ]]; then
+              kill "$app" 2>/dev/null || true
+              wait "$app" 2>/dev/null || true
+              app=
+            fi
+          }
+          trap stop_app EXIT
+          start_app() {
+            ./target/debug/refract-native > "$1" 2>&1 &
+            app=$!
+            client=$(timeout 20s xdotool search --sync --onlyvisible --pid "$app" | sed -n '1p')
+            timeout 10s xdotool windowmove --sync "$client" 0 0
+            xdotool windowsize "$client" 1440 900
+            timeout 10s xdotool windowfocus --sync "$client"
+            xdotool mousemove --sync 0 0
+          }
+          start_app "$output/native-$theme.log"
+          capture() {
+            local screen=$1 expected_width=$2 expected_height=$3 width height colors sidebar_edge
+            local shot="$output/$theme-$screen.png"
+            for attempt in {1..24}; do
+              import -window "$client" "$shot"
+              read -r width height colors < <(identify -format '%w %h %k\n' "$shot")
+              if (( width == expected_width && height == expected_height && colors > 32 )); then
+                if [[ $screen == library-list ]]; then
+                  local canvas
+                  canvas=$(convert "$shot" -crop 1x1+4+4 -depth 8 txt:-)
+                  if [[ $canvas != *"$background"* ]]; then
+                    sleep 0.2
+                    continue
+                  fi
+                elif [[ $screen == workspace-compact ]]; then
+                  # X11 can capture the cropped wide layout before GPUI redraws it.
+                  sidebar_edge=$(convert "$shot" -crop 3x1+208+120 -depth 8 txt:-)
+                  if [[ $sidebar_edge != *"$border"* ]]; then
+                    sleep 0.2
+                    continue
+                  fi
+                fi
+                return 0
+              fi
+              sleep 0.2
+            done
+            echo "The $theme Refract $screen did not render at ${expected_width}x${expected_height}" >&2
+            return 1
+          }
+          click() {
+            xdotool mousemove --window "$client" "$1" "$2" click 1
+            xdotool mousemove --sync 0 0
+          }
+          require_redraw() {
+            local before=$1 after=$2 metric status=0
+            metric=$(compare -metric AE "$output/$theme-$before.png" "$output/$theme-$after.png" null: 2>&1) || status=$?
+            if (( status > 1 )) || ! awk '$1 + 0 >= 10000 { changed = 1 } END { exit !changed }' <<< "$metric"; then
+              echo "The $theme $after did not redraw: $metric changed pixels" >&2
+              exit 1
+            fi
+          }
+          capture library-list 1440 900
+          click 1220 284
+          sleep 0.4
+          capture library-grid 1440 900
+          require_redraw library-list library-grid
+          for offset in 235 519 803; do
+            ink=$(convert "$output/$theme-library-grid.png" -crop "158x66+$offset+404" -colorspace Gray -threshold 50% -format '%[fx:mean]' info:)
+            if ! awk -v theme="$theme" -v ink="$ink" 'BEGIN { exit !(theme == "light" ? ink < 0.995 : ink > 0.005) }'; then
+              echo "The $theme grid card at x=$offset did not paint its title" >&2
+              exit 1
+            fi
+          done
+          click 999 187
+          sleep 0.4
+          capture settings 1440 900
+          require_redraw library-grid settings
+          if [[ $theme == dark ]]; then
+            bright=$(convert "$output/$theme-settings.png" -crop '380x360+530+240' -colorspace Gray -threshold 75% -format '%[fx:mean]' info:)
+            if ! awk -v bright="$bright" 'BEGIN { exit !(bright < 0.06) }'; then
+              echo 'The dark settings panel contains light control backgrounds' >&2
+              exit 1
+            fi
+          fi
+          xdotool key Escape
+          sleep 0.4
+          click 1174 284
+          sleep 0.4
+          click 340 615
+          rendered_pdf="$REFRACT_DATA_DIR/projects/2b98e215-1a9f-4f24-972b-000000000000/.refract-build/main.pdf"
+          for attempt in {1..40}; do
+            if cmp -s "$REFRACT_CAPTURE_PDF" "$rendered_pdf"; then
+              sleep 1
+              break
+            fi
+            sleep 0.25
+          done
+          capture workspace 1440 900
+          if [[ $theme == dark ]]; then
+            luminance=$(convert "$output/$theme-workspace.png" -crop '80x40+445+440' -colorspace Gray -format '%[fx:mean]' info:)
+            if ! awk -v luminance="$luminance" 'BEGIN { exit !(luminance < 0.12) }'; then
+              echo 'The source editor did not use the dark theme' >&2
+              exit 1
+            fi
+          fi
+          if ! cmp -s "$REFRACT_CAPTURE_PDF" "$rendered_pdf"; then
+            echo 'The native workspace did not load the shared screenshot PDF' >&2
+            exit 1
+          fi
+          timeout 10s xdotool windowsize --sync "$client" 900 650
+          capture workspace-compact 900 650
+
+          # Use a separate disposable profile so the earlier screenshots keep their account state.
+          stop_app
+          original_projects="$REFRACT_DATA_DIR/projects"
+          export REFRACT_DATA_DIR="$REFRACT_DATA_DIR-models"
+          mkdir -p "$REFRACT_DATA_DIR/codex-account"
+          cp -R "$original_projects" "$REFRACT_DATA_DIR/"
+          printf %s cli > "$REFRACT_DATA_DIR/codex-account/mode"
+          printf '%s\n' '{"model":null,"reasoningEffort":null,"favorites":[],"fastMode":false}' > "$REFRACT_DATA_DIR/codex-preferences.json"
+          printf '%s\n' '{"model":null,"reasoningEffort":null,"favorites":["opencode/research"]}' > "$REFRACT_DATA_DIR/opencode-preferences.json"
+          export PATH="$REFRACT_CAPTURE_PROVIDER_BIN:$PATH"
+          start_app "$output/native-$theme-models.log"
+
+          wait_for_preference() {
+            local file=$1 expected=$2
+            for attempt in {1..40}; do
+              if grep -Fq -- "$expected" "$REFRACT_DATA_DIR/$file"; then
+                return 0
+              fi
+              sleep 0.25
+            done
+            echo "The $theme native model picker did not write $expected to $file" >&2
+            return 1
+          }
+          capture_picker() {
+            local screen=$1 before=$2 minimum_change=$3 changed status outline_pixels
+            local shot="$output/$theme-$screen.png" outline='#D8D8D9'
+            if [[ "$theme" == dark ]]; then outline='#3A3A3A'; fi
+            for attempt in {1..24}; do
+              capture "$screen" 1440 900
+              status=0
+              changed=$(compare -metric AE "$before" "$shot" null: 2>&1) || status=$?
+              outline_pixels=$(convert "$shot" -crop 400x44+290+406 +repage -alpha off \
+                -fill black +opaque "$outline" -fill white -opaque "$outline" -format '%[fx:round(mean*w*h)]' info:)
+              if (( status <= 1 && outline_pixels >= 200 )) \
+                && awk -v minimum="$minimum_change" '$1 + 0 >= minimum { changed = 1 } END { exit !changed }' <<< "$changed"; then
+                return 0
+              fi
+              sleep 0.2
+            done
+            echo "The $theme $screen did not show the model popup ($outline_pixels outline pixels, $changed changed pixels)" >&2
+            return 1
+          }
+          (output="$REFRACT_DATA_DIR"; capture library-list 1440 900)
+          click 340 615
+          wait_for_preference codex-preferences.json '"model":"model-a"'
+          before="$REFRACT_DATA_DIR/before-model-picker.png"
+          import -window "$client" "$before"
+          click 725 844
+          wait_for_preference opencode-preferences.json '"model":"opencode/research"'
+          capture_picker model-picker "$before" 10000
+
+          timeout 10s xdotool windowfocus --sync "$client"
+          for key in Down Right Return; do
+            xdotool key --clearmodifiers "$key"
+            # Separate keyboard input from frame capture so a failure shows where focus stopped.
+            sleep 0.3
+            import -window "$client" "$output/$theme-model-picker-after-${key,,}.png"
+          done
+          wait_for_preference codex-preferences.json '"favorites":["model-a"]'
+          click 230 452
+          capture_picker model-picker-favorites "$output/$theme-model-picker.png" 200
+          xdotool type --clearmodifiers --delay 25 'research model'
+          capture_picker model-picker-search "$output/$theme-model-picker-favorites.png" 2000
+          CAPTURE
+          }
+          capture_theme light prefer-light 2 '#FCFCFC' '#E4E4E7'
+          capture_theme dark prefer-dark 1 '#000000' '#191919'
+      - name: Upload native visual verification artifacts
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-native-reference
+          path: ${{ runner.temp }}/refract-native-reference
+          if-no-files-found: ignore
+
+  electron-reference:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Build the existing renderer
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+      - name: Verify reference interactions and packaging
+        run: |
+          node --test --test-concurrency=1 build/test/workflow-navigation-headless.test.cjs build/test/pane-layout-headless.test.cjs build/test/outline-layout.test.cjs build/test/ui-polish-headless.test.cjs build/test/pdf-memory-headless.test.cjs build/test/distribution-boundary.test.cjs
+      - name: Capture screenshots of the reference UI
+        run: node build/scripts/capture-electron-parity.cjs "$env:RUNNER_TEMP/refract-electron-reference"
+      - name: Upload reference screenshots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refract-electron-reference
+          path: ${{ runner.temp }}/refract-electron-reference
+          if-no-files-found: error

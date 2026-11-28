@@ -6,13 +6,13 @@ Report security vulnerabilities privately as described in [SECURITY.md](SECURITY
 
 ## Development
 
-Use Windows, Node.js 22.12 or newer, and the setup instructions in [README.md](README.md). Run `npm ci`, configure a separately installed TeX toolchain, and use `npm start` for development. Run `npm test` before submitting a change; describe any tests you could not run. Installer and real Codex tests are opt-in and have additional requirements documented in the README.
+Use stable Rust and the setup instructions in [native/README.md](native/README.md) for the GPUI desktop app. Node.js 22.12 or newer is required for packaging and the Electron reference tests. Run the checks relevant to your change and describe any tests you could not run. Installer and real Codex tests have additional requirements documented in [README.md](README.md).
 
-Application and test code must be TypeScript. Keep type checking enabled. Follow the task ID allocation rules in [TODO.md](TODO.md) when adding or editing roadmap tasks. Keep changes focused and explain the behavior and verification in your pull request.
+Use Rust for the native app and its tests. Use TypeScript for packaging, other application code, and corresponding tests. Keep type checking enabled. Follow the task ID allocation rules in [TODO.md](TODO.md) when adding or editing roadmap tasks. Keep changes focused and explain the behavior and verification in your pull request.
 
 ## Continuous integration
 
-To limit CI costs, the `Windows CI` workflow runs automatically only when a GitHub release is published. Maintainers can also start it manually to verify a release tag or commit before publication. Ordinary pushes and pull requests do not run CI; contributors should run the relevant checks locally. Its `Windows build and tests` check installs the locked npm dependencies, downloads and verifies an external TinyTeX toolchain for the runner, builds TypeScript, and runs `npm test` on a GitHub-hosted Windows runner. The workflow has read-only repository permissions and does not retain checkout credentials or publish application artifacts.
+Relevant pull requests run native tests and installer verification on GitHub-hosted runners. The Electron reference workflow builds TypeScript and runs its renderer tests for comparison. The `Windows CI` workflow also provides legacy release verification and can be started manually. The workflows use read-only repository permissions and do not publish releases.
 
 Tests requiring a signed-in assistant, a packaged application, or the installer lifecycle remain separate opt-in checks. A green CI result does not establish that those release checks passed. See [README.md](README.md) for their requirements.
 

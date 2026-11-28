@@ -1,0 +1,105 @@
+name: Native macOS package
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - scripts/native-macos/**
+      - package.json
+      - resources/logo.png
+      - resources/fonts/Inter-OFL.txt
+      - LICENSE
+      - .github/workflows/native-macos-package.yml
+  workflow_call:
+    inputs:
+      release-ref:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-macos-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-package:
+    name: Native macOS package (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            mach_arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+            mach_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release-ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Build the app and the dependency installer
+        working-directory: native
+        run: |
+          cargo +stable build --locked --release --bin refract-native
+          cargo +stable build --locked --release --no-default-features --features installer --bin refract-install-dependencies
+      - name: Stage and package Refract
+        run: node --disable-warning=ExperimentalWarning --experimental-transform-types scripts/native-macos/package.cts --release-assets
+      - name: Verify installation and replacement without launching the app
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          stem="Refract-$version-mac-${{ matrix.arch }}"
+          dmg="dist/$stem.dmg"
+          mount="$RUNNER_TEMP/refract-dmg"
+          hdiutil attach "$dmg" -readonly -nobrowse -noautoopen -mountpoint "$mount"
+          trap 'hdiutil detach "$mount"' EXIT
+          pkg="$mount/$stem.pkg"
+          cmp "dist/native-macos/Refract-native-$version-mac-${{ matrix.arch }}.pkg" "$pkg"
+          bundle='/Applications/Refract.app'
+          tex='/Library/Refract/dependencies/TinyTeX/bin/universal-darwin'
+          test ! -e "$bundle"
+          test ! -e "$tex"
+          sudo -n installer -verboseR -pkg "$pkg" -target /
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$bundle/Contents/Info.plist")" = app.refract.desktop
+          pkgutil --pkg-info app.refract.desktop
+          lipo "$bundle/Contents/MacOS/Refract" -verify_arch ${{ matrix.mach_arch }}
+          lipo "$bundle/Contents/MacOS/refract-install-dependencies" -verify_arch ${{ matrix.mach_arch }}
+          codesign --verify --deep --strict "$bundle"
+          for tool in pdflatex xelatex lualatex synctex kpsewhich bibtex biber; do
+            test -x "$tex/$tool"
+          done
+          inode="$(stat -f '%i' "$tex/synctex")"
+          profile="$HOME/Library/Application Support/refract/projects"
+          mkdir -p "$profile"
+          marker="$profile/refract-native-ci-marker"
+          printf 'Existing project data\n' > "$marker"
+          obsolete="$bundle/Contents/Frameworks/obsolete-electron-file"
+          sudo -n mkdir "$bundle/Contents/Frameworks"
+          sudo -n touch "$obsolete"
+          sudo -n installer -verboseR -pkg "$pkg" -target /
+          test ! -e "$obsolete"
+          test "$(cat "$marker")" = 'Existing project data'
+          test "$(stat -f '%i' "$tex/synctex")" = "$inode"
+          codesign --verify --deep --strict "$bundle"
+      - name: Exercise automatic TeX discovery and SyncTeX
+        working-directory: native
+        run: cargo +stable test --locked --no-default-features --lib tex::tests::compiles_with_the_configured_toolchain -- --ignored
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.release-ref == ''
+        with:
+          name: refract-native-macos-${{ matrix.arch }}
+          path: dist/native-macos/Refract-native-*-mac-${{ matrix.arch }}.pkg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.release-ref && format('macos-{0}-installer', matrix.arch) || format('refract-native-macos-{0}-dmg', matrix.arch) }}
+          path: dist/Refract-*-mac-${{ matrix.arch }}.dmg
+          if-no-files-found: error

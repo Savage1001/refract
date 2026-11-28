@@ -1,6 +1,6 @@
 # Project instructions
 
-All application and test code must be written in TypeScript. Do not introduce JavaScript source files. Keep TypeScript checking enabled and add stronger types as code evolves. Keep development and verification processes in the background without opening windows unless the user explicitly requests them.
+Write application and test code in TypeScript. The opt-in GPUI port under `native/` uses Rust for its application and tests. Do not introduce JavaScript source files. Keep TypeScript checking enabled and add stronger types as code evolves. Keep development and verification processes in the background without opening windows unless the user explicitly requests them.
 
 Every task in TODO.md must have a unique `RF-` ID. Allocate new IDs using and advancing the counter in TODO.md. For parallel work, reserve IDs through a serialized update to the latest main branch before assigning them; do not allocate independently from stale counters. Never reuse an allocated ID, even if its task is removed, and do not change an existing task's ID when editing, moving, or completing it.
 
