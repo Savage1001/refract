@@ -40,6 +40,7 @@ impl Fixture {
             &settings,
             &self.toolchain,
             cancel,
+            false,
             runner,
             |_| {},
         )
@@ -112,6 +113,7 @@ fn captures_the_pdf_while_the_build_lock_is_held() {
         &settings,
         &fixture.toolchain,
         &cancel,
+        false,
         |_, _| {
             fs::write(fixture.output.join("main.pdf"), b"%PDF-fixture")?;
             Ok(success("rendered"))
@@ -124,6 +126,59 @@ fn captures_the_pdf_while_the_build_lock_is_held() {
     )
     .unwrap();
     assert!(matches!(snapshot, Some(RetainedPdf::Bytes(_))));
+}
+
+#[test]
+fn reuses_only_verified_outputs_and_honors_forced_builds() {
+    let fixture = Fixture::new();
+    let dependency = fixture._profile.path().join("external.sty");
+    fs::write(&dependency, "before").unwrap();
+    fs::create_dir_all(fixture.toolchain.bin()).unwrap();
+    fs::write(fixture.toolchain.executable("pdflatex"), "engine").unwrap();
+    let settings = build_settings(&fixture.projects, &fixture.project).unwrap();
+    let cancel = AtomicBool::new(false);
+    let compile = |force, may_run: bool| {
+        build(
+            &fixture.dir,
+            &settings,
+            &fixture.toolchain,
+            &cancel,
+            force,
+            |_, _| {
+                assert!(may_run, "the engine ran despite a current cached build");
+                for (name, data) in [
+                    ("main.pdf", "%PDF-fixture"),
+                    ("main.log", "Build log"),
+                    ("main.synctex.gz", "Sync data"),
+                    ("main.aux", "\\relax\n"),
+                ] {
+                    fs::write(fixture.output.join(name), data)?;
+                }
+                fs::write(
+                    fixture.output.join("main.fls"),
+                    format!(
+                        "INPUT ./main.tex\nINPUT {}\nOUTPUT {}\n",
+                        dependency.display(),
+                        tool_path(&fixture.output).join("main.aux").display(),
+                    ),
+                )?;
+                Ok(success("rendered"))
+            },
+            |path| assert!(lock_build_directory(path.parent().unwrap()).is_err()),
+        )
+        .unwrap()
+        .cached
+    };
+    assert!(!compile(false, true));
+    assert!(compile(false, false));
+    assert!(!compile(true, true));
+    fs::write(&dependency, "change").unwrap();
+    assert!(!compile(false, true));
+    fs::write(fixture.dir.join("extra.tex"), "a newly visible file").unwrap();
+    assert!(!compile(false, true));
+    fs::remove_file(fixture.output.join("main.synctex.gz")).unwrap();
+    assert!(!compile(false, true));
+    assert!(compile(false, false));
 }
 
 #[test]
@@ -361,6 +416,7 @@ fn compiles_with_the_configured_toolchain() {
         &project.project,
         &toolchain,
         &AtomicBool::new(false),
+        false,
     )
     .unwrap();
     let Some(pdf) = result.pdf else {
@@ -369,6 +425,18 @@ fn compiles_with_the_configured_toolchain() {
     assert_eq!(result.exit_code, Some(0));
     assert!(fs::read(pdf).unwrap().starts_with(b"%PDF-"));
     assert!(project.output.join("main.synctex.gz").is_file());
+    let cached = compile_project(
+        &project.projects,
+        &project.project,
+        &toolchain,
+        &AtomicBool::new(false),
+        false,
+    )
+    .unwrap();
+    assert!(
+        cached.cached,
+        "unchanged TeX inputs should reuse the last build"
+    );
     let position = synctex::forward(
         &project.projects,
         &project.project,

@@ -327,7 +327,12 @@ mod tests {
     };
     use std::{fs, io, path::Path, sync::atomic::AtomicBool};
 
-    fn fixture_compile(path: &Path, project: &Project, _: &AtomicBool) -> io::Result<BuildResult> {
+    fn fixture_compile(
+        path: &Path,
+        project: &Project,
+        _: &AtomicBool,
+        _: bool,
+    ) -> io::Result<BuildResult> {
         let config = build_settings(path, project)?;
         let pdf = path.join(&project.id).join(".refract-build/main.pdf");
         fs::create_dir_all(pdf.parent().unwrap())?;
@@ -340,6 +345,7 @@ mod tests {
             ),
         )?;
         Ok(BuildResult {
+            cached: false,
             arguments: Vec::new(),
             exit_code: Some(0),
             log: String::new(),

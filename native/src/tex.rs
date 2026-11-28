@@ -18,6 +18,7 @@ use std::{
     },
 };
 
+mod build_cache;
 pub mod diagnostics;
 pub(crate) mod process;
 pub mod synctex;
@@ -56,11 +57,13 @@ pub struct BuildSettings {
     pub draft_mode: bool,
 }
 
+#[derive(Clone)]
 pub struct BuildResult {
     pub arguments: Vec<OsString>,
     pub exit_code: Option<i32>,
     pub log: String,
     pub pdf: Option<PathBuf>,
+    pub cached: bool,
 }
 
 impl Project {
@@ -87,8 +90,9 @@ pub fn compile_project(
     project: &Project,
     toolchain: &TexToolchain,
     cancel: &AtomicBool,
+    force: bool,
 ) -> io::Result<BuildResult> {
-    compile_with_output(projects_dir, project, toolchain, cancel, |_| {})
+    compile_with_output(projects_dir, project, toolchain, cancel, force, |_| {})
 }
 
 pub fn compile_project_with_preview(
@@ -96,9 +100,10 @@ pub fn compile_project_with_preview(
     project: &Project,
     toolchain: &TexToolchain,
     cancel: &AtomicBool,
+    force: bool,
 ) -> io::Result<(BuildResult, Option<io::Result<RetainedPdf>>)> {
     let mut preview = None;
-    let build = compile_with_output(projects_dir, project, toolchain, cancel, |path| {
+    let build = compile_with_output(projects_dir, project, toolchain, cancel, force, |path| {
         preview = Some(retain_pdf_at(path, cancel));
     })?;
     Ok((build, preview))
@@ -109,6 +114,7 @@ fn compile_with_output(
     project: &Project,
     toolchain: &TexToolchain,
     cancel: &AtomicBool,
+    force: bool,
     capture: impl FnOnce(&Path),
 ) -> io::Result<BuildResult> {
     if cancel.load(Ordering::Relaxed) {
@@ -116,7 +122,15 @@ fn compile_with_output(
     }
     let dir = checked_project_directory(projects_dir, project)?;
     let settings = read_build_settings(&dir, project)?;
-    build(&dir, &settings, toolchain, cancel, run_process, capture)
+    build(
+        &dir,
+        &settings,
+        toolchain,
+        cancel,
+        force,
+        run_process,
+        capture,
+    )
 }
 
 pub fn save_compiled_pdf(source: &Path, destination: &Path) -> io::Result<()> {
@@ -365,6 +379,7 @@ fn build(
     settings: &BuildSettings,
     toolchain: &TexToolchain,
     cancel: &AtomicBool,
+    force: bool,
     runner: impl FnMut(Command, &AtomicBool) -> io::Result<ProcessOutput>,
     capture: impl FnOnce(&Path),
 ) -> io::Result<BuildResult> {
@@ -383,6 +398,23 @@ fn build(
     if cancel.load(Ordering::Relaxed) {
         return Ok(cancelled_build());
     }
+    let previous = build_cache::take(dir);
+    let executable = toolchain.executable(settings.engine.name());
+    let key = build_cache::build_key(dir, settings, &executable, cancel);
+    if !force
+        && let Some(previous) = previous
+        && let Some(key) = key.as_ref()
+        && let Some(result) = previous.try_reuse(dir, &output, key, cancel)
+    {
+        if let Some(path) = result.pdf.as_deref() {
+            capture(path);
+        }
+        build_cache::remember(dir, previous);
+        return Ok(result);
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(cancelled_build());
+    }
     remove_outputs(
         &output,
         SYNC_FILES.into_iter().chain([
@@ -392,6 +424,9 @@ fn build(
     let result = execute_build(dir, &output, &root, settings, toolchain, cancel, runner);
     if let Some(path) = result.as_ref().ok().and_then(|build| build.pdf.as_deref()) {
         capture(path);
+        if let (Some(key), Ok(build)) = (key, result.as_ref()) {
+            build_cache::record(dir, &output, settings, key, build, cancel);
+        }
     } else {
         remove_outputs(&output, SYNC_FILES.into_iter().chain(["main.pdf"]))?;
     }
@@ -440,6 +475,7 @@ fn execute_build(
             exit_code: None,
             log: String::new(),
             pdf: None,
+            cached: false,
         },
     };
     if !build.latex(dir, settings.engine)? {
@@ -917,6 +953,7 @@ fn cancelled_build() -> BuildResult {
         exit_code: None,
         log: "Compilation cancelled.".into(),
         pdf: None,
+        cached: false,
     }
 }
 

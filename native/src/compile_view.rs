@@ -21,7 +21,7 @@ use std::{
 };
 
 #[cfg(all(test, feature = "ui-tests"))]
-pub(super) type Compiler = fn(&Path, &Project, &AtomicBool) -> io::Result<BuildResult>;
+pub(super) type Compiler = fn(&Path, &Project, &AtomicBool, bool) -> io::Result<BuildResult>;
 
 pub(super) struct RunningBuild {
     cancel: Arc<AtomicBool>,
@@ -30,6 +30,7 @@ pub(super) struct RunningBuild {
 
 pub(super) struct WorkspaceBuild {
     pub(super) queued: bool,
+    force_next: bool,
     outcome: Option<Result<BuildResult, String>>,
     show_error_log: bool,
     pub(super) sync_error: Option<String>,
@@ -40,6 +41,7 @@ impl WorkspaceBuild {
     pub(super) fn new() -> Self {
         Self {
             queued: true,
+            force_next: false,
             outcome: None,
             show_error_log: false,
             sync_error: None,
@@ -86,6 +88,7 @@ impl Library {
             return;
         };
         selection.build.queued = false;
+        let force = std::mem::take(&mut selection.build.force_next);
         if has_edits {
             selection.build.outcome = Some(Err("Save pending changes before compiling.".into()));
             cx.notify();
@@ -100,7 +103,7 @@ impl Library {
         let run_cancel = cancel.clone();
         let compile = cx.background_executor().spawn(async move {
             #[cfg(all(test, feature = "ui-tests"))]
-            let result = compiler(&projects, &project, &run_cancel).map(|build| {
+            let result = compiler(&projects, &project, &run_cancel, force).map(|build| {
                 let preview = build
                     .pdf
                     .as_ref()
@@ -109,7 +112,7 @@ impl Library {
             });
             #[cfg(not(all(test, feature = "ui-tests")))]
             let result = TexToolchain::discover().and_then(|toolchain| {
-                compile_project_with_preview(&projects, &project, &toolchain, &run_cancel)
+                compile_project_with_preview(&projects, &project, &toolchain, &run_cancel, force)
             });
             result.map_err(|error| error.to_string())
         });
@@ -156,6 +159,7 @@ impl Library {
         }
         if let Some(selection) = &mut self.selection {
             selection.build.queued = false;
+            selection.build.force_next = false;
         }
     }
 
@@ -164,6 +168,7 @@ impl Library {
             && let Some(selection) = &mut self.selection
         {
             selection.build.invalidate();
+            selection.build.force_next = true;
             self.start_queued_build(window, cx);
             cx.notify();
         }
@@ -463,14 +468,19 @@ mod tests {
         projects: &Path,
         project: &Project,
         cancel: &AtomicBool,
+        force: bool,
     ) -> io::Result<BuildResult> {
         assert!(!cancel.load(Ordering::Relaxed));
         let root = projects.join(&project.id);
         let source = fs::read_to_string(root.join("main.tex"))?;
         let pdf = root.join(".refract-build/main.pdf");
         fs::create_dir_all(pdf.parent().unwrap())?;
+        if force {
+            fs::write(pdf.with_file_name("forced.marker"), b"forced")?;
+        }
         fs::write(&pdf, format!("%PDF-fixture\n{source}"))?;
         Ok(BuildResult {
+            cached: false,
             arguments: Vec::new(),
             exit_code: Some(0),
             log: "Fixture build output".into(),
@@ -523,6 +533,17 @@ mod tests {
         });
         let button = cx.debug_bounds("compile").unwrap();
         cx.simulate_click(button.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.update(|_, app| {
+            let build = &library.read(app).selection.as_ref().unwrap().build;
+            assert!(
+                build
+                    .pdf()
+                    .unwrap()
+                    .with_file_name("forced.marker")
+                    .is_file()
+            );
+        });
         let download = cx.debug_bounds("download-pdf").unwrap();
         cx.simulate_click(download.center(), Modifiers::none());
         let output = profile.path().join("saved.pdf");

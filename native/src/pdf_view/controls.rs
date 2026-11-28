@@ -462,6 +462,7 @@ mod tests {
         projects: &Path,
         project: &Project,
         _: &AtomicBool,
+        _: bool,
     ) -> io::Result<BuildResult> {
         let path = projects.join(&project.id).join(".refract-build/main.pdf");
         let mut bytes = b"%PDF-1.4\n".to_vec();
@@ -492,6 +493,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap())?;
         fs::write(&path, bytes)?;
         Ok(BuildResult {
+            cached: false,
             arguments: Vec::new(),
             exit_code: Some(0),
             log: String::new(),

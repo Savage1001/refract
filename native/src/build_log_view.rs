@@ -341,8 +341,9 @@ mod tests {
 
     const BUILD_LOG: &str = "./chapter.tex:2: Undefined control sequence.\nPackage sample Warning: Retry.\nTranscript written.";
 
-    fn fixture_compile(_: &Path, _: &Project, _: &AtomicBool) -> io::Result<BuildResult> {
+    fn fixture_compile(_: &Path, _: &Project, _: &AtomicBool, _: bool) -> io::Result<BuildResult> {
         Ok(BuildResult {
+            cached: false,
             arguments: Vec::new(),
             exit_code: Some(1),
             log: BUILD_LOG.into(),

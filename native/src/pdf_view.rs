@@ -854,6 +854,7 @@ mod tests {
         projects: &Path,
         project: &Project,
         _: &AtomicBool,
+        _: bool,
     ) -> io::Result<BuildResult> {
         let folder = projects.join(&project.id);
         let pdf = folder.join(".refract-build/main.pdf");
@@ -865,6 +866,7 @@ mod tests {
             fs::write(&pdf, two_page_pdf())?;
         }
         Ok(BuildResult {
+            cached: false,
             arguments: Vec::new(),
             exit_code: Some(if broken { 1 } else { 0 }),
             log: if broken {

@@ -270,14 +270,13 @@ impl AssistantTools {
             }
             "build" => {
                 let request: BuildRequest = serde_json::from_value(arguments)?;
-                let _force = request.force;
                 let limit = bounded(
                     request.log_limit.unwrap_or(12000),
                     1000,
                     250000,
                     "Invalid build log limit",
                 )?;
-                self.build(limit)
+                self.build(limit, request.force.unwrap_or_default())
             }
             "project_set_engine" => {
                 let request: EngineRequest = serde_json::from_value(arguments)?;
@@ -418,19 +417,25 @@ impl AssistantTools {
         Ok(json!({"path":file.path,"applied":true,"sha256":saved.hash(),"bytes":combined.len()}))
     }
 
-    fn build(&self, log_limit: usize) -> io::Result<Value> {
+    fn build(&self, log_limit: usize, force: bool) -> io::Result<Value> {
         self.successful_build.store(false, Ordering::Release);
         let toolchain = TexToolchain::discover()?;
         let settings = build_settings(&self.projects, &self.project)?;
         let project = checked_project_directory(&self.projects, &self.project)?;
-        let result = compile_project(&self.projects, &self.project, &toolchain, &self.cancel)?;
+        let result = compile_project(
+            &self.projects,
+            &self.project,
+            &toolchain,
+            &self.cancel,
+            force,
+        )?;
         let ok = result.pdf.is_some() && result.exit_code == Some(0);
         self.successful_build.store(ok, Ordering::Release);
         let characters = result.log.encode_utf16().count();
         let (start, _) = text_boundary(&result.log, characters.saturating_sub(log_limit));
         Ok(json!({
             "id":uuid::Uuid::new_v4().to_string(),
-            "cached":false,"engine":settings.engine.name(),"rootFile":settings.root_file,
+            "cached":result.cached,"engine":settings.engine.name(),"rootFile":settings.root_file,
             "cwd":project,"outputDirectory":project.join(".refract-build"),
             "arguments":result.arguments.iter().map(|arg|arg.to_string_lossy()).collect::<Vec<_>>(),
             "environment":"Configured TeX toolchain and project-local files",
